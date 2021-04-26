@@ -39,6 +39,89 @@ std::tuple <double*, unsigned int> load_numpy_array(std::string isf_file) {
 
 int main (int argc, char *argv[]) {
     argparse::ArgumentParser program("DEAC");
+    program.add_argument("-T", "--temperature")
+        .help("Temperature of system.")
+        .default_value(0.0)
+        .action([](const std::string& value) { return std::stod(value); });
+    program.add_argument("-N", "--number_of_generations")
+        .help("Number of generations before genetic algorithm quits.")
+        .default_value(100000)
+        .action([](const std::string& value) { return std::stoi(value); });
+    program.add_argument("-P","--population_size")
+        .help("Size of initial population")
+        .default_value(512)
+        .action([](const std::string& value) { return std::stoi(value); });
+    program.add_argument("-M","--genome_size")
+        .help("Size of genome.")
+        .default_value(512)
+        .action([](const std::string& value) { return std::stoi(value); });
+    program.add_argument("--omega_max")
+        .help("Maximum frequency to explore.")
+        .default_value(60.0)
+        .action([](const std::string& value) { return std::stod(value); });
+    program.add_argument("--normalize")
+        .help("Normalize spectrum to the zeroeth moment.")
+        .default_value(false)
+        .implicit_value(true);
+    program.add_argument("--use_inverse_first_moment")
+        .help("Calculate inverse first moment from ISF data and use it in fitness.")
+        .default_value(false)
+        .implicit_value(true);
+    program.add_argument("--first_moment")
+        .help("FIXME First moment.")
+        .default_value(-1.0)
+        .action([](const std::string& value) { return std::stod(value); });
+    program.add_argument("--third_moment")
+        .help("FIXME Third moment.")
+        .default_value(-1.0)
+        .action([](const std::string& value) { return std::stod(value); });
+    program.add_argument("--third_moment_error")
+        .help("FIXME Third moment error.")
+        .default_value(0.0)
+        .action([](const std::string& value) { return std::stod(value); });
+    program.add_argument("-r","--crossover_probability")
+        .help("Initial probability for parent gene to become mutant vector gene.")
+        .default_value(0.9)
+        .action([](const std::string& value) { return std::stod(value); });
+    program.add_argument("-u","--self_adapting_crossover_probability")
+        .help("Probability for `crossover_probability` to mutate.")
+        .default_value(0.1)
+        .action([](const std::string& value) { return std::stod(value); });
+    program.add_argument("-F","--differential_weight")
+        .help("Initial weight factor when creating mutant vector.")
+        .default_value(0.9)
+        .action([](const std::string& value) { return std::stod(value); });
+    program.add_argument("-v","--self_adapting_differential_weight_probability")
+        .help("Probability for `differential_weight` to mutate.")
+        .default_value(0.1)
+        .action([](const std::string& value) { return std::stod(value); });
+    program.add_argument("-l","--self_adapting_differential_weight_shift")
+        .help("If `self_adapting_differential_weight_probability` mutate, new value is `l + m*rand()`.")
+        .default_value(0.1)
+        .action([](const std::string& value) { return std::stod(value); });
+    program.add_argument("-m","--self_adapting_differential_weight")
+        .help("If `self_adapting_differential_weight_probability` mutate, new value is `l + m*rand()`.")
+        .default_value(0.9)
+        .action([](const std::string& value) { return std::stod(value); });
+    program.add_argument("--stop_minimum_fitness")
+        .help("Stopping criteria, if minimum fitness is below `stop_minimum_fitness` stop evolving.")
+        .default_value(1.0)
+        .action([](const std::string& value) { return std::stod(value); });
+    program.add_argument("--seed")
+        .help("Seed to pass to random number generator.")
+        .default_value(0)
+        .action([](const std::string& value) { return std::stoi(value); });
+    program.add_argument("--save_state")
+        .help("Save state of DEAC algorithm. Saves the random number generator, population, and population fitness.")
+        .default_value(false)
+        .implicit_value(true);
+    program.add_argument("--save_file_dir")
+        .help("Directory to save results in.")
+        .default_value("./deacresults");
+    program.add_argument("--track_stats")
+        .help("Track minimum fitness and other stats.")
+        .default_value(false)
+        .implicit_value(true);
     program.add_argument("isf_file")
         .help("binary file containing isf data (tau, isf, error)");
     try {
@@ -75,7 +158,7 @@ int main (int argc, char *argv[]) {
     }
     std::cout << std::endl;
 
-    uint64_t seed = 1407513600;
+    uint64_t seed = 1407513600 + static_cast<uint64_t>(program.get<int>("--seed"));
     struct xoshiro256p_state rng = xoshiro256p_init(seed);
     std::cout << "generate 10 random unsigned ints:" << std::endl;
     for (int i=0; i < 10; i++) {
