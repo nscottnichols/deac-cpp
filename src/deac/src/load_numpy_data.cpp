@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <math.h> // cosh
 #include <stdlib.h>
 #include <iostream>
 #include <tuple> // for tie() and tuple
@@ -39,7 +40,7 @@ std::tuple <double*, unsigned int> load_numpy_array(std::string isf_file) {
 
 double* deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double * const isf, double * const isf_error, double * frequency,
-        double temperature, int number_of_generations, int population_size,
+        double temperature, int number_of_generations, int number_of_timeslices, int population_size,
         int genome_size, bool normalize, bool use_inverse_first_moment, 
         double first_moment, double third_moment, double third_moment_error,
         double crossover_probability,
@@ -49,10 +50,87 @@ double* deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double self_adapting_differential_weight_shift,
         double self_adapting_differential_weight, bool track_stats) {
 
+    double beta = 1.0/temperature;
+    double zeroth_moment = isf[0];
+    bool use_first_moment = first_moment >= 0.0;
+    bool use_third_moment = third_moment >= 0.0;
+
+    double * isf_term;
+    isf_term = (double*) malloc(sizeof(double)*genome_size*number_of_timeslices);
+    for (int i=0; i<number_of_timeslices; i++) {
+        double t = imaginary_time[i];
+        double bo2mt = 0.5*beta - t;
+        for (int j=0; j<genome_size; j++) {
+            double f = frequency[j];
+            double df;
+            if (j==0) {
+                df = 0.5*(frequency[j+1] - frequency[j]);
+            } else if (j == genome_size - 1) {
+                df = 0.5*(frequency[j] - frequency[j-1]);
+            } else {
+                df = 0.5*(frequency[j+1] - frequency[j-1]);
+            }
+            int isf_term_idx = i*genome_size + j;
+            isf_term[isf_term_idx] = df*cosh(bo2mt*f);
+        }
+    }
+
+    //Generate population and set initial fitness
+    double * population_old;
+    double * population_new;
+    population_old = (double*) malloc(sizeof(double)*genome_size*population_size);
+    population_new = (double*) malloc(sizeof(double)*genome_size*population_size);
+    for (int i=0; i<genome_size*population_size; i++) {
+        population_old[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
+    }
+
+    // Normalize population
+    double * normalization_term;
+    double * normalization;
+    if (normalize) {
+        normalization_term = (double*) malloc(sizeof(double)*genome_size);
+        for (int j=0; j<genome_size; j++) {
+            double f = frequency[j];
+            double df;
+            if (j==0) {
+                df = 0.5*(frequency[j+1] - frequency[j]);
+            } else if (j == genome_size - 1) {
+                df = 0.5*(frequency[j] - frequency[j-1]);
+            } else {
+                df = 0.5*(frequency[j+1] - frequency[j-1]);
+            }
+            normalization_term[j] = df*cosh(0.5*beta*f);
+        }
+        normalization = (double*) malloc(sizeof(double)*population_size);
+        //FIXME need to set normalization here (used matrix multiplication in Julia code)
+        //mul!(normalization,P',normalization_term);
+        for (int i=0; i<population_size; i++) {
+            double _norm = normalization[i];
+            for (int j=0; j<genome_size; j++) {
+                population_old[i*genome_size + j] *= zeroth_moment/_norm;
+            }
+        }
+    }
+
+    double * fitness_old;
+    double * fitness_new;
+    fitness_old = (double*) malloc(sizeof(double)*population_size);
+    fitness_new = (double*) malloc(sizeof(double)*population_size);
+
     double * best_dsf;
     best_dsf = (double*) malloc(sizeof(double)*genome_size);
     for (int i=0; i<genome_size; i++) {
         best_dsf[i] = static_cast<double>(i);
+    }
+
+    free(isf_term);
+    free(population_old);
+    free(population_new);
+    free(fitness_old);
+    free(fitness_new);
+    if (normalize) {
+        free(normalization_term);
+        free(normalization);
     }
     return best_dsf;
 }
@@ -222,7 +300,7 @@ int main (int argc, char *argv[]) {
     bool track_stats = program.get<bool>("--track_stats");
 
     double *best_dsf = deac( &rng, imaginary_time, isf, isf_error, frequency,
-            temperature, number_of_generations, population_size, genome_size,
+            temperature, number_of_generations, number_of_timeslices, population_size, genome_size,
             normalize, use_inverse_first_moment, first_moment, third_moment,
             third_moment_error, crossover_probability,
             self_adapting_crossover_probability, differential_weight,
