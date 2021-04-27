@@ -37,6 +37,26 @@ std::tuple <double*, unsigned int> load_numpy_array(std::string isf_file) {
     return numpy_data_tuple;
 }
 
+double* deac(struct xoshiro256p_state * rng, double * const imaginary_time,
+        double * const isf, double * const isf_error, double * frequency,
+        double temperature, int number_of_generations, int population_size,
+        int genome_size, bool normalize, bool use_inverse_first_moment, 
+        double first_moment, double third_moment, double third_moment_error,
+        double crossover_probability,
+        double self_adapting_crossover_probability,
+        double differential_weight, 
+        double self_adapting_differential_weight_probability,
+        double self_adapting_differential_weight_shift,
+        double self_adapting_differential_weight, bool track_stats) {
+
+    double * best_dsf;
+    best_dsf = (double*) malloc(sizeof(double)*genome_size);
+    for (int i=0; i<genome_size; i++) {
+        best_dsf[i] = static_cast<double>(i);
+    }
+    return best_dsf;
+}
+
 int main (int argc, char *argv[]) {
     argparse::ArgumentParser program("DEAC");
     program.add_argument("-T", "--temperature")
@@ -173,6 +193,49 @@ int main (int argc, char *argv[]) {
         std::cout << _randdouble << std::endl;
     }
 
+    double temperature = program.get<double>("--temperature");
+    int number_of_generations = program.get<int>("--number_of_generations");
+    int population_size = program.get<int>("--population_size");
+    int genome_size = program.get<int>("--genome_size");
+    double max_frequency = program.get<double>("--omega_max");
+    
+    double * frequency;
+    frequency = (double*) malloc(sizeof(double)*genome_size);
+    double dfrequency = max_frequency/(genome_size - 1);
+    for (int i=0; i<genome_size; i++) {
+        frequency[i] = i*dfrequency;
+    }
+
+    bool normalize = program.get<bool>("--normalize");
+    bool use_inverse_first_moment = program.get<bool>("--use_inverse_first_moment");
+    double first_moment = program.get<double>("--first_moment");
+    double third_moment = program.get<double>("--third_moment");
+    double third_moment_error = program.get<double>("--third_moment_error");
+
+    double crossover_probability = program.get<double>("--crossover_probability");
+    double self_adapting_crossover_probability = program.get<double>("--self_adapting_crossover_probability");
+    double differential_weight = program.get<double>("--differential_weight");
+    double self_adapting_differential_weight_probability = program.get<double>("--self_adapting_differential_weight_probability");
+    double self_adapting_differential_weight_shift = program.get<double>("--self_adapting_differential_weight_shift");
+    double self_adapting_differential_weight = program.get<double>("--self_adapting_differential_weight");
+
+    bool track_stats = program.get<bool>("--track_stats");
+
+    double *best_dsf = deac( &rng, imaginary_time, isf, isf_error, frequency,
+            temperature, number_of_generations, population_size, genome_size,
+            normalize, use_inverse_first_moment, first_moment, third_moment,
+            third_moment_error, crossover_probability,
+            self_adapting_crossover_probability, differential_weight,
+            self_adapting_differential_weight_probability,
+            self_adapting_differential_weight_shift,
+            self_adapting_differential_weight, track_stats);
+    std::cout << "best_dsf: " << std::endl;
+    for (int i=0; i<genome_size; i++) {
+        std::cout << best_dsf[i] << std::endl;
+    }
+
     free(numpy_data);
+    free(frequency);
+    free(best_dsf);
     return 0;
 }
