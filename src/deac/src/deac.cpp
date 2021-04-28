@@ -753,36 +753,9 @@ int main (int argc, char *argv[]) {
     double * const imaginary_time = numpy_data;
     double * const isf = numpy_data + number_of_timeslices;
     double * const isf_error = numpy_data + 2*number_of_timeslices;
-    std::cout << "imaginary_time: ";
-    for (int i = 0; i < number_of_timeslices; i++) {
-        std::cout << imaginary_time[i] << " ";
-    }
-    std::cout << std::endl;
-    std::cout << "isf: ";
-    for (int i = 0; i < number_of_timeslices; i++) {
-        std::cout << isf[i] << " ";
-    }
-    std::cout << std::endl;
-    std::cout << "isf_error: ";
-    for (int i = 0; i < number_of_timeslices; i++) {
-        std::cout << isf_error[i] << " ";
-    }
-    std::cout << std::endl;
 
     uint64_t seed = 1407513600 + static_cast<uint64_t>(program.get<int>("--seed"));
     struct xoshiro256p_state rng = xoshiro256p_init(seed);
-    std::cout << "generate 10 random unsigned ints:" << std::endl;
-    for (int i=0; i < 10; i++) {
-        uint64_t _randint = xoshiro256p(&rng);
-        std::cout << _randint << std::endl;
-    }
-
-    std::cout << "generate 1000 random 64-bit floats [0,1):" << std::endl;
-    for (int i=0; i < 1000; i++) {
-        uint64_t _randint = xoshiro256p(&rng);
-        double _randdouble = (_randint >> 11) * 0x1.0p-53;
-        std::cout << _randdouble << std::endl;
-    }
 
     double temperature = program.get<double>("--temperature");
     int number_of_generations = program.get<int>("--number_of_generations");
