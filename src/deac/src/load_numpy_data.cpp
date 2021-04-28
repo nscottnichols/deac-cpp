@@ -38,6 +38,128 @@ std::tuple <double*, unsigned int> load_numpy_array(std::string isf_file) {
     return numpy_data_tuple;
 }
 
+void matrix_multiply_MxN_by_Nx1(double * C, double * A, double * B, int M, int N) {
+    for (int i=0; i<M; i++) {
+        C[i] = 0.0;
+        for (int j=0; j<N; j++) {
+            C[i] += A[i*N + j]*B[j];
+        }
+    }
+}
+
+void matrix_multiply_LxM_by_MxN(double * C, double * A, double * B, int L,
+        int M, int N) {
+    for (int i=0; i<N; i++) {
+        for (int j=0; j<L; j++) {
+            C[i*L + j] = 0.0;
+            for (int k=0; k<M; k++) {
+                C[i*L + j] += A[j*M + k]*B[i*M + k];
+            }
+        }
+    }
+}
+
+double reduced_chi_square_statistic(double * observed, double * calculated,
+        double * error, int length) {
+    double chi_squared = 0.0;
+    for (int i=0; i<length; i++) {
+        chi_squared += pow((observed[i] - calculated[i])/error[i],2);
+    }
+    return chi_squared;
+}
+
+double minimum(double * A, int length) {
+    double _minimum = A[0];
+    for (int i=0; i<length; i++) {
+        if (A[i] < _minimum) {
+            _minimum = A[i];
+        }
+    }
+    return _minimum;
+}
+
+int argmin(double * A, int length) {
+    int _argmin=0;
+    double _minimum = A[0];
+    for (int i=0; i<length; i++) {
+        if (A[i] < _minimum) {
+            _minimum = A[i];
+            _argmin = i;
+        }
+    }
+    return _argmin;
+}
+
+std::tuple <int, double> argmin_and_min(double * A, int length) {
+    int _argmin=0;
+    double _minimum = A[0];
+    for (int i=0; i<length; i++) {
+        if (A[i] < _minimum) {
+            _minimum = A[i];
+            _argmin = i;
+        }
+    }
+    std::tuple <int, double> argmin_tuple(_argmin, _minimum);
+    return argmin_tuple;
+}
+
+double mean(double * A, int length) {
+    double _mean = 0.0;
+    for (int i=0; i<length; i++) {
+        _mean += A[i];
+    }
+    return _mean/length;
+}
+
+double standard_deviation(double * A, double mean, int length) {
+    double _std = 0.0;
+    for (int i=0; i<length; i++) {
+        _std += pow(A[i] - mean,2);
+    }
+    return sqrt(_std/length);
+}
+
+std::tuple <int, int, int> get_mutant_indices(struct xoshiro256p_state * rng,
+        int mutant_index0, int length) {
+    int mutant_index1 = mutant_index0;
+    int mutant_index2 = mutant_index0;
+    int mutant_index3 = mutant_index0;
+    while (mutant_index1 == mutant_index0) {
+        mutant_index1 = xoshiro256p(rng) % length;
+    }
+
+    while ((mutant_index2 == mutant_index0) || (mutant_index2 == mutant_index1)) {
+        mutant_index2 = xoshiro256p(rng) % length;
+    }
+
+    while ((mutant_index3 == mutant_index0) || (mutant_index3 == mutant_index1)
+            || (mutant_index3 == mutant_index2)) {
+        mutant_index3 = xoshiro256p(rng) % length;
+    }
+
+    std::tuple <int, int, int> _mutant_indices(mutant_index1, mutant_index2, mutant_index3);
+    return _mutant_indices;
+}
+
+void set_mutant_indices(struct xoshiro256p_state * rng, int * mutant_indices,
+        int mutant_index0, int length) {
+    mutant_indices[0] = mutant_index0;
+    mutant_indices[1] = mutant_index0;
+    mutant_indices[2] = mutant_index0;
+    while (mutant_indices[0] == mutant_index0) {
+        mutant_indices[0] = xoshiro256p(rng) % length;
+    }
+
+    while ((mutant_indices[1] == mutant_index0) || (mutant_indices[1] == mutant_indices[0])) {
+        mutant_indices[1] = xoshiro256p(rng) % length;
+    }
+
+    while ((mutant_indices[2] == mutant_index0) || (mutant_indices[2] == mutant_indices[0])
+            || (mutant_indices[2] == mutant_indices[1])) {
+        mutant_indices[2] = xoshiro256p(rng) % length;
+    }
+}
+
 double* deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double * const isf, double * const isf_error, double * frequency,
         double temperature, int number_of_generations, int number_of_timeslices, int population_size,
@@ -48,7 +170,8 @@ double* deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double differential_weight, 
         double self_adapting_differential_weight_probability,
         double self_adapting_differential_weight_shift,
-        double self_adapting_differential_weight, bool track_stats) {
+        double self_adapting_differential_weight, double stop_minimum_fitness,
+        bool track_stats) {
 
     double beta = 1.0/temperature;
     double zeroth_moment = isf[0];
@@ -102,8 +225,8 @@ double* deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             normalization_term[j] = df*cosh(0.5*beta*f);
         }
         normalization = (double*) malloc(sizeof(double)*population_size);
-        //FIXME need to set normalization here (used matrix multiplication in Julia code)
-        //mul!(normalization,P',normalization_term);
+        matrix_multiply_MxN_by_Nx1(normalization, population_old,
+                normalization_term, population_size, genome_size);
         for (int i=0; i<population_size; i++) {
             double _norm = normalization[i];
             for (int j=0; j<genome_size; j++) {
@@ -112,26 +235,325 @@ double* deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         }
     }
 
+    double * first_moments_term;
+    double * first_moments;
+    if (use_first_moment) {
+        first_moments_term = (double*) malloc(sizeof(double)*genome_size);
+        for (int j=0; j<genome_size; j++) {
+            double f = frequency[j];
+            double df;
+            if (j==0) {
+                df = 0.5*(frequency[j+1] - frequency[j]);
+            } else if (j == genome_size - 1) {
+                df = 0.5*(frequency[j] - frequency[j-1]);
+            } else {
+                df = 0.5*(frequency[j+1] - frequency[j-1]);
+            }
+            first_moments_term[j] = df*f*sinh(0.5*beta*f);
+        }
+
+        first_moments = (double*) malloc(sizeof(double)*population_size);
+        matrix_multiply_MxN_by_Nx1(first_moments, population_old,
+                first_moments_term, population_size, genome_size);
+    }
+
+    double * third_moments_term;
+    double * third_moments;
+    if (use_third_moment) {
+        third_moments_term = (double*) malloc(sizeof(double)*genome_size);
+        for (int j=0; j<genome_size; j++) {
+            double f = frequency[j];
+            double df;
+            if (j==0) {
+                df = 0.5*(frequency[j+1] - frequency[j]);
+            } else if (j == genome_size - 1) {
+                df = 0.5*(frequency[j] - frequency[j-1]);
+            } else {
+                df = 0.5*(frequency[j+1] - frequency[j-1]);
+            }
+            third_moments_term[j] = df*pow(f,3)*sinh(0.5*beta*f);
+        }
+
+        third_moments = (double*) malloc(sizeof(double)*population_size);
+        matrix_multiply_MxN_by_Nx1(third_moments, population_old,
+                third_moments_term, population_size, genome_size);
+    }
+
+    //set isf_model and calculate fitness
+    double * isf_model;
+    isf_model = (double*) malloc(sizeof(double)*number_of_timeslices*population_size);
+
+    for (int i=0; i<number_of_timeslices; i++) {
+        double t = imaginary_time[i];
+        double bo2mt = 0.5*beta - t;
+        for (int j=0; j<genome_size; j++) {
+            double f = frequency[j];
+            double df;
+            if (j==0) {
+                df = 0.5*(frequency[j+1] - frequency[j]);
+            } else if (j == genome_size - 1) {
+                df = 0.5*(frequency[j] - frequency[j-1]);
+            } else {
+                df = 0.5*(frequency[j+1] - frequency[j-1]);
+            }
+            int isf_term_idx = i*genome_size + j;
+            isf_term[isf_term_idx] = df*cosh(bo2mt*f);
+        }
+    }
+    matrix_multiply_LxM_by_MxN(isf_model, isf_term, population_old,
+            number_of_timeslices, genome_size, population_size);
+
+    double * inverse_first_moments_term;
+    double * inverse_first_moments;
+    double inverse_first_moment = 0.0;
+    double inverse_first_moment_error = 0.0;
+    if (use_inverse_first_moment) {
+        inverse_first_moments_term = (double*) malloc(sizeof(double)*number_of_timeslices);
+        for (int j=0; j<number_of_timeslices; j++) {
+            double dt;
+            if (j==0) {
+                dt = 0.5*(imaginary_time[j+1] - imaginary_time[j]);
+            } else if (j == number_of_timeslices - 1) {
+                dt = 0.5*(imaginary_time[j] - imaginary_time[j-1]);
+            } else {
+                dt = 0.5*(imaginary_time[j+1] - imaginary_time[j-1]);
+            }
+            inverse_first_moments_term[j] = dt;
+            inverse_first_moment += isf[j]*dt;
+            inverse_first_moment_error = pow(isf_error[j],2) * pow(dt,2);
+        }
+        inverse_first_moment_error = sqrt(inverse_first_moment_error);
+
+        inverse_first_moments = (double*) malloc(sizeof(double)*population_size);
+        matrix_multiply_MxN_by_Nx1(inverse_first_moments, isf_model,
+                inverse_first_moments_term, population_size, number_of_timeslices);
+    }
+
     double * fitness_old;
-    double * fitness_new;
     fitness_old = (double*) malloc(sizeof(double)*population_size);
-    fitness_new = (double*) malloc(sizeof(double)*population_size);
+
+    for (int i=0; i<population_size; i++) {
+        double _fitness = reduced_chi_square_statistic(isf,
+                isf_model + i*number_of_timeslices, isf_error,
+                number_of_timeslices)/number_of_timeslices;
+        if (use_inverse_first_moment) {
+            _fitness += pow((inverse_first_moment - inverse_first_moments[i])/inverse_first_moment_error,2);
+        }
+        if (use_first_moment) {
+            _fitness += pow(first_moments[i] - first_moment,2)/first_moment;
+        }
+        if (use_third_moment) {
+            _fitness += pow((third_moment - third_moments[i])/third_moment_error,2);
+        }
+        fitness_old[i] = _fitness;
+    }
+
+    double * crossover_probabilities_old;
+    double * crossover_probabilities_new;
+    crossover_probabilities_old = (double*) malloc(sizeof(double)*population_size);
+    crossover_probabilities_new = (double*) malloc(sizeof(double)*population_size);
+    for (int i=0; i<population_size; i++) {
+        crossover_probabilities_old[i] = crossover_probability;
+    }
+
+    double * differential_weights_old;
+    double * differential_weights_new;
+    differential_weights_old = (double*) malloc(sizeof(double)*population_size);
+    differential_weights_new = (double*) malloc(sizeof(double)*population_size);
+    for (int i=0; i<population_size; i++) {
+        differential_weights_old[i] = differential_weight;
+    }
+
+    //Initialize statistics arrays
+    double * fitness_mean;
+    double * fitness_minimum;
+    double * fitness_standard_deviation;
+    if (track_stats) {
+        fitness_mean = (double*) malloc(sizeof(double)*number_of_generations);
+        fitness_minimum = (double*) malloc(sizeof(double)*number_of_generations);
+        fitness_standard_deviation = (double*) malloc(sizeof(double)*number_of_generations);
+    }
+    
+    bool * mutate_indices;
+    mutate_indices = (bool*) malloc(sizeof(bool)*genome_size*population_size);
+
+    int * mutant_indices;
+    mutant_indices = (int*) malloc(sizeof(int)*3*population_size);
+
+    double minimum_fitness;
+    int minimum_fitness_idx;
+    
+    int generation;
+    for (int ii=0; ii < number_of_generations - 1; ii++) {
+        generation = ii;
+        minimum_fitness = minimum(fitness_old,population_size);
+
+        //Get Statistics
+        if (track_stats) {
+            fitness_mean[ii] = mean(fitness_old, population_size);
+            fitness_minimum[ii] = minimum_fitness;
+            fitness_standard_deviation[ii] = standard_deviation(fitness_old,
+                    fitness_mean[ii], population_size);
+        }
+        
+        //Stopping criteria
+        if (minimum_fitness <= stop_minimum_fitness) {
+            break;
+        }
+
+
+        //Set crossover probabilities
+        for (int i=0; i<population_size; i++) {
+            if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_crossover_probability) {
+                crossover_probabilities_new[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53;
+            } else {
+                crossover_probabilities_new[i] = crossover_probabilities_old[i];
+            }
+
+            if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_differential_weight_probability) {
+                //differential_weights_new[i] = 
+                //    self_adapting_differential_weight_shift + 
+                //    self_adapting_differential_weight*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
+                differential_weights_new[i] = 2.0*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
+            } else {
+                differential_weights_new[i] = differential_weights_old[i];
+            }
+        }
+
+        //Set mutant population and indices 
+        for (int i=0; i<population_size; i++) {
+            double crossover_rate = crossover_probabilities_new[i];
+            set_mutant_indices(rng, mutant_indices + 3*i, i, population_size);
+            for (int j=0; j<genome_size; j++) {
+                mutate_indices[i*genome_size + j] = (xoshiro256p(rng) >> 11) * 0x1.0p-53 < crossover_rate;
+            }
+        }
+
+        for (int i=0; i<population_size; i++) {
+            double F = differential_weights_new[i];
+            int mutant_index1 = mutant_indices[3*i];
+            int mutant_index2 = mutant_indices[3*i + 1];
+            int mutant_index3 = mutant_indices[3*i + 2];
+            for (int j=0; j<genome_size; j++) {
+                bool mutate = mutate_indices[i*genome_size + j];
+                if (mutate) {
+                    population_new[i*genome_size + j] = fabs( 
+                        population_old[mutant_index1*genome_size + j] + F*(
+                                population_old[mutant_index2*genome_size + j] -
+                                population_old[mutant_index3*genome_size + j]));
+                } else {
+                    population_new[i*genome_size + j] = population_old[i*genome_size + j];
+                }
+            }
+        }
+
+        // Normalization
+        if (normalize) {
+            matrix_multiply_MxN_by_Nx1(normalization, population_new,
+                    normalization_term, population_size, genome_size);
+            for (int i=0; i<population_size; i++) {
+                double _norm = normalization[i];
+                for (int j=0; j<genome_size; j++) {
+                    population_new[i*genome_size + j] *= zeroth_moment/_norm;
+                }
+            }
+        }
+
+        //Rejection
+        //Set model isf for new population
+        matrix_multiply_LxM_by_MxN(isf_model, isf_term, population_new,
+                number_of_timeslices, genome_size, population_size);
+
+        //Set moments
+        if (use_inverse_first_moment) {
+            matrix_multiply_MxN_by_Nx1(inverse_first_moments, isf_model,
+                    inverse_first_moments_term, population_size,
+                    number_of_timeslices);
+        }
+        if (use_first_moment) {
+            matrix_multiply_MxN_by_Nx1(first_moments, population_new,
+                    first_moments_term, population_size, genome_size);
+        }
+        if (use_third_moment) {
+            matrix_multiply_MxN_by_Nx1(third_moments, population_new,
+                    third_moments_term, population_size, genome_size);
+        }
+
+        //Set fitness for new population
+        for (int i=0; i<population_size; i++) {
+            double _fitness = reduced_chi_square_statistic(isf,
+                    isf_model + i*number_of_timeslices, isf_error,
+                    number_of_timeslices)/number_of_timeslices;
+            if (use_inverse_first_moment) {
+                _fitness += pow((inverse_first_moment - inverse_first_moments[i])/inverse_first_moment_error,2);
+            }
+            if (use_first_moment) {
+                _fitness += pow(first_moments[i] - first_moment,2)/first_moment;
+            }
+            if (use_third_moment) {
+                _fitness += pow((third_moment - third_moments[i])/third_moment_error,2);
+            }
+            // Rejection step
+            if (_fitness <= fitness_old[i]) {
+                fitness_old[i] = _fitness;
+                crossover_probabilities_old[i] = crossover_probabilities_new[i];
+                differential_weights_old[i] = differential_weights_new[i];
+                for (int j=0; j<genome_size; j++) {
+                    population_old[i*genome_size + j] = population_new[i*genome_size + j];
+                }
+            }
+        }
+    }
+
+    std::tie(minimum_fitness_idx,minimum_fitness) = argmin_and_min(fitness_old,population_size);
 
     double * best_dsf;
     best_dsf = (double*) malloc(sizeof(double)*genome_size);
     for (int i=0; i<genome_size; i++) {
-        best_dsf[i] = static_cast<double>(i);
+        double f = frequency[i];
+        best_dsf[i] = 0.5*population_old[genome_size*minimum_fitness_idx + i]*exp(0.5*beta*f);
     }
+
+     //Get Statistics
+     if ((track_stats) && (generation == number_of_generations - 2)) {
+         fitness_mean[generation + 1] = mean(fitness_old, population_size);
+         fitness_minimum[generation + 1] = minimum_fitness;
+         fitness_standard_deviation[generation + 1] = standard_deviation(fitness_old,
+                 fitness_mean[generation + 1], population_size);
+     }
 
     free(isf_term);
     free(population_old);
     free(population_new);
     free(fitness_old);
-    free(fitness_new);
     if (normalize) {
         free(normalization_term);
         free(normalization);
     }
+    if (use_first_moment) {
+        free(first_moments_term);
+        free(first_moments);
+    }
+    if (use_third_moment) {
+        free(third_moments_term);
+        free(third_moments);
+    }
+    free(isf_model);
+    if (use_inverse_first_moment) {
+        free(inverse_first_moments_term);
+        free(inverse_first_moments);
+    }
+    free(crossover_probabilities_old);
+    free(crossover_probabilities_new);
+    free(differential_weights_old);
+    free(differential_weights_new);
+    if (track_stats) {
+        free(fitness_mean);
+        free(fitness_minimum);
+        free(fitness_standard_deviation);
+    }
+    free(mutate_indices);
+    free(mutant_indices);
     return best_dsf;
 }
 
@@ -296,6 +718,8 @@ int main (int argc, char *argv[]) {
     double self_adapting_differential_weight_probability = program.get<double>("--self_adapting_differential_weight_probability");
     double self_adapting_differential_weight_shift = program.get<double>("--self_adapting_differential_weight_shift");
     double self_adapting_differential_weight = program.get<double>("--self_adapting_differential_weight");
+    
+    double stop_minimum_fitness = program.get<double>("--stop_minimum_fitness");
 
     bool track_stats = program.get<bool>("--track_stats");
 
@@ -306,7 +730,8 @@ int main (int argc, char *argv[]) {
             self_adapting_crossover_probability, differential_weight,
             self_adapting_differential_weight_probability,
             self_adapting_differential_weight_shift,
-            self_adapting_differential_weight, track_stats);
+            self_adapting_differential_weight, stop_minimum_fitness,
+            track_stats);
     std::cout << "best_dsf: " << std::endl;
     for (int i=0; i<genome_size; i++) {
         std::cout << best_dsf[i] << std::endl;
