@@ -5,6 +5,36 @@
 #include <tuple> // for tie() and tuple
 #include <argparse.hpp>
 #include <rng.hpp>
+#include <memory> // string_format
+#include <string> // string_format
+#include <stdexcept> // string_format
+#include <fstream> // std::ofstream
+#include <filesystem>
+namespace fs = std::filesystem;
+
+void write_to_logfile(fs::path filename, std::string log_message ) {
+    std::ofstream ofs(filename.c_str(), std::ios_base::out | std::ios_base::app );
+    ofs << log_message << std::endl;
+    ofs.close();
+}
+
+template<typename ... Args>
+std::string string_format( const std::string& format, Args ... args ) {
+    //See https://stackoverflow.com/questions/2342162/stdstring-formatting-like-sprintf
+    int size_s = snprintf( nullptr, 0, format.c_str(), args ... ) + 1; // Extra space for '\0'
+    if( size_s <= 0 ){ throw std::runtime_error( "Error during formatting." ); }
+    auto size = static_cast<size_t>( size_s );
+    auto buf = std::make_unique<char[]>( size );
+    snprintf( buf.get(), size, format.c_str(), args ... );
+    return std::string( buf.get(), buf.get() + size - 1 ); // We don't want the '\0' inside
+}
+
+void write_array(fs::path filename, double * buffer, int length) {
+    FILE * output_file;
+    output_file = fopen (filename.c_str(), "wb");
+    fwrite (buffer , sizeof(double), static_cast<size_t>(length), output_file);
+    fclose (output_file);
+}
 
 std::tuple <double*, unsigned int> load_numpy_array(std::string isf_file) {
     FILE * input_file;
@@ -160,7 +190,7 @@ void set_mutant_indices(struct xoshiro256p_state * rng, int * mutant_indices,
     }
 }
 
-double* deac(struct xoshiro256p_state * rng, double * const imaginary_time,
+void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double * const isf, double * const isf_error, double * frequency,
         double temperature, int number_of_generations, int number_of_timeslices, int population_size,
         int genome_size, bool normalize, bool use_inverse_first_moment, 
@@ -171,7 +201,7 @@ double* deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double self_adapting_differential_weight_probability,
         double self_adapting_differential_weight_shift,
         double self_adapting_differential_weight, double stop_minimum_fitness,
-        bool track_stats) {
+        bool track_stats, int seed, fs::path save_directory) {
 
     double beta = 1.0/temperature;
     double zeroth_moment = isf[0];
@@ -514,14 +544,75 @@ double* deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         best_dsf[i] = 0.5*population_old[genome_size*minimum_fitness_idx + i]*exp(0.5*beta*f);
     }
 
-     //Get Statistics
-     if ((track_stats) && (generation == number_of_generations - 2)) {
-         fitness_mean[generation + 1] = mean(fitness_old, population_size);
-         fitness_minimum[generation + 1] = minimum_fitness;
-         fitness_standard_deviation[generation + 1] = standard_deviation(fitness_old,
-                 fitness_mean[generation + 1], population_size);
-     }
+    //Get Statistics
+    if ((track_stats) && (generation == number_of_generations - 2)) {
+        generation += 1;
+        fitness_mean[generation] = mean(fitness_old, population_size);
+        fitness_minimum[generation] = minimum_fitness;
+        fitness_standard_deviation[generation] = standard_deviation(fitness_old,
+                fitness_mean[generation], population_size);
+    }
 
+    //Save data
+    std::string best_dsf_filename_str = string_format("deac_dsf_%06d.bin",seed);
+    fs::path best_dsf_filename = save_directory / best_dsf_filename_str;
+    write_array(best_dsf_filename, best_dsf, genome_size);
+    std::string frequency_filename_str = string_format("deac_frequency_%06d.bin",seed);
+    fs::path frequency_filename = save_directory / frequency_filename_str;
+    write_array(frequency_filename, frequency, genome_size);
+    fs::path fitness_mean_filename;
+    fs::path fitness_minimum_filename;
+    fs::path fitness_standard_deviation_filename;
+    if (track_stats) {
+        std::string fitness_mean_filename_str = string_format("deac_stats_fitness-mean_%06d.bin",seed);
+        std::string fitness_minimum_filename_str = string_format("deac_stats_fitness-minimum_%06d.bin",seed);
+        std::string fitness_standard_deviation_filename_str = string_format("deac_stats_fitness-standard-deviation_%06d.bin",seed);
+        fs::path fitness_mean_filename = save_directory / fitness_mean_filename_str;
+        fs::path fitness_minimum_filename = save_directory / fitness_minimum_filename_str;
+        fs::path fitness_standard_deviation_filename = save_directory / fitness_standard_deviation_filename_str;
+        write_array(fitness_mean_filename, fitness_mean, generation + 1);
+        write_array(fitness_minimum_filename, fitness_minimum, generation + 1);
+        write_array(fitness_standard_deviation_filename, fitness_standard_deviation, generation + 1);
+    }
+
+    //Write to log file
+    std::string log_filename_str = string_format("deac_log_%06d.bin",seed);
+    fs::path log_filename = save_directory / log_filename_str;
+    std::ofstream log_ofs(log_filename.c_str(), std::ios_base::out | std::ios_base::app );
+
+    //Input parameters
+    log_ofs << "temperature: " << temperature << std::endl;
+    log_ofs << "number_of_generations: " << number_of_generations << std::endl;
+    log_ofs << "number_of_timeslices: " << number_of_timeslices << std::endl;
+    log_ofs << "population_size: " << population_size << std::endl;
+    log_ofs << "genome_size: " << genome_size << std::endl;
+    log_ofs << "normalize: " << normalize << std::endl;
+    log_ofs << "use_inverse_first_moment: " << use_inverse_first_moment << std::endl;
+    log_ofs << "first_moment: " << first_moment << std::endl;
+    log_ofs << "third_moment: " << third_moment << std::endl;
+    log_ofs << "third_moment_error: " << third_moment_error << std::endl;
+    log_ofs << "crossover_probability: " << crossover_probability << std::endl;
+    log_ofs << "self_adapting_crossover_probability: " << self_adapting_crossover_probability << std::endl;
+    log_ofs << "differential_weight: " << differential_weight << std::endl;
+    log_ofs << "self_adapting_differential_weight_probability: " << self_adapting_differential_weight_probability << std::endl;
+    log_ofs << "self_adapting_differential_weight_shift: " << self_adapting_differential_weight_shift << std::endl;
+    log_ofs << "self_adapting_differential_weight: " << self_adapting_differential_weight << std::endl;
+    log_ofs << "stop_minimum_fitness: " << stop_minimum_fitness << std::endl;
+    log_ofs << "track_stats: " << track_stats << std::endl;
+    log_ofs << "seed: " << seed << std::endl;
+
+    //Generated variables
+    log_ofs << "best_dsf_filename: " << best_dsf_filename << std::endl;
+    log_ofs << "frequency_filename: " << frequency_filename << std::endl;
+    log_ofs << "generation: " << generation << std::endl;
+    if (track_stats) {
+        log_ofs << "fitness_mean_filename: " << fitness_mean_filename << std::endl;
+        log_ofs << "fitness_minimum_filename: " << fitness_minimum_filename << std::endl;
+        log_ofs << "fitness_standard_deviation_filename: " << fitness_standard_deviation_filename << std::endl;
+    }
+    log_ofs.close();
+
+    //Free memory
     free(isf_term);
     free(population_old);
     free(population_new);
@@ -554,7 +645,7 @@ double* deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     }
     free(mutate_indices);
     free(mutant_indices);
-    return best_dsf;
+    free(best_dsf);
 }
 
 int main (int argc, char *argv[]) {
@@ -635,7 +726,7 @@ int main (int argc, char *argv[]) {
         .help("Save state of DEAC algorithm. Saves the random number generator, population, and population fitness.")
         .default_value(false)
         .implicit_value(true);
-    program.add_argument("--save_file_dir")
+    program.add_argument("--save_directory")
         .help("Directory to save results in.")
         .default_value("./deacresults");
     program.add_argument("--track_stats")
@@ -655,7 +746,7 @@ int main (int argc, char *argv[]) {
 
     unsigned int number_of_elements;
     double* numpy_data;
-    auto isf_file = program.get<std::string>("isf_file");
+    std::string isf_file = program.get<std::string>("isf_file");
     std::tie(numpy_data,number_of_elements) = load_numpy_array(isf_file);
     int number_of_timeslices = number_of_elements/3;
 
@@ -722,23 +813,30 @@ int main (int argc, char *argv[]) {
     double stop_minimum_fitness = program.get<double>("--stop_minimum_fitness");
 
     bool track_stats = program.get<bool>("--track_stats");
+    std::string save_directory_str = program.get<std::string>("--save_directory");
+    fs::path save_directory(save_directory_str);
+    fs::create_directory(save_directory);
 
-    double *best_dsf = deac( &rng, imaginary_time, isf, isf_error, frequency,
-            temperature, number_of_generations, number_of_timeslices, population_size, genome_size,
+    //Write to log file
+    std::string log_filename_str = string_format("deac_log_%06d.bin",seed);
+    fs::path log_filename = save_directory / log_filename_str;
+    std::ofstream log_ofs(log_filename.c_str(), std::ios_base::out | std::ios_base::app );
+
+    //Input parameters
+    log_ofs << "isf_file: " << isf_file << std::endl;
+    log_ofs.close();
+
+    deac( &rng, imaginary_time, isf, isf_error, frequency, temperature,
+            number_of_generations, number_of_timeslices, population_size, genome_size,
             normalize, use_inverse_first_moment, first_moment, third_moment,
             third_moment_error, crossover_probability,
             self_adapting_crossover_probability, differential_weight,
             self_adapting_differential_weight_probability,
             self_adapting_differential_weight_shift,
             self_adapting_differential_weight, stop_minimum_fitness,
-            track_stats);
-    std::cout << "best_dsf: " << std::endl;
-    for (int i=0; i<genome_size; i++) {
-        std::cout << best_dsf[i] << std::endl;
-    }
+            track_stats, seed, save_directory);
 
     free(numpy_data);
     free(frequency);
-    free(best_dsf);
     return 0;
 }
