@@ -1,0 +1,1 @@
+{ time ./deac -P 16 -M 512 --save_directory ./deacresults_M512_P16_0.005 --omega_max 64.0 --normalize --temperature 1.2 --number_of_generations 1000000 --stop_minimum_fitness 0.005 --seed 0 ./isf_data.dat ; }
