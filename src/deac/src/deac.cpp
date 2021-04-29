@@ -51,7 +51,6 @@ std::tuple <double*, unsigned int> load_numpy_array(std::string isf_file) {
     rewind(input_file);
     
     unsigned int number_of_elements = static_cast<unsigned int> (file_size_bytes/sizeof(double));
-    std::cout << "number of doubles: " << number_of_elements << std::endl;
   
     // allocate memory to contain the whole file:
     buffer = (double*) malloc(sizeof(char)*file_size_bytes);
@@ -576,7 +575,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     }
 
     //Write to log file
-    std::string log_filename_str = string_format("deac_log_%06d.bin",seed);
+    std::string log_filename_str = string_format("deac_log_%06d.dat",seed);
     fs::path log_filename = save_directory / log_filename_str;
     std::ofstream log_ofs(log_filename.c_str(), std::ios_base::out | std::ios_base::app );
 
@@ -740,8 +739,8 @@ int main (int argc, char *argv[]) {
     }
     catch (const std::runtime_error& err) {
         std::cout << err.what() << std::endl;
-        std::cout << program;
-        exit(0);
+        std::cout << program << std::endl;
+        exit(1);
     }
 
     unsigned int number_of_elements;
@@ -755,6 +754,7 @@ int main (int argc, char *argv[]) {
     double * const isf_error = numpy_data + 2*number_of_timeslices;
 
     uint64_t seed = 1407513600 + static_cast<uint64_t>(program.get<int>("--seed"));
+    int seed_int = program.get<int>("--seed");
     struct xoshiro256p_state rng = xoshiro256p_init(seed);
 
     double temperature = program.get<double>("--temperature");
@@ -791,7 +791,7 @@ int main (int argc, char *argv[]) {
     fs::create_directory(save_directory);
 
     //Write to log file
-    std::string log_filename_str = string_format("deac_log_%06d.bin",seed);
+    std::string log_filename_str = string_format("deac_log_%06d.dat",seed_int);
     fs::path log_filename = save_directory / log_filename_str;
     std::ofstream log_ofs(log_filename.c_str(), std::ios_base::out | std::ios_base::app );
 
@@ -807,7 +807,7 @@ int main (int argc, char *argv[]) {
             self_adapting_differential_weight_probability,
             self_adapting_differential_weight_shift,
             self_adapting_differential_weight, stop_minimum_fitness,
-            track_stats, seed, save_directory);
+            track_stats, seed_int, save_directory);
 
     free(numpy_data);
     free(frequency);
