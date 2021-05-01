@@ -28,6 +28,7 @@ if(STATIC)
     list(APPEND CMAKE_EXE_LINKER_FLAGS_DEBUG "-static")
 endif()
 
+
 # Check for GPU acceleration
 if (GPU_BLOCK_SIZE)
     add_definitions(-D GPU_BLOCK_SIZE=${GPU_BLOCK_SIZE})
@@ -126,6 +127,12 @@ if(NOT CMAKE_BUILD_TYPE)
    set(CMAKE_BUILD_TYPE None
        CACHE STRING "Choose the type of build : None Debug Release ZeroT ZeroTDebug."
        FORCE)
+endif()
+
+# Link filesystem library -lstdc++fs for old compilers
+if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.0)
+    message("Linking filesystem libraries -lstdc++fs for older compilers")
+    target_link_libraries(${exe} stdc++fs)
 endif()
 
 # 'make install' to the correct locations (provided by GNUInstallDirs).

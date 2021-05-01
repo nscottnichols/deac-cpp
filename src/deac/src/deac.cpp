@@ -9,8 +9,50 @@
 #include <string> // string_format
 #include <stdexcept> // string_format
 #include <fstream> // std::ofstream
-#include <filesystem>
-namespace fs = std::filesystem;
+
+#ifdef __GNUC__
+    #if __GNUC__ > 7
+        #include <filesystem>
+        namespace fs = std::filesystem;
+    #endif
+    #if __GNUC__ < 8
+        #include <experimental/filesystem>
+        namespace fs = std::experimental::filesystem;
+    #endif
+#endif
+#ifndef __GNUC__
+    #include <filesystem>
+    namespace fs = std::filesystem;
+#endif
+
+//GPU acceleration
+#ifdef GPU_BLOCK_SIZE
+    #ifndef USE_CUDA
+        #include "deac_gpu.hip.hpp"
+    #endif
+    #ifdef USE_CUDA
+        #include "deac_gpu.cuh"
+    #endif
+#endif
+
+#ifdef DEAC_DEBUG
+    #ifdef GPU_BLOCK_SIZE
+        #ifndef USE_CUDA
+            void h_gpu_check_array(double * _array, int length) {
+                int grid_size = (length + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+                hipLaunchKernelGGL(gpu_check_array, (dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, 0, _array, length);
+                HIP_ASSERT(hipDeviceSynchronize());
+            }
+        #endif
+        #ifdef USE_CUDA
+            void h_gpu_check_array(double * _array, int length) {
+                int grid_size = (length + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+                cuda_wrapper::gpu_check_array_wrapper(dim3(grid_size), dim3(GPU_BLOCK_SIZE), _array, length);
+                CUDA_ASSERT(cudaDeviceSynchronize());
+            }
+        #endif
+    #endif
+#endif
 
 void write_to_logfile(fs::path filename, std::string log_message ) {
     std::ofstream ofs(filename.c_str(), std::ios_base::out | std::ios_base::app );
@@ -202,13 +244,51 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double self_adapting_differential_weight, double stop_minimum_fitness,
         bool track_stats, int seed, fs::path save_directory) {
 
+    //Create GPU device streams
+    #ifdef GPU_BLOCK_SIZE
+        #ifndef USE_CUDA
+            hipStream_t stream_array[MAX_GPU_STREAMS];
+        #endif
+        #ifdef USE_CUDA
+            cudaStream_t stream_array[MAX_GPU_STREAMS];
+        #endif
+        for (int i = 0; i < MAX_GPU_STREAMS; i++) {
+            #ifndef USE_CUDA
+                HIP_ASSERT(hipStreamCreate(&stream_array[i]));
+            #endif
+            #ifdef USE_CUDA
+                CUDA_ASSERT(cudaStreamCreate(&stream_array[i]));
+            #endif
+        }
+    #endif
+
+    #ifdef GPU_BLOCK_SIZE
+        double * d_isf;
+        double * d_isf_error;
+        size_t bytes_isf = sizeof(double)*number_of_timeslices;
+        size_t bytes_isf_error = sizeof(double)*number_of_timeslices;
+        #ifndef USE_CUDA
+            HIP_ASSERT(hipMalloc(&d_isf, bytes_isf));
+            HIP_ASSERT(hipMalloc(&d_isf_error, bytes_isf_error));
+            HIP_ASSERT(hipMemcpy( d_isf, isf, bytes_isf, hipMemcpyHostToDevice ));
+            HIP_ASSERT(hipMemcpy( d_isf_error, isf_error, bytes_isf_error, hipMemcpyHostToDevice ));
+        #endif
+        #ifdef USE_CUDA
+            CUDA_ASSERT(cudaMalloc(&d_isf, bytes_isf));
+            CUDA_ASSERT(cudaMalloc(&d_isf_error, bytes_isf_error));
+            CUDA_ASSERT(cudaMemcpy( d_isf, isf, bytes_isf, cudaMemcpyHostToDevice ));
+            CUDA_ASSERT(cudaMemcpy( d_isf_error, isf_error, bytes_isf_error, cudaMemcpyHostToDevice ));
+        #endif
+    #endif
+
     double beta = 1.0/temperature;
     double zeroth_moment = isf[0];
     bool use_first_moment = first_moment >= 0.0;
     bool use_third_moment = third_moment >= 0.0;
 
     double * isf_term;
-    isf_term = (double*) malloc(sizeof(double)*genome_size*number_of_timeslices);
+    size_t bytes_isf_term = sizeof(double)*genome_size*number_of_timeslices;
+    isf_term = (double*) malloc(bytes_isf_term);
     for (int i=0; i<number_of_timeslices; i++) {
         double t = imaginary_time[i];
         double bo2mt = 0.5*beta - t;
@@ -226,21 +306,55 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             isf_term[isf_term_idx] = df*cosh(bo2mt*f);
         }
     }
+    
+    #ifdef GPU_BLOCK_SIZE
+        double * d_isf_term; // pointer to isf_term on gpu
+        #ifndef USE_CUDA
+            HIP_ASSERT(hipMalloc(&d_isf_term, bytes_isf_term)); // Allocate memory for isf_term on GPU
+            HIP_ASSERT(hipMemcpy( d_isf_term, isf_term, bytes_isf_term, hipMemcpyHostToDevice )); // Copy isf_term data to gpu
+        #endif
+        #ifdef USE_CUDA
+            CUDA_ASSERT(cudaMalloc(&d_isf_term, bytes_isf_term)); // Allocate memory for isf_term on GPU
+            CUDA_ASSERT(cudaMemcpy( d_isf_term, isf_term, bytes_isf_term, cudaMemcpyHostToDevice )); // Copy isf_term data to gpu
+        #endif
+    #endif
 
     //Generate population and set initial fitness
     double * population_old;
     double * population_new;
-    population_old = (double*) malloc(sizeof(double)*genome_size*population_size);
-    population_new = (double*) malloc(sizeof(double)*genome_size*population_size);
+    size_t bytes_population = sizeof(double)*genome_size*population_size;
+    population_old = (double*) malloc(bytes_population);
+    population_new = (double*) malloc(bytes_population);
     for (int i=0; i<genome_size*population_size; i++) {
         population_old[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
     }
 
+    #ifdef GPU_BLOCK_SIZE
+        double * d_population_old;
+        double * d_population_new;
+        #ifndef USE_CUDA
+            HIP_ASSERT(hipMalloc(&d_population_old, bytes_population));
+            HIP_ASSERT(hipMalloc(&d_population_new, bytes_population));
+            HIP_ASSERT(hipMemcpy( d_population_old, population_old, bytes_population, hipMemcpyHostToDevice ));
+        #endif
+        #ifdef USE_CUDA
+            CUDA_ASSERT(cudaMalloc(&d_population_old, bytes_population));
+            CUDA_ASSERT(cudaMalloc(&d_population_new, bytes_population));
+            CUDA_ASSERT(cudaMemcpy( d_population_old, population_old, bytes_population, cudaMemcpyHostToDevice )); 
+        #endif
+    #endif
+
     // Normalize population
     double * normalization_term;
     double * normalization;
+    #ifdef GPU_BLOCK_SIZE
+        double * d_normalization_term;
+        double * d_normalization;
+    #endif
+    size_t bytes_normalization_term = sizeof(double)*genome_size;
+    size_t bytes_normalization = sizeof(double)*population_size;
     if (normalize) {
-        normalization_term = (double*) malloc(sizeof(double)*genome_size);
+        normalization_term = (double*) malloc(bytes_normalization_term);
         for (int j=0; j<genome_size; j++) {
             double f = frequency[j];
             double df;
@@ -253,21 +367,77 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             }
             normalization_term[j] = df*cosh(0.5*beta*f);
         }
-        normalization = (double*) malloc(sizeof(double)*population_size);
-        matrix_multiply_MxN_by_Nx1(normalization, population_old,
-                normalization_term, population_size, genome_size);
-        for (int i=0; i<population_size; i++) {
-            double _norm = normalization[i];
-            for (int j=0; j<genome_size; j++) {
-                population_old[i*genome_size + j] *= zeroth_moment/_norm;
+        normalization = (double*) malloc(bytes_normalization);
+        #ifdef GPU_BLOCK_SIZE
+            #ifndef USE_CUDA
+                HIP_ASSERT(hipMalloc(&d_normalization_term, bytes_normalization_term));
+                HIP_ASSERT(hipMalloc(&d_normalization, bytes_normalization));
+                HIP_ASSERT(hipMemcpy( d_normalization_term, normalization_term, bytes_normalization_term, hipMemcpyHostToDevice ));
+            #endif
+            #ifdef USE_CUDA
+                CUDA_ASSERT(cudaMalloc(&d_normalization_term, bytes_normalization_term));
+                CUDA_ASSERT(cudaMalloc(&d_normalization, bytes_normalization));
+                CUDA_ASSERT(cudaMemcpy( d_normalization_term, normalization_term, bytes_normalization_term, cudaMemcpyHostToDevice )); 
+            #endif
+        #endif
+
+        #ifdef GPU_BLOCK_SIZE
+            int grid_size_set_normalization = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            #ifndef USE_CUDA
+                HIP_ASSERT(hipMemset(d_normalization,0, bytes_normalization));
+                for (int i=0; i<population_size; i++) {
+                    int stream_idx = i % MAX_GPU_STREAMS;
+                    hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
+                            dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                            d_normalization, d_population_old, d_normalization_term, genome_size, i);
+                }
+                HIP_ASSERT(hipDeviceSynchronize());
+                int grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+                hipLaunchKernelGGL(gpu_normalize_population, dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE), 0, 0,
+                        d_population_old, d_normalization, zeroth_moment, population_size, genome_size); 
+                HIP_ASSERT(hipDeviceSynchronize());
+            #endif
+            #ifdef USE_CUDA
+                CUDA_ASSERT(cudaMemset(d_normalization,0, bytes_normalization));
+                for (int i=0; i<population_size; i++) {
+                    int stream_idx = i % MAX_GPU_STREAMS;
+                    cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
+                            dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                            d_normalization, d_population_old, d_normalization_term, genome_size, i);
+                }
+                CUDA_ASSERT(cudaDeviceSynchronize());
+
+                matrix_multiply_MxN_by_Nx1(normalization, population_old,
+                        normalization_term, population_size, genome_size);
+                int grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+                cuda_wrapper::gpu_normalize_population_wrapper( dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE),
+                        d_population_old, d_normalization, zeroth_moment, population_size, genome_size); 
+                CUDA_ASSERT(cudaDeviceSynchronize());
+            #endif
+        #endif
+        #ifndef GPU_BLOCK_SIZE
+            matrix_multiply_MxN_by_Nx1(normalization, population_old,
+                    normalization_term, population_size, genome_size);
+            for (int i=0; i<population_size; i++) {
+                double _norm = normalization[i];
+                for (int j=0; j<genome_size; j++) {
+                    population_old[i*genome_size + j] *= zeroth_moment/_norm;
+                }
             }
-        }
+        #endif
+
     }
 
     double * first_moments_term;
     double * first_moments;
+    #ifdef GPU_BLOCK_SIZE
+        double * d_first_moments_term;
+        double * d_first_moments;
+    #endif
+    size_t bytes_first_moments_term = sizeof(double)*genome_size;
+    size_t bytes_first_moments = sizeof(double)*population_size;
     if (use_first_moment) {
-        first_moments_term = (double*) malloc(sizeof(double)*genome_size);
+        first_moments_term = (double*) malloc(bytes_first_moments_term);
         for (int j=0; j<genome_size; j++) {
             double f = frequency[j];
             double df;
@@ -281,15 +451,58 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             first_moments_term[j] = df*f*sinh(0.5*beta*f);
         }
 
-        first_moments = (double*) malloc(sizeof(double)*population_size);
-        matrix_multiply_MxN_by_Nx1(first_moments, population_old,
-                first_moments_term, population_size, genome_size);
+        first_moments = (double*) malloc(bytes_first_moments);
+        #ifdef GPU_BLOCK_SIZE
+            #ifndef USE_CUDA
+                HIP_ASSERT(hipMalloc(&d_first_moments_term, bytes_first_moments_term));
+                HIP_ASSERT(hipMalloc(&d_first_moments, bytes_first_moments));
+                HIP_ASSERT(hipMemcpy( d_first_moments_term, first_moments_term, bytes_first_moments_term, hipMemcpyHostToDevice ));
+            #endif
+            #ifdef USE_CUDA
+                CUDA_ASSERT(cudaMalloc(&d_first_moments_term, bytes_first_moments_term));
+                CUDA_ASSERT(cudaMalloc(&d_first_moments, bytes_first_moments));
+                CUDA_ASSERT(cudaMemcpy( d_first_moments_term, first_moments_term, bytes_first_moments_term, cudaMemcpyHostToDevice )); 
+            #endif
+        #endif
+        #ifdef GPU_BLOCK_SIZE
+            int grid_size_set_first_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            #ifndef USE_CUDA
+                HIP_ASSERT(hipMemset(d_first_moments,0, bytes_first_moments));
+                for (int i=0; i<population_size; i++) {
+                    int stream_idx = i % MAX_GPU_STREAMS;
+                    hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
+                            dim3(grid_size_set_first_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                            d_first_moments, d_population_old, d_first_moments_term, genome_size, i);
+                }
+                HIP_ASSERT(hipDeviceSynchronize());
+            #endif
+            #ifdef USE_CUDA
+                CUDA_ASSERT(cudaMemset(d_first_moments,0, bytes_first_moments));
+                for (int i=0; i<population_size; i++) {
+                    int stream_idx = i % MAX_GPU_STREAMS;
+                    cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
+                            dim3(grid_size_set_first_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                            d_first_moments, d_population_old, d_first_moments_term, genome_size, i);
+                }
+                CUDA_ASSERT(cudaDeviceSynchronize());
+            #endif
+        #endif
+        #ifndef GPU_BLOCK_SIZE
+            matrix_multiply_MxN_by_Nx1(first_moments, population_old,
+                    first_moments_term, population_size, genome_size);
+        #endif
     }
 
     double * third_moments_term;
     double * third_moments;
+    #ifdef GPU_BLOCK_SIZE
+        double * d_third_moments_term;
+        double * d_third_moments;
+    #endif
+    size_t bytes_third_moments_term = sizeof(double)*genome_size;
+    size_t bytes_third_moments = sizeof(double)*population_size;
     if (use_third_moment) {
-        third_moments_term = (double*) malloc(sizeof(double)*genome_size);
+        third_moments_term = (double*) malloc(bytes_third_moments_term);
         for (int j=0; j<genome_size; j++) {
             double f = frequency[j];
             double df;
@@ -303,41 +516,103 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             third_moments_term[j] = df*pow(f,3)*sinh(0.5*beta*f);
         }
 
-        third_moments = (double*) malloc(sizeof(double)*population_size);
-        matrix_multiply_MxN_by_Nx1(third_moments, population_old,
-                third_moments_term, population_size, genome_size);
+        third_moments = (double*) malloc(bytes_third_moments);
+        #ifdef GPU_BLOCK_SIZE
+            #ifndef USE_CUDA
+                HIP_ASSERT(hipMalloc(&d_third_moments_term, bytes_third_moments_term));
+                HIP_ASSERT(hipMalloc(&d_third_moments, bytes_third_moments));
+                HIP_ASSERT(hipMemcpy( d_third_moments_term, third_moments_term, bytes_third_moments_term, hipMemcpyHostToDevice ));
+            #endif
+            #ifdef USE_CUDA
+                CUDA_ASSERT(cudaMalloc(&d_third_moments_term, bytes_third_moments_term));
+                CUDA_ASSERT(cudaMalloc(&d_third_moments, bytes_third_moments));
+                CUDA_ASSERT(cudaMemcpy( d_third_moments_term, third_moments_term, bytes_third_moments_term, cudaMemcpyHostToDevice )); 
+            #endif
+        #endif
+        #ifdef GPU_BLOCK_SIZE
+            int grid_size_set_third_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            #ifndef USE_CUDA
+                HIP_ASSERT(hipMemset(d_third_moments,0, bytes_third_moments));
+                for (int i=0; i<population_size; i++) {
+                    int stream_idx = i % MAX_GPU_STREAMS;
+                    hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
+                            dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                            d_third_moments, d_population_old, d_third_moments_term, genome_size, i);
+                }
+                HIP_ASSERT(hipDeviceSynchronize());
+            #endif
+            #ifdef USE_CUDA
+                CUDA_ASSERT(cudaMemset(d_third_moments,0, bytes_third_moments));
+                for (int i=0; i<population_size; i++) {
+                    int stream_idx = i % MAX_GPU_STREAMS;
+                    cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
+                            dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                            d_third_moments, d_population_old, d_third_moments_term, genome_size, i);
+                }
+                CUDA_ASSERT(cudaDeviceSynchronize());
+            #endif
+        #endif
+        #ifndef GPU_BLOCK_SIZE
+            matrix_multiply_MxN_by_Nx1(third_moments, population_old,
+                    third_moments_term, population_size, genome_size);
+        #endif
     }
 
     //set isf_model and calculate fitness
     double * isf_model;
-    isf_model = (double*) malloc(sizeof(double)*number_of_timeslices*population_size);
-
-    for (int i=0; i<number_of_timeslices; i++) {
-        double t = imaginary_time[i];
-        double bo2mt = 0.5*beta - t;
-        for (int j=0; j<genome_size; j++) {
-            double f = frequency[j];
-            double df;
-            if (j==0) {
-                df = 0.5*(frequency[j+1] - frequency[j]);
-            } else if (j == genome_size - 1) {
-                df = 0.5*(frequency[j] - frequency[j-1]);
-            } else {
-                df = 0.5*(frequency[j+1] - frequency[j-1]);
+    #ifdef GPU_BLOCK_SIZE
+        double * d_isf_model;
+    #endif
+    size_t bytes_isf_model = sizeof(double)*number_of_timeslices*population_size;
+    isf_model = (double*) malloc(bytes_isf_model);
+    #ifdef GPU_BLOCK_SIZE
+        #ifndef USE_CUDA
+            HIP_ASSERT(hipMalloc(&d_isf_model, bytes_isf_model));
+        #endif
+        #ifdef USE_CUDA
+            CUDA_ASSERT(cudaMalloc(&d_isf_model, bytes_isf_model));
+        #endif
+    #endif
+    #ifdef GPU_BLOCK_SIZE
+        int grid_size_set_isf_model = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+        #ifndef USE_CUDA
+            HIP_ASSERT(hipMemset(d_isf_model,0, bytes_isf_model));
+            for (int i=0; i<population_size*number_of_timeslices; i++) {
+                int stream_idx = i % MAX_GPU_STREAMS;
+                hipLaunchKernelGGL(gpu_matrix_multiply_LxM_by_MxN,
+                        dim3(grid_size_set_isf_model), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                        d_isf_model, d_isf_term, d_population_old, number_of_timeslices, genome_size, i);
             }
-            int isf_term_idx = i*genome_size + j;
-            isf_term[isf_term_idx] = df*cosh(bo2mt*f);
-        }
-    }
-    matrix_multiply_LxM_by_MxN(isf_model, isf_term, population_old,
-            number_of_timeslices, genome_size, population_size);
+            HIP_ASSERT(hipDeviceSynchronize());
+        #endif
+        #ifdef USE_CUDA
+            CUDA_ASSERT(cudaMemset(d_isf_model,0, bytes_isf_model));
+            for (int i=0; i<population_size*number_of_timeslices; i++) {
+                int stream_idx = i % MAX_GPU_STREAMS;
+                cuda_wrapper::gpu_matrix_multiply_LxM_by_MxN_wrapper(
+                        dim3(grid_size_set_isf_model), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                        d_isf_model, d_isf_term, d_population_old, number_of_timeslices, genome_size, i);
+            }
+            CUDA_ASSERT(cudaDeviceSynchronize());
+        #endif
+    #endif
+    #ifndef GPU_BLOCK_SIZE
+        matrix_multiply_LxM_by_MxN(isf_model, isf_term, population_old,
+                number_of_timeslices, genome_size, population_size);
+    #endif
 
     double * inverse_first_moments_term;
     double * inverse_first_moments;
+    #ifdef GPU_BLOCK_SIZE
+        double * d_inverse_first_moments_term;
+        double * d_inverse_first_moments;
+    #endif
+    size_t bytes_inverse_first_moments_term = sizeof(double)*number_of_timeslices;
+    size_t bytes_inverse_first_moments = sizeof(double)*population_size;
     double inverse_first_moment = 0.0;
     double inverse_first_moment_error = 0.0;
     if (use_inverse_first_moment) {
-        inverse_first_moments_term = (double*) malloc(sizeof(double)*number_of_timeslices);
+        inverse_first_moments_term = (double*) malloc(bytes_inverse_first_moments_term);
         for (int j=0; j<number_of_timeslices; j++) {
             double dt;
             if (j==0) {
@@ -353,76 +628,331 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         }
         inverse_first_moment_error = sqrt(inverse_first_moment_error);
 
-        inverse_first_moments = (double*) malloc(sizeof(double)*population_size);
-        matrix_multiply_MxN_by_Nx1(inverse_first_moments, isf_model,
-                inverse_first_moments_term, population_size, number_of_timeslices);
+        inverse_first_moments = (double*) malloc(bytes_inverse_first_moments);
+        #ifdef GPU_BLOCK_SIZE
+            #ifndef USE_CUDA
+                HIP_ASSERT(hipMalloc(&d_inverse_first_moments_term, bytes_inverse_first_moments_term));
+                HIP_ASSERT(hipMalloc(&d_inverse_first_moments, bytes_inverse_first_moments));
+                HIP_ASSERT(hipMemcpy( d_inverse_first_moments_term, inverse_first_moments_term, bytes_inverse_first_moments_term, hipMemcpyHostToDevice ));
+            #endif
+            #ifdef USE_CUDA
+                CUDA_ASSERT(cudaMalloc(&d_inverse_first_moments_term, bytes_inverse_first_moments_term));
+                CUDA_ASSERT(cudaMalloc(&d_inverse_first_moments, bytes_inverse_first_moments));
+                CUDA_ASSERT(cudaMemcpy( d_inverse_first_moments_term, inverse_first_moments_term, bytes_inverse_first_moments_term, cudaMemcpyHostToDevice )); 
+            #endif
+        #endif
+        #ifdef GPU_BLOCK_SIZE
+            int grid_size_set_inverse_first_moments = (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            #ifndef USE_CUDA
+                HIP_ASSERT(hipMemset(d_inverse_first_moments,0, bytes_inverse_first_moments));
+                for (int i=0; i<population_size; i++) {
+                    int stream_idx = i % MAX_GPU_STREAMS;
+                    hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
+                            dim3(grid_size_set_inverse_first_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                            d_inverse_first_moments, d_isf_model, d_inverse_first_moments_term, number_of_timeslices, i);
+                }
+                HIP_ASSERT(hipDeviceSynchronize());
+            #endif
+            #ifdef USE_CUDA
+                CUDA_ASSERT(cudaMemset(d_inverse_first_moments,0, bytes_inverse_first_moments));
+                for (int i=0; i<population_size; i++) {
+                    int stream_idx = i % MAX_GPU_STREAMS;
+                    cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
+                            dim3(grid_size_set_inverse_first_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                            d_inverse_first_moments, d_isf_model, d_inverse_first_moments_term, number_of_timeslices, i);
+                }
+                CUDA_ASSERT(cudaDeviceSynchronize());
+            #endif
+        #endif
+        #ifndef GPU_BLOCK_SIZE
+            matrix_multiply_MxN_by_Nx1(inverse_first_moments, isf_model,
+                    inverse_first_moments_term, population_size, number_of_timeslices);
+        #endif
     }
 
     double * fitness_old;
-    fitness_old = (double*) malloc(sizeof(double)*population_size);
+    #ifdef GPU_BLOCK_SIZE
+        double * d_fitness_old;
+        double * d_fitness_new;
+        size_t bytes_fitness_new = sizeof(double)*population_size;
+    #endif
+    size_t bytes_fitness_old = sizeof(double)*population_size;
+    fitness_old = (double*) malloc(bytes_fitness_old);
 
-    for (int i=0; i<population_size; i++) {
-        double _fitness = reduced_chi_square_statistic(isf,
-                isf_model + i*number_of_timeslices, isf_error,
-                number_of_timeslices)/number_of_timeslices;
-        if (use_inverse_first_moment) {
-            _fitness += pow((inverse_first_moment - inverse_first_moments[i])/inverse_first_moment_error,2);
+    #ifdef GPU_BLOCK_SIZE
+        #ifndef USE_CUDA
+            HIP_ASSERT(hipMalloc(&d_fitness_old, bytes_fitness_old));
+            HIP_ASSERT(hipMalloc(&d_fitness_new, bytes_fitness_new));
+        #endif
+        #ifdef USE_CUDA
+            CUDA_ASSERT(cudaMalloc(&d_fitness_old, bytes_fitness_old));
+            CUDA_ASSERT(cudaMalloc(&d_fitness_new, bytes_fitness_new));
+        #endif
+    #endif
+    #ifdef GPU_BLOCK_SIZE
+        int grid_size_set_fitness = (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+        int grid_size_set_fitness_moments = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+        #ifndef USE_CUDA
+            HIP_ASSERT(hipMemset(d_fitness_old,0, bytes_fitness_old));
+            for (int i=0; i<population_size; i++) {
+                int stream_idx = i % MAX_GPU_STREAMS;
+                hipLaunchKernelGGL(gpu_set_fitness,
+                        dim3(grid_size_set_fitness), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                        d_fitness_old, d_isf, d_isf_model, d_isf_error, number_of_timeslices, i);
+            }
+            HIP_ASSERT(hipDeviceSynchronize());
+            if (use_inverse_first_moment) {
+                hipLaunchKernelGGL(gpu_set_fitness_moments_reduced_chi_squared,
+                        dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE), 0, 0,
+                        d_fitness_old, d_inverse_first_moments, inverse_first_moment, inverse_first_moment_error, population_size);
+                HIP_ASSERT(hipDeviceSynchronize());
+            }
+            if (use_first_moment) {
+                hipLaunchKernelGGL(gpu_set_fitness_moments_chi_squared,
+                        dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE), 0, 0,
+                        d_fitness_old, d_first_moments, first_moment, population_size);
+                HIP_ASSERT(hipDeviceSynchronize());
+            }
+            if (use_third_moment) {
+                hipLaunchKernelGGL(gpu_set_fitness_moments_reduced_chi_squared,
+                        dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE), 0, 0,
+                        d_fitness_old, d_third_moments, third_moment, third_moment_error, population_size);
+                HIP_ASSERT(hipDeviceSynchronize());
+            }
+        #endif
+        #ifdef USE_CUDA
+            CUDA_ASSERT(cudaMemset(d_fitness_old,0, bytes_fitness_old));
+            for (int i=0; i<population_size; i++) {
+                int stream_idx = i % MAX_GPU_STREAMS;
+                cuda_wrapper::gpu_set_fitness_wrapper(
+                        dim3(grid_size_set_fitness), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                        d_fitness_old, d_isf, d_isf_model, d_isf_error, number_of_timeslices, i);
+            }
+            CUDA_ASSERT(cudaDeviceSynchronize());
+            if (use_inverse_first_moment) {
+                cuda_wrapper::gpu_set_fitness_moments_reduced_chi_squared_wrapper(
+                        dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE),
+                        d_fitness_old, d_inverse_first_moments, inverse_first_moment, inverse_first_moment_error, population_size);
+                CUDA_ASSERT(cudaDeviceSynchronize());
+            }
+            if (use_first_moment) {
+                cuda_wrapper::gpu_set_fitness_moments_chi_squared_wrapper(
+                        dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE),
+                        d_fitness_old, d_first_moments, first_moment, population_size);
+                CUDA_ASSERT(cudaDeviceSynchronize());
+            }
+            if (use_third_moment) {
+                cuda_wrapper::gpu_set_fitness_moments_reduced_chi_squared_wrapper(
+                        dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE),
+                        d_fitness_old, d_third_moments, third_moment, third_moment_error, population_size);
+                CUDA_ASSERT(cudaDeviceSynchronize());
+            }
+        #endif
+    #endif
+    #ifndef GPU_BLOCK_SIZE
+        for (int i=0; i<population_size; i++) {
+            double _fitness = reduced_chi_square_statistic(isf,
+                    isf_model + i*number_of_timeslices, isf_error,
+                    number_of_timeslices)/number_of_timeslices;
+            if (use_inverse_first_moment) {
+                _fitness += pow((inverse_first_moment - inverse_first_moments[i])/inverse_first_moment_error,2);
+            }
+            if (use_first_moment) {
+                _fitness += pow(first_moments[i] - first_moment,2)/first_moment;
+            }
+            if (use_third_moment) {
+                _fitness += pow((third_moment - third_moments[i])/third_moment_error,2);
+            }
+            fitness_old[i] = _fitness;
         }
-        if (use_first_moment) {
-            _fitness += pow(first_moments[i] - first_moment,2)/first_moment;
-        }
-        if (use_third_moment) {
-            _fitness += pow((third_moment - third_moments[i])/third_moment_error,2);
-        }
-        fitness_old[i] = _fitness;
-    }
+    #endif
 
     double * crossover_probabilities_old;
     double * crossover_probabilities_new;
-    crossover_probabilities_old = (double*) malloc(sizeof(double)*population_size);
-    crossover_probabilities_new = (double*) malloc(sizeof(double)*population_size);
+    size_t bytes_crossover_probabilities = sizeof(double)*population_size;
+    crossover_probabilities_old = (double*) malloc(bytes_crossover_probabilities);
+    crossover_probabilities_new = (double*) malloc(bytes_crossover_probabilities);
     for (int i=0; i<population_size; i++) {
         crossover_probabilities_old[i] = crossover_probability;
     }
+    #ifdef GPU_BLOCK_SIZE
+        double * d_crossover_probabilities_old;
+        double * d_crossover_probabilities_new;
+        #ifndef USE_CUDA
+            HIP_ASSERT(hipMalloc(&d_crossover_probabilities_old, bytes_crossover_probabilities));
+            HIP_ASSERT(hipMalloc(&d_crossover_probabilities_new, bytes_crossover_probabilities));
+            HIP_ASSERT(hipMemcpy( d_crossover_probabilities_old, crossover_probabilities_old, bytes_crossover_probabilities, hipMemcpyHostToDevice ));
+        #endif
+        #ifdef USE_CUDA
+            CUDA_ASSERT(cudaMalloc(&d_crossover_probabilities_old, bytes_crossover_probabilities));
+            CUDA_ASSERT(cudaMalloc(&d_crossover_probabilities_new, bytes_crossover_probabilities));
+            CUDA_ASSERT(cudaMemcpy( d_crossover_probabilities_old, crossover_probabilities_old, bytes_crossover_probabilities, cudaMemcpyHostToDevice )); 
+        #endif
+    #endif
 
     double * differential_weights_old;
     double * differential_weights_new;
-    differential_weights_old = (double*) malloc(sizeof(double)*population_size);
-    differential_weights_new = (double*) malloc(sizeof(double)*population_size);
+    size_t bytes_differential_weights = sizeof(double)*population_size;
+    differential_weights_old = (double*) malloc(bytes_differential_weights);
+    differential_weights_new = (double*) malloc(bytes_differential_weights);
     for (int i=0; i<population_size; i++) {
         differential_weights_old[i] = differential_weight;
     }
+    #ifdef GPU_BLOCK_SIZE
+        double * d_differential_weights_old;
+        double * d_differential_weights_new;
+        #ifndef USE_CUDA
+            HIP_ASSERT(hipMalloc(&d_differential_weights_old, bytes_differential_weights));
+            HIP_ASSERT(hipMalloc(&d_differential_weights_new, bytes_differential_weights));
+            HIP_ASSERT(hipMemcpy( d_differential_weights_old, differential_weights_old, bytes_differential_weights, hipMemcpyHostToDevice ));
+        #endif
+        #ifdef USE_CUDA
+            CUDA_ASSERT(cudaMalloc(&d_differential_weights_old, bytes_differential_weights));
+            CUDA_ASSERT(cudaMalloc(&d_differential_weights_new, bytes_differential_weights));
+            CUDA_ASSERT(cudaMemcpy( d_differential_weights_old, differential_weights_old, bytes_differential_weights, cudaMemcpyHostToDevice )); 
+        #endif
+    #endif
 
     //Initialize statistics arrays
     double * fitness_mean;
     double * fitness_minimum;
     double * fitness_standard_deviation;
+    #ifdef GPU_BLOCK_SIZE
+        double * d_fitness_mean;
+        double * d_fitness_minimum;
+        double * d_fitness_standard_deviation;
+    #endif
+    size_t bytes_fitness_mean = sizeof(double)*number_of_generations;
+    size_t bytes_fitness_minimum = sizeof(double)*number_of_generations;
+    size_t bytes_fitness_standard_deviation = sizeof(double)*number_of_generations;
     if (track_stats) {
-        fitness_mean = (double*) malloc(sizeof(double)*number_of_generations);
-        fitness_minimum = (double*) malloc(sizeof(double)*number_of_generations);
-        fitness_standard_deviation = (double*) malloc(sizeof(double)*number_of_generations);
+        fitness_mean = (double*) malloc(bytes_fitness_mean);
+        fitness_minimum = (double*) malloc(bytes_fitness_minimum);
+        fitness_standard_deviation = (double*) malloc(bytes_fitness_standard_deviation);
+        #ifdef GPU_BLOCK_SIZE
+            #ifndef USE_CUDA
+                HIP_ASSERT(hipMalloc(&d_fitness_mean, bytes_fitness_mean));
+                HIP_ASSERT(hipMalloc(&d_fitness_minimum, bytes_fitness_minimum));
+                HIP_ASSERT(hipMalloc(&d_fitness_standard_deviation, bytes_fitness_standard_deviation));
+                HIP_ASSERT(hipMemset(d_fitness_mean,0, bytes_fitness_mean));
+                HIP_ASSERT(hipMemset(d_fitness_minimum,0, bytes_fitness_minimum));
+                HIP_ASSERT(hipMemset(d_fitness_standard_deviation,0, bytes_fitness_standard_deviation));
+            #endif
+            #ifdef USE_CUDA
+                CUDA_ASSERT(cudaMalloc(&d_fitness_mean, bytes_fitness_mean));
+                CUDA_ASSERT(cudaMalloc(&d_fitness_minimum, bytes_fitness_minimum));
+                CUDA_ASSERT(cudaMalloc(&d_fitness_standard_deviation, bytes_fitness_standard_deviation));
+                CUDA_ASSERT(cudaMemset(d_fitness_mean,0, bytes_fitness_mean));
+                CUDA_ASSERT(cudaMemset(d_fitness_minimum,0, bytes_fitness_minimum));
+                CUDA_ASSERT(cudaMemset(d_fitness_standard_deviation,0, bytes_fitness_standard_deviation));
+            #endif
+        #endif
     }
     
     bool * mutate_indices;
-    mutate_indices = (bool*) malloc(sizeof(bool)*genome_size*population_size);
+    #ifdef GPU_BLOCK_SIZE
+        bool * d_mutate_indices;
+        bool * d_rejection_indices;
+        size_t bytes_rejection_indices = sizeof(bool)*population_size;
+    #endif
+    size_t bytes_mutate_indices = sizeof(bool)*genome_size*population_size;
+    mutate_indices = (bool*) malloc(bytes_mutate_indices);
+    #ifdef GPU_BLOCK_SIZE
+        #ifndef USE_CUDA
+            HIP_ASSERT(hipMalloc(&d_mutate_indices, bytes_mutate_indices));
+            HIP_ASSERT(hipMalloc(&d_rejection_indices, bytes_rejection_indices));
+        #endif
+        #ifdef USE_CUDA
+            CUDA_ASSERT(cudaMalloc(&d_mutate_indices, bytes_mutate_indices));
+            CUDA_ASSERT(cudaMalloc(&d_rejection_indices, bytes_rejection_indices));
+        #endif
+    #endif
 
     int * mutant_indices;
-    mutant_indices = (int*) malloc(sizeof(int)*3*population_size);
+    #ifdef GPU_BLOCK_SIZE
+        int * d_mutant_indices;
+    #endif
+    size_t bytes_mutant_indices = sizeof(int)*3*population_size;
+    mutant_indices = (int*) malloc(bytes_mutant_indices);
+    #ifdef GPU_BLOCK_SIZE
+        #ifndef USE_CUDA
+            HIP_ASSERT(hipMalloc(&d_mutant_indices, bytes_mutant_indices));
+        #endif
+        #ifdef USE_CUDA
+            CUDA_ASSERT(cudaMalloc(&d_mutant_indices, bytes_mutant_indices));
+        #endif
+    #endif
 
     double minimum_fitness;
     int minimum_fitness_idx;
+    #ifdef GPU_BLOCK_SIZE
+        double * d_minimum_fitness;
+        size_t bytes_minimum_fitness = sizeof(double);
+        #ifndef USE_CUDA
+            HIP_ASSERT(hipMalloc(&d_minimum_fitness, bytes_minimum_fitness));
+        #endif
+        #ifdef USE_CUDA
+            CUDA_ASSERT(cudaMalloc(&d_minimum_fitness, bytes_minimum_fitness));
+        #endif
+    #endif
     
     int generation;
     for (int ii=0; ii < number_of_generations - 1; ii++) {
         generation = ii;
-        minimum_fitness = minimum(fitness_old,population_size);
+        #ifdef GPU_BLOCK_SIZE
+            #ifndef USE_CUDA
+                hipLaunchKernelGGL(gpu_get_minimum_fitness,
+                        dim3(1), dim3(GPU_BLOCK_SIZE), 0, 0,
+                        d_fitness_old, d_minimum_fitness, population_size);
+                HIP_ASSERT(hipDeviceSynchronize());
+                hipMemcpy(&minimum_fitness, d_minimum_fitness, bytes_minimum_fitness, hipMemcpyDeviceToHost);
+            #endif
+            #ifdef USE_CUDA
+                cuda_wrapper::gpu_get_minimum_fitness_wrapper(
+                        dim3(1), dim3(GPU_BLOCK_SIZE),
+                        d_fitness_old, d_minimum_fitness, population_size);
+                CUDA_ASSERT(cudaDeviceSynchronize());
+                cudaMemcpy(&minimum_fitness, d_minimum_fitness, bytes_minimum_fitness, cudaMemcpyDeviceToHost);
+            #endif
+        #endif
+        #ifndef GPU_BLOCK_SIZE
+            minimum_fitness = minimum(fitness_old,population_size);
+        #endif
 
         //Get Statistics
         if (track_stats) {
-            fitness_mean[ii] = mean(fitness_old, population_size);
-            fitness_minimum[ii] = minimum_fitness;
-            fitness_standard_deviation[ii] = standard_deviation(fitness_old,
-                    fitness_mean[ii], population_size);
+            #ifdef GPU_BLOCK_SIZE
+                int grid_size_set_fitness_mean = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                int grid_size_set_fitness_standard_deviation = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                #ifndef USE_CUDA
+                    hipLaunchKernelGGL(gpu_set_fitness_mean,
+                            dim3(grid_size_set_fitness_mean), dim3(GPU_BLOCK_SIZE), 0, 0,
+                            d_fitness_mean, d_fitness_old, population_size, ii);
+                    HIP_ASSERT(hipDeviceSynchronize());
+                    hipMemcpy(d_fitness_minimum + ii, d_minimum_fitness, bytes_minimum_fitness, hipMemcpyDeviceToDevice);
+                    hipLaunchKernelGGL(gpu_set_fitness_standard_deviation,
+                            dim3(grid_size_set_fitness_standard_deviation), dim3(GPU_BLOCK_SIZE), 0, 0,
+                            d_fitness_standard_deviation, d_fitness_mean, d_fitness_old, population_size, ii);
+                    HIP_ASSERT(hipDeviceSynchronize());
+                #endif
+                #ifdef USE_CUDA
+                    cuda_wrapper::gpu_set_fitness_mean_wrapper(
+                            dim3(grid_size_set_fitness_mean), dim3(GPU_BLOCK_SIZE),
+                            d_fitness_mean, d_fitness_old, population_size, ii);
+                    CUDA_ASSERT(cudaDeviceSynchronize());
+                    cudaMemcpy(d_fitness_minimum + ii, d_minimum_fitness, bytes_minimum_fitness, cudaMemcpyDeviceToDevice);
+                    cuda_wrapper::gpu_set_fitness_standard_deviation_wrapper(
+                            dim3(grid_size_set_fitness_standard_deviation), dim3(GPU_BLOCK_SIZE),
+                            d_fitness_standard_deviation, d_fitness_mean, d_fitness_old, population_size, ii);
+                    CUDA_ASSERT(cudaDeviceSynchronize());
+                #endif
+            #endif
+            #ifndef GPU_BLOCK_SIZE
+                fitness_mean[ii] = mean(fitness_old, population_size);
+                fitness_minimum[ii] = minimum_fitness;
+                fitness_standard_deviation[ii] = standard_deviation(fitness_old,
+                        fitness_mean[ii], population_size);
+            #endif
         }
         
         //Stopping criteria
@@ -431,7 +961,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         }
 
 
-        //Set crossover probabilities
+        //Set crossover probabilities and differential weights
         for (int i=0; i<population_size; i++) {
             if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_crossover_probability) {
                 crossover_probabilities_new[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53;
@@ -448,6 +978,16 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 differential_weights_new[i] = differential_weights_old[i];
             }
         }
+        #ifdef GPU_BLOCK_SIZE
+            #ifndef USE_CUDA
+                HIP_ASSERT(hipMemcpy( d_crossover_probabilities_new, crossover_probabilities_new, bytes_crossover_probabilities, hipMemcpyHostToDevice ));
+                HIP_ASSERT(hipMemcpy( d_differential_weights_new, differential_weights_new, bytes_differential_weights, hipMemcpyHostToDevice ));
+            #endif
+            #ifdef USE_CUDA
+                CUDA_ASSERT(cudaMemcpy( d_crossover_probabilities_new, crossover_probabilities_new, bytes_crossover_probabilities, cudaMemcpyHostToDevice )); 
+                CUDA_ASSERT(cudaMemcpy( d_differential_weights_new, differential_weights_new, bytes_differential_weights, cudaMemcpyHostToDevice )); 
+            #endif
+        #endif
 
         //Set mutant population and indices 
         for (int i=0; i<population_size; i++) {
@@ -457,82 +997,375 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 mutate_indices[i*genome_size + j] = (xoshiro256p(rng) >> 11) * 0x1.0p-53 < crossover_rate;
             }
         }
+        #ifdef GPU_BLOCK_SIZE
+            #ifndef USE_CUDA
+                HIP_ASSERT(hipMemcpy( d_mutant_indices, mutant_indices, bytes_mutant_indices, hipMemcpyHostToDevice ));
+                HIP_ASSERT(hipMemcpy( d_mutate_indices, mutate_indices, bytes_mutate_indices, hipMemcpyHostToDevice ));
+            #endif
+            #ifdef USE_CUDA
+                CUDA_ASSERT(cudaMemcpy( d_mutant_indices, mutant_indices, bytes_mutant_indices, cudaMemcpyHostToDevice ));
+                CUDA_ASSERT(cudaMemcpy( d_mutate_indices, mutate_indices, bytes_mutate_indices, cudaMemcpyHostToDevice ));
+            #endif
+        #endif
 
-        for (int i=0; i<population_size; i++) {
-            double F = differential_weights_new[i];
-            int mutant_index1 = mutant_indices[3*i];
-            int mutant_index2 = mutant_indices[3*i + 1];
-            int mutant_index3 = mutant_indices[3*i + 2];
-            for (int j=0; j<genome_size; j++) {
-                bool mutate = mutate_indices[i*genome_size + j];
-                if (mutate) {
-                    population_new[i*genome_size + j] = fabs( 
-                        population_old[mutant_index1*genome_size + j] + F*(
-                                population_old[mutant_index2*genome_size + j] -
-                                population_old[mutant_index3*genome_size + j]));
-                } else {
-                    population_new[i*genome_size + j] = population_old[i*genome_size + j];
+        #ifdef GPU_BLOCK_SIZE
+            int grid_size_set_population_new = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            #ifndef USE_CUDA
+                hipLaunchKernelGGL(gpu_set_population_new,
+                        dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE), 0, 0,
+                        d_population_new, d_population_old, d_mutant_indices, d_differential_weights_new, d_mutate_indices, population_size, genome_size);
+                HIP_ASSERT(hipDeviceSynchronize());
+            #endif
+            #ifdef USE_CUDA
+                cuda_wrapper::gpu_set_population_new_wrapper(
+                        dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE),
+                        d_population_new, d_population_old, d_mutant_indices, d_differential_weights_new, d_mutate_indices, population_size, genome_size);
+                CUDA_ASSERT(cudaDeviceSynchronize());
+            #endif
+        #endif
+        #ifndef GPU_BLOCK_SIZE
+            for (int i=0; i<population_size; i++) {
+                double F = differential_weights_new[i];
+                int mutant_index1 = mutant_indices[3*i];
+                int mutant_index2 = mutant_indices[3*i + 1];
+                int mutant_index3 = mutant_indices[3*i + 2];
+                for (int j=0; j<genome_size; j++) {
+                    bool mutate = mutate_indices[i*genome_size + j];
+                    if (mutate) {
+                        population_new[i*genome_size + j] = fabs( 
+                            population_old[mutant_index1*genome_size + j] + F*(
+                                    population_old[mutant_index2*genome_size + j] -
+                                    population_old[mutant_index3*genome_size + j]));
+                    } else {
+                        population_new[i*genome_size + j] = population_old[i*genome_size + j];
+                    }
                 }
             }
-        }
+        #endif
 
         // Normalization
         if (normalize) {
-            matrix_multiply_MxN_by_Nx1(normalization, population_new,
-                    normalization_term, population_size, genome_size);
-            for (int i=0; i<population_size; i++) {
-                double _norm = normalization[i];
-                for (int j=0; j<genome_size; j++) {
-                    population_new[i*genome_size + j] *= zeroth_moment/_norm;
+            #ifdef GPU_BLOCK_SIZE
+                int grid_size_set_normalization = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                #ifndef USE_CUDA
+                    HIP_ASSERT(hipMemset(d_normalization,0, bytes_normalization));
+                    for (int i=0; i<population_size; i++) {
+                        int stream_idx = i % MAX_GPU_STREAMS;
+                        hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
+                                dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                                d_normalization, d_population_new, d_normalization_term, genome_size, i);
+                    }
+                    HIP_ASSERT(hipDeviceSynchronize());
+                    int grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+                    hipLaunchKernelGGL(gpu_normalize_population, dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE), 0, 0,
+                            d_population_new, d_normalization, zeroth_moment, population_size, genome_size); 
+                    HIP_ASSERT(hipDeviceSynchronize());
+                #endif
+                #ifdef USE_CUDA
+                    CUDA_ASSERT(cudaMemset(d_normalization,0, bytes_normalization));
+                    for (int i=0; i<population_size; i++) {
+                        int stream_idx = i % MAX_GPU_STREAMS;
+                        cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
+                                dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                                d_normalization, d_population_new, d_normalization_term, genome_size, i);
+                    }
+                    CUDA_ASSERT(cudaDeviceSynchronize());
+                    int grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+                    cuda_wrapper::gpu_normalize_population_wrapper( dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE),
+                            d_population_new, d_normalization, zeroth_moment, population_size, genome_size); 
+                    CUDA_ASSERT(cudaDeviceSynchronize());
+                #endif
+            #endif
+            #ifndef GPU_BLOCK_SIZE
+                matrix_multiply_MxN_by_Nx1(normalization, population_new,
+                        normalization_term, population_size, genome_size);
+                for (int i=0; i<population_size; i++) {
+                    double _norm = normalization[i];
+                    for (int j=0; j<genome_size; j++) {
+                        population_new[i*genome_size + j] *= zeroth_moment/_norm;
+                    }
                 }
-            }
+            #endif
         }
 
         //Rejection
         //Set model isf for new population
-        matrix_multiply_LxM_by_MxN(isf_model, isf_term, population_new,
-                number_of_timeslices, genome_size, population_size);
+        #ifdef GPU_BLOCK_SIZE
+            int grid_size_set_isf_model = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            #ifndef USE_CUDA
+                HIP_ASSERT(hipMemset(d_isf_model,0, bytes_isf_model));
+                for (int i=0; i<population_size*number_of_timeslices; i++) {
+                    int stream_idx = i % MAX_GPU_STREAMS;
+                    hipLaunchKernelGGL(gpu_matrix_multiply_LxM_by_MxN,
+                            dim3(grid_size_set_isf_model), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                            d_isf_model, d_isf_term, d_population_new, number_of_timeslices, genome_size, i);
+                }
+                HIP_ASSERT(hipDeviceSynchronize());
+            #endif
+            #ifdef USE_CUDA
+                CUDA_ASSERT(cudaMemset(d_isf_model,0, bytes_isf_model));
+                for (int i=0; i<population_size*number_of_timeslices; i++) {
+                    int stream_idx = i % MAX_GPU_STREAMS;
+                    cuda_wrapper::gpu_matrix_multiply_LxM_by_MxN_wrapper(
+                            dim3(grid_size_set_isf_model), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                            d_isf_model, d_isf_term, d_population_new, number_of_timeslices, genome_size, i);
+                }
+                CUDA_ASSERT(cudaDeviceSynchronize());
+            #endif
+        #endif
+        #ifndef GPU_BLOCK_SIZE
+            matrix_multiply_LxM_by_MxN(isf_model, isf_term, population_new,
+                    number_of_timeslices, genome_size, population_size);
+        #endif
 
         //Set moments
         if (use_inverse_first_moment) {
-            matrix_multiply_MxN_by_Nx1(inverse_first_moments, isf_model,
-                    inverse_first_moments_term, population_size,
-                    number_of_timeslices);
+            #ifdef GPU_BLOCK_SIZE
+                int grid_size_set_inverse_first_moments = (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                #ifndef USE_CUDA
+                    HIP_ASSERT(hipMemset(d_inverse_first_moments,0, bytes_inverse_first_moments));
+                    for (int i=0; i<population_size; i++) {
+                        int stream_idx = i % MAX_GPU_STREAMS;
+                        hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
+                                dim3(grid_size_set_inverse_first_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                                d_inverse_first_moments, d_isf_model, d_inverse_first_moments_term, number_of_timeslices, i);
+                    }
+                    HIP_ASSERT(hipDeviceSynchronize());
+                #endif
+                #ifdef USE_CUDA
+                    CUDA_ASSERT(cudaMemset(d_inverse_first_moments,0, bytes_inverse_first_moments));
+                    for (int i=0; i<population_size; i++) {
+                        int stream_idx = i % MAX_GPU_STREAMS;
+                        cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
+                                dim3(grid_size_set_inverse_first_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                                d_inverse_first_moments, d_isf_model, d_inverse_first_moments_term, number_of_timeslices, i);
+                    }
+                    CUDA_ASSERT(cudaDeviceSynchronize());
+                #endif
+            #endif
+            #ifndef GPU_BLOCK_SIZE
+                matrix_multiply_MxN_by_Nx1(inverse_first_moments, isf_model,
+                        inverse_first_moments_term, population_size,
+                        number_of_timeslices);
+            #endif
         }
         if (use_first_moment) {
-            matrix_multiply_MxN_by_Nx1(first_moments, population_new,
-                    first_moments_term, population_size, genome_size);
+            #ifdef GPU_BLOCK_SIZE
+                int grid_size_set_first_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                #ifndef USE_CUDA
+                    HIP_ASSERT(hipMemset(d_first_moments,0, bytes_first_moments));
+                    for (int i=0; i<population_size; i++) {
+                        int stream_idx = i % MAX_GPU_STREAMS;
+                        hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
+                                dim3(grid_size_set_first_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                                d_first_moments, d_population_new, d_first_moments_term, genome_size, i);
+                    }
+                    HIP_ASSERT(hipDeviceSynchronize());
+                #endif
+                #ifdef USE_CUDA
+                    CUDA_ASSERT(cudaMemset(d_first_moments,0, bytes_first_moments));
+                    for (int i=0; i<population_size; i++) {
+                        int stream_idx = i % MAX_GPU_STREAMS;
+                        cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
+                                dim3(grid_size_set_first_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                                d_first_moments, d_population_new, d_first_moments_term, genome_size, i);
+                    }
+                    CUDA_ASSERT(cudaDeviceSynchronize());
+                #endif
+            #endif
+            #ifndef GPU_BLOCK_SIZE
+                matrix_multiply_MxN_by_Nx1(first_moments, population_new,
+                        first_moments_term, population_size, genome_size);
+            #endif
         }
         if (use_third_moment) {
-            matrix_multiply_MxN_by_Nx1(third_moments, population_new,
-                    third_moments_term, population_size, genome_size);
+            #ifdef GPU_BLOCK_SIZE
+                int grid_size_set_third_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                #ifndef USE_CUDA
+                    HIP_ASSERT(hipMemset(d_third_moments,0, bytes_third_moments));
+                    for (int i=0; i<population_size; i++) {
+                        int stream_idx = i % MAX_GPU_STREAMS;
+                        hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
+                                dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                                d_third_moments, d_population_new, d_third_moments_term, genome_size, i);
+                    }
+                    HIP_ASSERT(hipDeviceSynchronize());
+                #endif
+                #ifdef USE_CUDA
+                    CUDA_ASSERT(cudaMemset(d_third_moments,0, bytes_third_moments));
+                    for (int i=0; i<population_size; i++) {
+                        int stream_idx = i % MAX_GPU_STREAMS;
+                        cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
+                                dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                                d_third_moments, d_population_new, d_third_moments_term, genome_size, i);
+                    }
+                    CUDA_ASSERT(cudaDeviceSynchronize());
+                #endif
+            #endif
+            #ifndef GPU_BLOCK_SIZE
+                matrix_multiply_MxN_by_Nx1(third_moments, population_new,
+                        third_moments_term, population_size, genome_size);
+            #endif
         }
 
         //Set fitness for new population
-        for (int i=0; i<population_size; i++) {
-            double _fitness = reduced_chi_square_statistic(isf,
-                    isf_model + i*number_of_timeslices, isf_error,
-                    number_of_timeslices)/number_of_timeslices;
-            if (use_inverse_first_moment) {
-                _fitness += pow((inverse_first_moment - inverse_first_moments[i])/inverse_first_moment_error,2);
-            }
-            if (use_first_moment) {
-                _fitness += pow(first_moments[i] - first_moment,2)/first_moment;
-            }
-            if (use_third_moment) {
-                _fitness += pow((third_moment - third_moments[i])/third_moment_error,2);
-            }
-            // Rejection step
-            if (_fitness <= fitness_old[i]) {
-                fitness_old[i] = _fitness;
-                crossover_probabilities_old[i] = crossover_probabilities_new[i];
-                differential_weights_old[i] = differential_weights_new[i];
-                for (int j=0; j<genome_size; j++) {
-                    population_old[i*genome_size + j] = population_new[i*genome_size + j];
+        #ifdef GPU_BLOCK_SIZE
+            int grid_size_set_fitness = (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            int grid_size_set_fitness_moments = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            #ifndef USE_CUDA
+                HIP_ASSERT(hipMemset(d_fitness_new,0, bytes_fitness_new));
+                for (int i=0; i<population_size; i++) {
+                    int stream_idx = i % MAX_GPU_STREAMS;
+                    hipLaunchKernelGGL(gpu_set_fitness,
+                            dim3(grid_size_set_fitness), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                            d_fitness_new, d_isf, d_isf_model, d_isf_error, number_of_timeslices, i);
+                }
+                HIP_ASSERT(hipDeviceSynchronize());
+                if (use_inverse_first_moment) {
+                    hipLaunchKernelGGL(gpu_set_fitness_moments_reduced_chi_squared,
+                            dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE), 0, 0,
+                            d_fitness_new, d_inverse_first_moments, inverse_first_moment, inverse_first_moment_error, population_size);
+                    HIP_ASSERT(hipDeviceSynchronize());
+                }
+                if (use_first_moment) {
+                    hipLaunchKernelGGL(gpu_set_fitness_moments_chi_squared,
+                            dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE), 0, 0,
+                            d_fitness_new, d_first_moments, first_moment, population_size);
+                    HIP_ASSERT(hipDeviceSynchronize());
+                }
+                if (use_third_moment) {
+                    hipLaunchKernelGGL(gpu_set_fitness_moments_reduced_chi_squared,
+                            dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE), 0, 0,
+                            d_fitness_new, d_third_moments, third_moment, third_moment_error, population_size);
+                    HIP_ASSERT(hipDeviceSynchronize());
+                }
+
+                //Rejection step
+                int grid_size_set_rejection_indices = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                int grid_size_swap_control_parameters = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                int grid_size_swap_populations = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                hipLaunchKernelGGL(gpu_set_rejection_indices,
+                        dim3(grid_size_set_rejection_indices), dim3(GPU_BLOCK_SIZE), 0, 0,
+                        d_rejection_indices, d_fitness_new, d_fitness_old, population_size);
+                HIP_ASSERT(hipDeviceSynchronize());
+                hipLaunchKernelGGL(gpu_swap_control_parameters,
+                        dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
+                        d_crossover_probabilities_old, d_crossover_probabilities_new, d_rejection_indices, population_size);
+                hipLaunchKernelGGL(gpu_swap_control_parameters,
+                        dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
+                        d_differential_weights_old, d_differential_weights_new, d_rejection_indices, population_size);
+                hipLaunchKernelGGL(gpu_swap_populations,
+                        dim3(grid_size_swap_populations), dim3(GPU_BLOCK_SIZE), 0, stream_array[2 % MAX_GPU_STREAMS],
+                        d_population_old, d_population_new, d_rejection_indices, population_size, genome_size);
+                HIP_ASSERT(hipDeviceSynchronize());
+            #endif
+            #ifdef USE_CUDA
+                CUDA_ASSERT(cudaMemset(d_fitness_new,0, bytes_fitness_new));
+                for (int i=0; i<population_size; i++) {
+                    int stream_idx = i % MAX_GPU_STREAMS;
+                    cuda_wrapper::gpu_set_fitness_wrapper(
+                            dim3(grid_size_set_fitness), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                            d_fitness_new, d_isf, d_isf_model, d_isf_error, number_of_timeslices, i);
+                }
+                CUDA_ASSERT(cudaDeviceSynchronize());
+                if (use_inverse_first_moment) {
+                    cuda_wrapper::gpu_set_fitness_moments_reduced_chi_squared_wrapper(
+                            dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE),
+                            d_fitness_new, d_inverse_first_moments, inverse_first_moment, inverse_first_moment_error, population_size);
+                    CUDA_ASSERT(cudaDeviceSynchronize());
+                }
+                if (use_first_moment) {
+                    cuda_wrapper::gpu_set_fitness_moments_chi_squared_wrapper(
+                            dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE),
+                            d_fitness_new, d_first_moments, first_moment, population_size);
+                    CUDA_ASSERT(cudaDeviceSynchronize());
+                }
+                if (use_third_moment) {
+                    cuda_wrapper::gpu_set_fitness_moments_reduced_chi_squared_wrapper(
+                            dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE),
+                            d_fitness_new, d_third_moments, third_moment, third_moment_error, population_size);
+                    CUDA_ASSERT(cudaDeviceSynchronize());
+                }
+
+                //Rejection step
+                int grid_size_set_rejection_indices = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                int grid_size_swap_control_parameters = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                int grid_size_swap_populations = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                cuda_wrapper::gpu_set_rejection_indices_wrapper(
+                        dim3(grid_size_set_rejection_indices), dim3(GPU_BLOCK_SIZE),
+                        d_rejection_indices, d_fitness_new, d_fitness_old, population_size);
+                CUDA_ASSERT(cudaDeviceSynchronize());
+                cuda_wrapper::gpu_swap_control_parameters_wrapper(
+                        dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), stream_array[0],
+                        d_crossover_probabilities_old, d_crossover_probabilities_new, d_rejection_indices, population_size);
+                cuda_wrapper::gpu_swap_control_parameters_wrapper(
+                        dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
+                        d_differential_weights_old, d_differential_weights_new, d_rejection_indices, population_size);
+                cuda_wrapper::gpu_swap_populations_wrapper(
+                        dim3(grid_size_swap_populations), dim3(GPU_BLOCK_SIZE), stream_array[2 % MAX_GPU_STREAMS],
+                        d_population_old, d_population_new, d_rejection_indices, population_size, genome_size);
+                CUDA_ASSERT(cudaDeviceSynchronize());
+            #endif
+        #endif
+        #ifndef GPU_BLOCK_SIZE
+            for (int i=0; i<population_size; i++) {
+                double _fitness = reduced_chi_square_statistic(isf,
+                        isf_model + i*number_of_timeslices, isf_error,
+                        number_of_timeslices)/number_of_timeslices;
+                if (use_inverse_first_moment) {
+                    _fitness += pow((inverse_first_moment - inverse_first_moments[i])/inverse_first_moment_error,2);
+                }
+                if (use_first_moment) {
+                    _fitness += pow(first_moments[i] - first_moment,2)/first_moment;
+                }
+                if (use_third_moment) {
+                    _fitness += pow((third_moment - third_moments[i])/third_moment_error,2);
+                }
+                // Rejection step
+                if (_fitness <= fitness_old[i]) {
+                    fitness_old[i] = _fitness;
+                    crossover_probabilities_old[i] = crossover_probabilities_new[i];
+                    differential_weights_old[i] = differential_weights_new[i];
+                    for (int j=0; j<genome_size; j++) {
+                        population_old[i*genome_size + j] = population_new[i*genome_size + j];
+                    }
                 }
             }
-        }
+        #endif
     }
+
+    //Transfer data from gpu to host
+    #ifdef GPU_BLOCK_SIZE
+        int grid_size_set_fitness_standard_deviation_sqrt = (generation + 1 + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+        #ifndef USE_CUDA
+            HIP_ASSERT(hipDeviceSynchronize());
+            HIP_ASSERT(hipMemcpy(fitness_old, d_fitness_old, bytes_fitness_old, hipMemcpyDeviceToHost));
+            HIP_ASSERT(hipMemcpy(population_old, d_population_old, bytes_population, hipMemcpyDeviceToHost));
+            if (track_stats) {
+                hipLaunchKernelGGL(gpu_set_fitness_standard_deviation_sqrt,
+                        dim3(grid_size_set_fitness_standard_deviation_sqrt), dim3(GPU_BLOCK_SIZE), 0, 0,
+                        d_fitness_standard_deviation, generation + 1);
+                HIP_ASSERT(hipDeviceSynchronize());
+                HIP_ASSERT(hipMemcpy(fitness_mean, d_fitness_mean, bytes_fitness_mean, hipMemcpyDeviceToHost));
+                HIP_ASSERT(hipMemcpy(fitness_minimum, d_fitness_minimum, bytes_fitness_minimum, hipMemcpyDeviceToHost));
+                HIP_ASSERT(hipMemcpy(fitness_standard_deviation, d_fitness_standard_deviation, bytes_fitness_standard_deviation, hipMemcpyDeviceToHost));
+            }
+        #endif
+        #ifdef USE_CUDA
+            CUDA_ASSERT(cudaDeviceSynchronize());
+            CUDA_ASSERT(cudaMemcpy(fitness_old, d_fitness_old, bytes_fitness_old, cudaMemcpyDeviceToHost));
+            CUDA_ASSERT(cudaMemcpy(population_old, d_population_old, bytes_population, cudaMemcpyDeviceToHost));
+            if (track_stats) {
+                cuda_wrapper::gpu_set_fitness_standard_deviation_sqrt_wrapper(
+                        dim3(grid_size_set_fitness_standard_deviation_sqrt), dim3(GPU_BLOCK_SIZE),
+                        d_fitness_standard_deviation, generation + 1);
+                CUDA_ASSERT(cudaDeviceSynchronize());
+                CUDA_ASSERT(cudaMemcpy(fitness_mean, d_fitness_mean, bytes_fitness_mean, cudaMemcpyDeviceToHost));
+                CUDA_ASSERT(cudaMemcpy(fitness_minimum, d_fitness_minimum, bytes_fitness_minimum, cudaMemcpyDeviceToHost));
+                CUDA_ASSERT(cudaMemcpy(fitness_standard_deviation, d_fitness_standard_deviation, bytes_fitness_standard_deviation, cudaMemcpyDeviceToHost));
+            }
+        #endif
+    #endif
 
     std::tie(minimum_fitness_idx,minimum_fitness) = argmin_and_min(fitness_old,population_size);
 
@@ -645,6 +1478,98 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     free(mutate_indices);
     free(mutant_indices);
     free(best_dsf);
+
+    
+    #ifdef GPU_BLOCK_SIZE
+        // Release device memory
+        #ifndef USE_CUDA
+            HIP_ASSERT(hipFree(d_isf));
+            HIP_ASSERT(hipFree(d_isf_error));
+            HIP_ASSERT(hipFree(d_isf_term));
+            HIP_ASSERT(hipFree(d_population_old));
+            HIP_ASSERT(hipFree(d_population_new));
+            HIP_ASSERT(hipFree(d_fitness_old));
+            HIP_ASSERT(hipFree(d_fitness_new));
+            if (normalize) {
+                HIP_ASSERT(hipFree(d_normalization_term));
+                HIP_ASSERT(hipFree(d_normalization));
+            }
+            if (use_first_moment) {
+                HIP_ASSERT(hipFree(d_first_moments_term));
+                HIP_ASSERT(hipFree(d_first_moments));
+            }
+            if (use_third_moment) {
+                HIP_ASSERT(hipFree(d_third_moments_term));
+                HIP_ASSERT(hipFree(d_third_moments));
+            }
+            HIP_ASSERT(hipFree(d_isf_model));
+            if (use_inverse_first_moment) {
+                HIP_ASSERT(hipFree(d_inverse_first_moments_term));
+                HIP_ASSERT(hipFree(d_inverse_first_moments));
+            }
+            HIP_ASSERT(hipFree(d_crossover_probabilities_old));
+            HIP_ASSERT(hipFree(d_crossover_probabilities_new));
+            HIP_ASSERT(hipFree(d_differential_weights_old));
+            HIP_ASSERT(hipFree(d_differential_weights_new));
+            if (track_stats) {
+                HIP_ASSERT(hipFree(d_fitness_mean));
+                HIP_ASSERT(hipFree(d_fitness_minimum));
+                HIP_ASSERT(hipFree(d_fitness_standard_deviation));
+            }
+            HIP_ASSERT(hipFree(d_mutate_indices));
+            HIP_ASSERT(hipFree(d_rejection_indices));
+            HIP_ASSERT(hipFree(d_mutant_indices));
+            HIP_ASSERT(hipFree(d_minimum_fitness));
+        #endif
+        #ifdef USE_CUDA
+            CUDA_ASSERT(cudaFree(d_isf));
+            CUDA_ASSERT(cudaFree(d_isf_error));
+            CUDA_ASSERT(cudaFree(d_isf_term));
+            CUDA_ASSERT(cudaFree(d_population_old));
+            CUDA_ASSERT(cudaFree(d_population_new));
+            CUDA_ASSERT(cudaFree(d_fitness_old));
+            CUDA_ASSERT(cudaFree(d_fitness_new));
+            if (normalize) {
+                CUDA_ASSERT(cudaFree(d_normalization_term));
+                CUDA_ASSERT(cudaFree(d_normalization));
+            }
+            if (use_first_moment) {
+                CUDA_ASSERT(cudaFree(d_first_moments_term));
+                CUDA_ASSERT(cudaFree(d_first_moments));
+            }
+            if (use_third_moment) {
+                CUDA_ASSERT(cudaFree(d_third_moments_term));
+                CUDA_ASSERT(cudaFree(d_third_moments));
+            }
+            CUDA_ASSERT(cudaFree(d_isf_model));
+            if (use_inverse_first_moment) {
+                CUDA_ASSERT(cudaFree(d_inverse_first_moments_term));
+                CUDA_ASSERT(cudaFree(d_inverse_first_moments));
+            }
+            CUDA_ASSERT(cudaFree(d_crossover_probabilities_old));
+            CUDA_ASSERT(cudaFree(d_crossover_probabilities_new));
+            CUDA_ASSERT(cudaFree(d_differential_weights_old));
+            CUDA_ASSERT(cudaFree(d_differential_weights_new));
+            if (track_stats) {
+                CUDA_ASSERT(cudaFree(d_fitness_mean));
+                CUDA_ASSERT(cudaFree(d_fitness_minimum));
+                CUDA_ASSERT(cudaFree(d_fitness_standard_deviation));
+            }
+            CUDA_ASSERT(cudaFree(d_mutate_indices));
+            CUDA_ASSERT(cudaFree(d_rejection_indices));
+            CUDA_ASSERT(cudaFree(d_mutant_indices));
+            CUDA_ASSERT(cudaFree(d_minimum_fitness));
+        #endif
+        // Destroy Streams
+        for (int i = 0; i < MAX_GPU_STREAMS; i++) {
+            #ifndef USE_CUDA
+                HIP_ASSERT(hipStreamDestroy(stream_array[i]));
+            #endif
+            #ifdef USE_CUDA
+                CUDA_ASSERT(cudaStreamDestroy(stream_array[i]));
+            #endif
+        }
+    #endif
 }
 
 int main (int argc, char *argv[]) {
