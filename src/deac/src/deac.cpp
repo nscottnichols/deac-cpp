@@ -9,6 +9,7 @@
 #include <string> // string_format
 #include <stdexcept> // string_format
 #include <fstream> // std::ofstream
+#include <cassert>
 #include <uuid.h>
 
 #ifdef __GNUC__
