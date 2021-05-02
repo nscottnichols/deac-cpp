@@ -9,6 +9,7 @@
 #include <string> // string_format
 #include <stdexcept> // string_format
 #include <fstream> // std::ofstream
+#include <uuid.h>
 
 #ifdef __GNUC__
     #if __GNUC__ > 7
@@ -242,7 +243,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double self_adapting_differential_weight_probability,
         double self_adapting_differential_weight_shift,
         double self_adapting_differential_weight, double stop_minimum_fitness,
-        bool track_stats, int seed, fs::path save_directory) {
+        bool track_stats, int seed, std::string uuid_str, fs::path save_directory) {
 
     //Create GPU device streams
     #ifdef GPU_BLOCK_SIZE
@@ -1466,19 +1467,19 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     }
 
     //Save data
-    std::string best_dsf_filename_str = string_format("deac_dsf_%06d.bin",seed);
+    std::string best_dsf_filename_str = string_format("deac_dsf_%s.bin",uuid_str.c_str());
     fs::path best_dsf_filename = save_directory / best_dsf_filename_str;
     write_array(best_dsf_filename, best_dsf, genome_size);
-    std::string frequency_filename_str = string_format("deac_frequency_%06d.bin",seed);
+    std::string frequency_filename_str = string_format("deac_frequency_%s.bin",uuid_str.c_str());
     fs::path frequency_filename = save_directory / frequency_filename_str;
     write_array(frequency_filename, frequency, genome_size);
     fs::path fitness_mean_filename;
     fs::path fitness_minimum_filename;
     fs::path fitness_standard_deviation_filename;
     if (track_stats) {
-        std::string fitness_mean_filename_str = string_format("deac_stats_fitness-mean_%06d.bin",seed);
-        std::string fitness_minimum_filename_str = string_format("deac_stats_fitness-minimum_%06d.bin",seed);
-        std::string fitness_standard_deviation_filename_str = string_format("deac_stats_fitness-standard-deviation_%06d.bin",seed);
+        std::string fitness_mean_filename_str = string_format("deac_stats_fitness-mean_%s.bin",uuid_str.c_str());
+        std::string fitness_minimum_filename_str = string_format("deac_stats_fitness-minimum_%s.bin",uuid_str.c_str());
+        std::string fitness_standard_deviation_filename_str = string_format("deac_stats_fitness-standard-deviation_%s.bin",uuid_str.c_str());
         fs::path fitness_mean_filename = save_directory / fitness_mean_filename_str;
         fs::path fitness_minimum_filename = save_directory / fitness_minimum_filename_str;
         fs::path fitness_standard_deviation_filename = save_directory / fitness_standard_deviation_filename_str;
@@ -1488,9 +1489,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     }
 
     //Write to log file
-    std::string log_filename_str = string_format("deac_log_%06d.dat",seed);
+    std::string log_filename_str = string_format("deac_log_%s.dat",uuid_str.c_str());
     fs::path log_filename = save_directory / log_filename_str;
     std::ofstream log_ofs(log_filename.c_str(), std::ios_base::out | std::ios_base::app );
+    log_ofs << "uuid: " << uuid_str << std::endl;
 
     //Input parameters
     log_ofs << "temperature: " << temperature << std::endl;
@@ -1752,6 +1754,22 @@ int main (int argc, char *argv[]) {
         exit(1);
     }
 
+    std::random_device rd;
+    auto seed_data = std::array<int, std::mt19937::state_size> {};
+    std::generate(std::begin(seed_data), std::end(seed_data), std::ref(rd));
+    std::seed_seq seq(std::begin(seed_data), std::end(seed_data));
+    std::mt19937 generator(seq);
+    uuids::uuid_random_generator gen{generator};
+    
+    uuids::uuid const id = gen();
+    assert(!id.is_nil());
+    assert(id.as_bytes().size() == 16);
+    assert(id.version() == uuids::uuid_version::random_number_based);
+    assert(id.variant() == uuids::uuid_variant::rfc);
+
+    std::string uuid_str = uuids::to_string(id);
+    std::cout << "uuid: " << uuid_str << std::endl;
+
     unsigned int number_of_elements;
     double* numpy_data;
     std::string isf_file = program.get<std::string>("isf_file");
@@ -1800,7 +1818,7 @@ int main (int argc, char *argv[]) {
     fs::create_directory(save_directory);
 
     //Write to log file
-    std::string log_filename_str = string_format("deac_log_%06d.dat",seed_int);
+    std::string log_filename_str = string_format("deac_log_%s.dat",uuid_str.c_str());
     fs::path log_filename = save_directory / log_filename_str;
     std::ofstream log_ofs(log_filename.c_str(), std::ios_base::out | std::ios_base::app );
 
@@ -1816,7 +1834,7 @@ int main (int argc, char *argv[]) {
             self_adapting_differential_weight_probability,
             self_adapting_differential_weight_shift,
             self_adapting_differential_weight, stop_minimum_fitness,
-            track_stats, seed_int, save_directory);
+            track_stats, seed_int, uuid_str, save_directory);
 
     free(numpy_data);
     free(frequency);

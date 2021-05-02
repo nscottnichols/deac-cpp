@@ -28,6 +28,10 @@ if(STATIC)
     list(APPEND CMAKE_EXE_LINKER_FLAGS_DEBUG "-static")
 endif()
 
+# Check for <span> flags
+if (USE_TCB_SPAN)
+    add_definitions(-D USE_TCB_SPAN=${USE_CUDA})
+endif()
 
 # Check for GPU acceleration
 if (GPU_BLOCK_SIZE)
