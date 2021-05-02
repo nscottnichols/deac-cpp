@@ -1,6 +1,7 @@
 #pragma once
 #include "common_gpu.hpp"
 #include "device_launch_parameters.h"
+#include <stdint.h>
 
 namespace cuda_wrapper {
 #ifdef DEAC_DEBUG
@@ -49,4 +50,19 @@ namespace cuda_wrapper {
     
     void gpu_swap_populations_wrapper(dim3, dim3, double *, double *, bool *, int, int);
     void gpu_swap_populations_wrapper(dim3, dim3, cudaStream_t, double *, double *, bool *, int, int);
+
+    void gpu_set_crossover_probabilities_new_wrapper(dim3, dim3, uint64_t *, double *, double *, double, int);
+    void gpu_set_crossover_probabilities_new_wrapper(dim3, dim3, cudaStream_t, uint64_t *, double *, double *, double, int);
+    
+    void gpu_set_differential_weights_new_wrapper(dim3, dim3, uint64_t *, double *, double *, double, int);
+    void gpu_set_differential_weights_new_wrapper(dim3, dim3, cudaStream_t, uint64_t *, double *, double *, double, int);
+    
+    void gpu_set_mutant_indices_wrapper(dim3, dim3, uint64_t *, int *, int);
+    void gpu_set_mutant_indices_wrapper(dim3, dim3, cudaStream_t, uint64_t *, int *, int);
+    
+    void gpu_set_mutate_indices_wrapper(dim3, dim3, uint64_t *, bool *, double *, int, int);
+    void gpu_set_mutate_indices_wrapper(dim3, dim3, cudaStream_t, uint64_t *, bool *, double *, int, int);
+
+    void gpu_check_minimum_fitness_wrapper(dim3, dim3, double *, double);
+    void gpu_check_minimum_fitness_wrapper(dim3, dim3, cudaStream_t, double *, double);
 }

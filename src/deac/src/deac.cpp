@@ -895,6 +895,29 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             CUDA_ASSERT(cudaMalloc(&d_minimum_fitness, bytes_minimum_fitness));
         #endif
     #endif
+
+    #ifdef GPU_BLOCK_SIZE
+        // Generate rng state
+        uint64_t * rng_state;
+        uint64_t * d_rng_state;
+        size_t bytes_rng_state = sizeof(uint64_t)*4*population_size*(genome_size + 1);
+        rng_state = (uint64_t *) malloc(bytes_rng_state);
+
+        for (int i=0; i<population_size; i++) {
+            for (int j=0; j < genome_size + 1; j++) {
+                xoshiro256p_copy_state(rng_state + 4*(i*genome_size + j), rng->s);
+                xoshiro256p_jump(rng->s);
+            }
+        }
+        #ifndef USE_CUDA
+            HIP_ASSERT(hipMalloc(&d_rng_state, bytes_rng_state));
+            HIP_ASSERT(hipMemcpy( d_rng_state, rng_state, bytes_rng_state, hipMemcpyHostToDevice ));
+        #endif
+        #ifdef USE_CUDA
+            CUDA_ASSERT(cudaMalloc(&d_rng_state, bytes_rng_state));
+            CUDA_ASSERT(cudaMemcpy( d_rng_state, rng_state, bytes_rng_state, cudaMemcpyHostToDevice ));
+        #endif
+    #endif
     
     int generation;
     for (int ii=0; ii < number_of_generations - 1; ii++) {
@@ -918,6 +941,34 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #ifndef GPU_BLOCK_SIZE
             minimum_fitness = minimum(fitness_old,population_size);
         #endif
+
+        //FIXME experimental break loop without transferring memory
+        //#ifdef GPU_BLOCK_SIZE
+        //    #ifndef USE_CUDA
+        //        hipLaunchKernelGGL(gpu_check_minimum_fitness,
+        //                dim3(1), dim3(1), 0, 0,
+        //                d_minimum_fitness, stop_minimum_fitness
+        //                );
+        //        if (hipPeekAtLastError() != hipSuccess) {
+        //            break;
+        //        }
+        //    #endif
+        //    #ifdef USE_CUDA
+        //        cuda_wrapper::gpu_check_minimum_fitness_wrapper(
+        //                dim3(1), dim3(1),
+        //                d_minimum_fitness, stop_minimum_fitness
+        //                );
+        //        if (cudaPeekAtLastError() != cudaSuccess) {
+        //            break;
+        //        }
+        //    #endif
+        //#endif
+        //#ifndef GPU_BLOCK_SIZE
+        ////Stopping criteria
+        //if (minimum_fitness <= stop_minimum_fitness) {
+        //    break;
+        //}
+        //#endif
 
         //Get Statistics
         if (track_stats) {
@@ -961,51 +1012,78 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         }
 
 
-        //Set crossover probabilities and differential weights
-        for (int i=0; i<population_size; i++) {
-            if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_crossover_probability) {
-                crossover_probabilities_new[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53;
-            } else {
-                crossover_probabilities_new[i] = crossover_probabilities_old[i];
-            }
-
-            if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_differential_weight_probability) {
-                //differential_weights_new[i] = 
-                //    self_adapting_differential_weight_shift + 
-                //    self_adapting_differential_weight*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
-                differential_weights_new[i] = 2.0*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
-            } else {
-                differential_weights_new[i] = differential_weights_old[i];
-            }
-        }
         #ifdef GPU_BLOCK_SIZE
+            int grid_size_self_adapting_parameters = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
             #ifndef USE_CUDA
-                HIP_ASSERT(hipMemcpy( d_crossover_probabilities_new, crossover_probabilities_new, bytes_crossover_probabilities, hipMemcpyHostToDevice ));
-                HIP_ASSERT(hipMemcpy( d_differential_weights_new, differential_weights_new, bytes_differential_weights, hipMemcpyHostToDevice ));
+                hipLaunchKernelGGL(gpu_set_crossover_probabilities_new,
+                        dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
+                        d_rng_state, d_crossover_probabilities_new, d_crossover_probabilities_old, self_adapting_crossover_probability, population_size);
+                hipLaunchKernelGGL(gpu_set_differential_weights_new,
+                        dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
+                        d_rng_state + 4*population_size, d_differential_weights_new, d_differential_weights_old, self_adapting_differential_weight_probability, population_size);
+                HIP_ASSERT(hipDeviceSynchronize());
             #endif
             #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMemcpy( d_crossover_probabilities_new, crossover_probabilities_new, bytes_crossover_probabilities, cudaMemcpyHostToDevice )); 
-                CUDA_ASSERT(cudaMemcpy( d_differential_weights_new, differential_weights_new, bytes_differential_weights, cudaMemcpyHostToDevice )); 
+                cuda_wrapper::gpu_set_crossover_probabilities_new_wrapper(
+                        dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), stream_array[0],
+                        d_rng_state, d_crossover_probabilities_new, d_crossover_probabilities_old, self_adapting_crossover_probability, population_size);
+                cuda_wrapper::gpu_set_differential_weights_new_wrapper(
+                        dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
+                        d_rng_state + 4*population_size, d_differential_weights_new, d_differential_weights_old, self_adapting_differential_weight_probability, population_size);
+                CUDA_ASSERT(cudaDeviceSynchronize());
             #endif
         #endif
+        #ifndef GPU_BLOCK_SIZE
+            //Set crossover probabilities and differential weights
+            for (int i=0; i<population_size; i++) {
+                if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_crossover_probability) {
+                    crossover_probabilities_new[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53;
+                } else {
+                    crossover_probabilities_new[i] = crossover_probabilities_old[i];
+                }
 
-        //Set mutant population and indices 
-        for (int i=0; i<population_size; i++) {
-            double crossover_rate = crossover_probabilities_new[i];
-            set_mutant_indices(rng, mutant_indices + 3*i, i, population_size);
-            for (int j=0; j<genome_size; j++) {
-                mutate_indices[i*genome_size + j] = (xoshiro256p(rng) >> 11) * 0x1.0p-53 < crossover_rate;
+                if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_differential_weight_probability) {
+                    //differential_weights_new[i] = 
+                    //    self_adapting_differential_weight_shift + 
+                    //    self_adapting_differential_weight*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
+                    differential_weights_new[i] = 2.0*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
+                } else {
+                    differential_weights_new[i] = differential_weights_old[i];
+                }
             }
-        }
+        #endif
+
         #ifdef GPU_BLOCK_SIZE
+            int grid_size_set_mutant_indices = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            int grid_size_set_mutate_indices = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
             #ifndef USE_CUDA
-                HIP_ASSERT(hipMemcpy( d_mutant_indices, mutant_indices, bytes_mutant_indices, hipMemcpyHostToDevice ));
-                HIP_ASSERT(hipMemcpy( d_mutate_indices, mutate_indices, bytes_mutate_indices, hipMemcpyHostToDevice ));
+                hipLaunchKernelGGL(gpu_set_mutant_indices,
+                        dim3(grid_size_set_mutant_indices), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
+                        d_rng_state, d_mutant_indices, population_size);
+                hipLaunchKernelGGL(gpu_set_mutate_indices,
+                        dim3(grid_size_set_mutate_indices), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
+                        d_rng_state + 4*population_size, d_mutate_indices, d_crossover_probabilities_new, population_size, genome_size);
+                HIP_ASSERT(hipDeviceSynchronize());
             #endif
             #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMemcpy( d_mutant_indices, mutant_indices, bytes_mutant_indices, cudaMemcpyHostToDevice ));
-                CUDA_ASSERT(cudaMemcpy( d_mutate_indices, mutate_indices, bytes_mutate_indices, cudaMemcpyHostToDevice ));
+                cuda_wrapper::gpu_set_mutant_indices_wrapper(
+                        dim3(grid_size_set_mutant_indices), dim3(GPU_BLOCK_SIZE), stream_array[0],
+                        d_rng_state, d_mutant_indices, population_size);
+                cuda_wrapper::gpu_set_mutate_indices_wrapper(
+                        dim3(grid_size_set_mutate_indices), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
+                        d_rng_state + 4*population_size, d_mutate_indices, d_crossover_probabilities_new, population_size, genome_size);
+                CUDA_ASSERT(cudaDeviceSynchronize());
             #endif
+        #endif
+        #ifndef GPU_BLOCK_SIZE
+        //Set mutant population and indices 
+            for (int i=0; i<population_size; i++) {
+                set_mutant_indices(rng, mutant_indices + 3*i, i, population_size);
+                double crossover_rate = crossover_probabilities_new[i];
+                for (int j=0; j<genome_size; j++) {
+                    mutate_indices[i*genome_size + j] = (xoshiro256p(rng) >> 11) * 0x1.0p-53 < crossover_rate;
+                }
+            }
         #endif
 
         #ifdef GPU_BLOCK_SIZE
@@ -1481,6 +1559,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
     
     #ifdef GPU_BLOCK_SIZE
+        free(rng_state);
         // Release device memory
         #ifndef USE_CUDA
             HIP_ASSERT(hipFree(d_isf));
@@ -1520,6 +1599,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             HIP_ASSERT(hipFree(d_rejection_indices));
             HIP_ASSERT(hipFree(d_mutant_indices));
             HIP_ASSERT(hipFree(d_minimum_fitness));
+            HIP_ASSERT(hipFree(d_rng_state));
         #endif
         #ifdef USE_CUDA
             CUDA_ASSERT(cudaFree(d_isf));
@@ -1559,6 +1639,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             CUDA_ASSERT(cudaFree(d_rejection_indices));
             CUDA_ASSERT(cudaFree(d_mutant_indices));
             CUDA_ASSERT(cudaFree(d_minimum_fitness));
+            CUDA_ASSERT(cudaFree(d_rng_state));
         #endif
         // Destroy Streams
         for (int i = 0; i < MAX_GPU_STREAMS; i++) {

@@ -10,7 +10,6 @@
 #ifdef DEAC_DEBUG
     #include <stdio.h>
 #endif
-//
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
@@ -27,6 +26,27 @@
         }
     }
 #endif
+
+__device__
+uint64_t gpu_rol64(uint64_t x, int k) {
+    return (x << k) | (x >> (64 - k));
+}
+
+__device__
+uint64_t gpu_xoshiro256p_next(uint64_t * s) {
+    uint64_t const result = s[0] + s[3];
+    uint64_t const t = s[1] << 17;
+
+    s[2] ^= s[0];
+    s[3] ^= s[1];
+    s[1] ^= s[2];
+    s[0] ^= s[3];
+
+    s[2] ^= t;
+    s[3] = gpu_rol64(s[3], 45);
+
+    return result;
+}
 
 // GPU Kernel for reduction using warp (uses appropriate warp for NVIDIA vs AMD devices i. e. "portable wave aware code")
 __device__ void warp_reduce(volatile double *sdata, unsigned int thread_idx) {
@@ -478,6 +498,71 @@ void gpu_swap_populations(double * population_old, double * population_new, bool
     }
 }
 
+__global__
+void gpu_set_crossover_probabilities_new(uint64_t * rng_state, double * crossover_probabilities_new, double * crossover_probabilities_old, double self_adapting_crossover_probability, int population_size) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i < population_size) {
+        if ((gpu_xoshiro256p_next(rng_state + 4*i) >> 11) * 0x1.0p-53 < self_adapting_crossover_probability) {
+            crossover_probabilities_new[i] = (gpu_xoshiro256p_next(rng_state + 4*i) >> 11) * 0x1.0p-53;
+        } else {
+            crossover_probabilities_new[i] = crossover_probabilities_old[i];
+        }
+    }
+}
+
+__global__
+void gpu_set_differential_weights_new(uint64_t * rng_state, double * differential_weights_new, double * differential_weights_old, double self_adapting_differential_weight_probability, int population_size) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i < population_size) {
+        if ((gpu_xoshiro256p_next(rng_state + 4*i) >> 11) * 0x1.0p-53 < self_adapting_differential_weight_probability) {
+            differential_weights_new[i] = 2.0*((gpu_xoshiro256p_next(rng_state + 4*i) >> 11) * 0x1.0p-53);
+        } else {
+            differential_weights_new[i] = differential_weights_old[i];
+        }
+    }
+}
+
+__device__
+void gpu_set_mutant_indices(uint64_t * rng_state, int * mutant_indices, int mutant_index0, int length) {
+    mutant_indices[0] = mutant_index0;
+    mutant_indices[1] = mutant_index0;
+    mutant_indices[2] = mutant_index0;
+    while (mutant_indices[0] == mutant_index0) {
+        mutant_indices[0] = gpu_xoshiro256p_next(rng_state) % length;
+    }
+
+    while ((mutant_indices[1] == mutant_index0) || (mutant_indices[1] == mutant_indices[0])) {
+        mutant_indices[1] = gpu_xoshiro256p_next(rng_state) % length;
+    }
+
+    while ((mutant_indices[2] == mutant_index0) || (mutant_indices[2] == mutant_indices[0])
+            || (mutant_indices[2] == mutant_indices[1])) {
+        mutant_indices[2] = gpu_xoshiro256p_next(rng_state) % length;
+    }
+}
+
+__global__
+void gpu_set_mutant_indices(uint64_t * rng_state, int * mutant_indices, int population_size) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i < population_size) {
+        gpu_set_mutant_indices(rng_state + 4*i, mutant_indices + 3*i, i, population_size);
+    }
+}
+
+__global__
+void gpu_set_mutate_indices(uint64_t * rng_state, bool * mutate_indices, double * crossover_probabilities, int population_size, int genome_size) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i < population_size*genome_size) {
+        int _i = i/genome_size;
+        mutate_indices[i] = (gpu_xoshiro256p_next(rng_state + 4*i) >> 11) * 0x1.0p-53 < crossover_probabilities[_i];
+    }
+}
+
+__global__
+void gpu_check_minimum_fitness(double * minimum_fitness, double stop_minimum_fitness) {
+    assert(*minimum_fitness >= stop_minimum_fitness);
+}
+
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // GPU KERNEL WRAPPER --------------------------------------------------------
@@ -649,6 +734,61 @@ namespace cuda_wrapper {
     void gpu_swap_populations_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * population_old, double * population_new, bool * rejection_indices, int population_size, int genome_size) {
         gpu_swap_populations <<<grid_size, group_size, 0, stream>>> ( 
                 population_old, population_new, rejection_indices, population_size, genome_size
+                );
+    }
+
+    void gpu_set_crossover_probabilities_new_wrapper(dim3 grid_size, dim3 group_size, uint64_t * rng_state, double * crossover_probabilities_new, double * crossover_probabilities_old, double self_adapting_crossover_probability, int population_size) {
+        gpu_set_crossover_probabilities_new <<<grid_size, group_size, 0, 0>>> ( 
+                rng_state, crossover_probabilities_new, crossover_probabilities_old, self_adapting_crossover_probability, population_size
+                );
+    }
+    void gpu_set_crossover_probabilities_new_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, uint64_t * rng_state, double * crossover_probabilities_new, double * crossover_probabilities_old, double self_adapting_crossover_probability, int population_size) {
+        gpu_set_crossover_probabilities_new <<<grid_size, group_size, 0, stream>>> ( 
+                rng_state, crossover_probabilities_new, crossover_probabilities_old, self_adapting_crossover_probability, population_size
+                );
+    }
+    
+    void gpu_set_differential_weights_new_wrapper(dim3 grid_size, dim3 group_size, uint64_t * rng_state, double * differential_weights_new, double * differential_weights_old, double self_adapting_differential_weight_probability, int population_size) {
+        gpu_set_differential_weights_new <<<grid_size, group_size, 0, 0>>> ( 
+                rng_state, differential_weights_new, differential_weights_old, self_adapting_differential_weight_probability, population_size
+                );
+    }
+    void gpu_set_differential_weights_new_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, uint64_t * rng_state, double * differential_weights_new, double * differential_weights_old, double self_adapting_differential_weight_probability, int population_size) {
+        gpu_set_differential_weights_new <<<grid_size, group_size, 0, stream>>> ( 
+                rng_state, differential_weights_new, differential_weights_old, self_adapting_differential_weight_probability, population_size
+                );
+    }
+    
+    void gpu_set_mutant_indices_wrapper(dim3 grid_size, dim3 group_size, uint64_t * rng_state, int * mutant_indices, int population_size) {
+        gpu_set_mutant_indices <<<grid_size, group_size, 0, 0>>> ( 
+                rng_state, mutant_indices, population_size
+                );
+    }
+    void gpu_set_mutant_indices_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, uint64_t * rng_state, int * mutant_indices, int population_size) {
+        gpu_set_mutant_indices <<<grid_size, group_size, 0, stream>>> ( 
+                rng_state, mutant_indices, population_size
+                );
+    }
+    
+    void gpu_set_mutate_indices_wrapper(dim3 grid_size, dim3 group_size, uint64_t * rng_state, bool * mutate_indices, double * crossover_probabilities, int population_size, int genome_size) {
+        gpu_set_mutate_indices <<<grid_size, group_size, 0, 0>>> ( 
+                rng_state, mutate_indices, crossover_probabilities, population_size, genome_size
+                );
+    }
+    void gpu_set_mutate_indices_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, uint64_t * rng_state, bool * mutate_indices, double * crossover_probabilities, int population_size, int genome_size) {
+        gpu_set_mutate_indices <<<grid_size, group_size, 0, stream>>> ( 
+                rng_state, mutate_indices, crossover_probabilities, population_size, genome_size
+                );
+    }
+
+    void gpu_check_minimum_fitness_wrapper(dim3 grid_size, dim3 group_size, double * minimum_fitness, double stop_minimum_fitness) {
+        gpu_check_minimum_fitness <<<grid_size, group_size, 0, 0>>> ( 
+                minimum_fitness, stop_minimum_fitness
+                );
+    }
+    void gpu_check_minimum_fitness_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * minimum_fitness, double stop_minimum_fitness) {
+        gpu_check_minimum_fitness <<<grid_size, group_size, 0, stream>>> ( 
+                minimum_fitness, stop_minimum_fitness
                 );
     }
 }
