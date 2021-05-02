@@ -1455,12 +1455,14 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     }
 
     //Get Statistics
-    if ((track_stats) && (generation == number_of_generations - 2)) {
+    if (generation == number_of_generations - 2) {
         generation += 1;
-        fitness_mean[generation] = mean(fitness_old, population_size);
-        fitness_minimum[generation] = minimum_fitness;
-        fitness_standard_deviation[generation] = standard_deviation(fitness_old,
-                fitness_mean[generation], population_size);
+        if (track_stats) {
+            fitness_mean[generation] = mean(fitness_old, population_size);
+            fitness_minimum[generation] = minimum_fitness;
+            fitness_standard_deviation[generation] = standard_deviation(fitness_old,
+                    fitness_mean[generation], population_size);
+        }
     }
 
     //Save data
@@ -1515,6 +1517,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     log_ofs << "best_dsf_filename: " << best_dsf_filename << std::endl;
     log_ofs << "frequency_filename: " << frequency_filename << std::endl;
     log_ofs << "generation: " << generation << std::endl;
+    log_ofs << "minimum_fitness: " << minimum_fitness << std::endl;
     if (track_stats) {
         log_ofs << "fitness_mean_filename: " << fitness_mean_filename << std::endl;
         log_ofs << "fitness_minimum_filename: " << fitness_minimum_filename << std::endl;
