@@ -246,8 +246,14 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double self_adapting_differential_weight, double stop_minimum_fitness,
         bool track_stats, int seed, std::string uuid_str, fs::path save_directory) {
 
-    //Create GPU device streams
+    #ifdef ZEROT
+        //Set flags and temperature
+        use_inverse_first_moment = false; //FIXME disabling inverse first moment for zero temperature (needs further investigation)
+        temperature = 0.0;
+    #endif
+
     #ifdef GPU_BLOCK_SIZE
+    //Create GPU device streams
         #ifndef USE_CUDA
             hipStream_t stream_array[MAX_GPU_STREAMS];
         #endif
@@ -265,6 +271,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #endif
 
     #ifdef GPU_BLOCK_SIZE
+    //Load isf and isf error onto GPU
         double * d_isf;
         double * d_isf_error;
         size_t bytes_isf = sizeof(double)*number_of_timeslices;
@@ -283,17 +290,22 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #endif
     #endif
 
-    double beta = 1.0/temperature;
+    #ifndef ZEROT
+        double beta = 1.0/temperature;
+    #endif
     double zeroth_moment = isf[0];
     bool use_first_moment = first_moment >= 0.0;
     bool use_third_moment = third_moment >= 0.0;
 
+    //Set isf term for trapezoidal rule integration with dsf (population members)
     double * isf_term;
     size_t bytes_isf_term = sizeof(double)*genome_size*number_of_timeslices;
     isf_term = (double*) malloc(bytes_isf_term);
     for (int i=0; i<number_of_timeslices; i++) {
         double t = imaginary_time[i];
-        double bo2mt = 0.5*beta - t;
+        #ifndef ZEROT
+            double bo2mt = 0.5*beta - t;
+        #endif
         for (int j=0; j<genome_size; j++) {
             double f = frequency[j];
             double df;
@@ -305,11 +317,17 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 df = 0.5*(frequency[j+1] - frequency[j-1]);
             }
             int isf_term_idx = i*genome_size + j;
-            isf_term[isf_term_idx] = df*cosh(bo2mt*f);
+            #ifndef ZEROT
+                isf_term[isf_term_idx] = df*cosh(bo2mt*f);
+            #endif
+            #ifdef ZEROT
+                isf_term[isf_term_idx] = df*exp(-t*f);
+            #endif
         }
     }
     
     #ifdef GPU_BLOCK_SIZE
+        //Load isf term onto GPU
         double * d_isf_term; // pointer to isf_term on gpu
         #ifndef USE_CUDA
             HIP_ASSERT(hipMalloc(&d_isf_term, bytes_isf_term)); // Allocate memory for isf_term on GPU
@@ -367,10 +385,16 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             } else {
                 df = 0.5*(frequency[j+1] - frequency[j-1]);
             }
-            normalization_term[j] = df*cosh(0.5*beta*f);
+            #ifndef ZEROT
+                normalization_term[j] = df*cosh(0.5*beta*f);
+            #endif
+            #ifdef ZEROT
+                normalization_term[j] = df;
+            #endif
         }
         normalization = (double*) malloc(bytes_normalization);
         #ifdef GPU_BLOCK_SIZE
+            //Load normalization terms onto GPU
             #ifndef USE_CUDA
                 HIP_ASSERT(hipMalloc(&d_normalization_term, bytes_normalization_term));
                 HIP_ASSERT(hipMalloc(&d_normalization, bytes_normalization));
@@ -383,6 +407,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
         #endif
 
+        //Set normalization
         #ifdef GPU_BLOCK_SIZE
             int grid_size_set_normalization = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
             #ifndef USE_CUDA
@@ -430,6 +455,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
     }
 
+    //Set first moment term
     double * first_moments_term;
     double * first_moments;
     #ifdef GPU_BLOCK_SIZE
@@ -450,7 +476,12 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             } else {
                 df = 0.5*(frequency[j+1] - frequency[j-1]);
             }
-            first_moments_term[j] = df*f*sinh(0.5*beta*f);
+            #ifndef ZEROT
+                first_moments_term[j] = df*f*sinh(0.5*beta*f);
+            #endif
+            #ifdef ZEROT
+                first_moments_term[j] = df*f;
+            #endif
         }
 
         first_moments = (double*) malloc(bytes_first_moments);
@@ -495,6 +526,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #endif
     }
 
+    //Set third moment term
     double * third_moments_term;
     double * third_moments;
     #ifdef GPU_BLOCK_SIZE
@@ -515,7 +547,12 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             } else {
                 df = 0.5*(frequency[j+1] - frequency[j-1]);
             }
-            third_moments_term[j] = df*pow(f,3)*sinh(0.5*beta*f);
+            #ifndef ZEROT
+                third_moments_term[j] = df*pow(f,3)*sinh(0.5*beta*f);
+            #endif
+            #ifdef ZEROT
+                third_moments_term[j] = df*pow(f,3);
+            #endif
         }
 
         third_moments = (double*) malloc(bytes_third_moments);
@@ -560,7 +597,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #endif
     }
 
-    //set isf_model and calculate fitness
+    //Set isf_model and calculate fitness
     double * isf_model;
     #ifdef GPU_BLOCK_SIZE
         double * d_isf_model;
@@ -1453,7 +1490,12 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     best_dsf = (double*) malloc(sizeof(double)*genome_size);
     for (int i=0; i<genome_size; i++) {
         double f = frequency[i];
-        best_dsf[i] = 0.5*population_old[genome_size*minimum_fitness_idx + i]*exp(0.5*beta*f);
+        #ifndef ZEROT
+            best_dsf[i] = 0.5*population_old[genome_size*minimum_fitness_idx + i]*exp(0.5*beta*f);
+        #endif
+        #ifdef ZEROT
+            best_dsf[i] = population_old[genome_size*minimum_fitness_idx + i];
+        #endif
     }
 
     //Get Statistics
@@ -1468,19 +1510,25 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     }
 
     //Save data
-    std::string best_dsf_filename_str = string_format("deac_dsf_%s.bin",uuid_str.c_str());
+    #ifndef ZEROT
+        std::string deac_prefix = "deac";
+    #endif
+    #ifdef ZEROT
+        std::string deac_prefix = "deac-zT";
+    #endif
+    std::string best_dsf_filename_str = string_format("%s_dsf_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
     fs::path best_dsf_filename = save_directory / best_dsf_filename_str;
     write_array(best_dsf_filename, best_dsf, genome_size);
-    std::string frequency_filename_str = string_format("deac_frequency_%s.bin",uuid_str.c_str());
+    std::string frequency_filename_str = string_format("%s_frequency_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
     fs::path frequency_filename = save_directory / frequency_filename_str;
     write_array(frequency_filename, frequency, genome_size);
     fs::path fitness_mean_filename;
     fs::path fitness_minimum_filename;
     fs::path fitness_standard_deviation_filename;
     if (track_stats) {
-        std::string fitness_mean_filename_str = string_format("deac_stats_fitness-mean_%s.bin",uuid_str.c_str());
-        std::string fitness_minimum_filename_str = string_format("deac_stats_fitness-minimum_%s.bin",uuid_str.c_str());
-        std::string fitness_standard_deviation_filename_str = string_format("deac_stats_fitness-standard-deviation_%s.bin",uuid_str.c_str());
+        std::string fitness_mean_filename_str = string_format("%s_stats_fitness-mean_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
+        std::string fitness_minimum_filename_str = string_format("%s_stats_fitness-minimum_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
+        std::string fitness_standard_deviation_filename_str = string_format("%s_stats_fitness-standard-deviation_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
         fs::path fitness_mean_filename = save_directory / fitness_mean_filename_str;
         fs::path fitness_minimum_filename = save_directory / fitness_minimum_filename_str;
         fs::path fitness_standard_deviation_filename = save_directory / fitness_standard_deviation_filename_str;
@@ -1490,10 +1538,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     }
 
     //Write to log file
-    std::string log_filename_str = string_format("deac_log_%s.dat",uuid_str.c_str());
+    std::string log_filename_str = string_format("%s_log_%s.dat",deac_prefix.c_str(),uuid_str.c_str());
     fs::path log_filename = save_directory / log_filename_str;
     std::ofstream log_ofs(log_filename.c_str(), std::ios_base::out | std::ios_base::app );
-    log_ofs << "uuid: " << uuid_str << std::endl;
 
     //Input parameters
     log_ofs << "temperature: " << temperature << std::endl;
@@ -1819,11 +1866,18 @@ int main (int argc, char *argv[]) {
     fs::create_directory(save_directory);
 
     //Write to log file
-    std::string log_filename_str = string_format("deac_log_%s.dat",uuid_str.c_str());
+    #ifndef ZEROT
+        std::string deac_prefix = "deac";
+    #endif
+    #ifdef ZEROT
+        std::string deac_prefix = "deac-zT";
+    #endif
+    std::string log_filename_str = string_format("%s_log_%s.dat",deac_prefix.c_str(),uuid_str.c_str());
     fs::path log_filename = save_directory / log_filename_str;
     std::ofstream log_ofs(log_filename.c_str(), std::ios_base::out | std::ios_base::app );
 
     //Input parameters
+    log_ofs << "uuid: " << uuid_str << std::endl;
     log_ofs << "isf_file: " << isf_file << std::endl;
     log_ofs.close();
 
