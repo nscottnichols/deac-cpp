@@ -80,14 +80,18 @@ void write_array(fs::path filename, double * buffer, int length) {
     fclose (output_file);
 }
 
-std::tuple <double*, unsigned int> load_numpy_array(std::string isf_file) {
+std::tuple <double*, unsigned int> load_numpy_array(std::string data_file) {
     FILE * input_file;
     long file_size_bytes;
     double * buffer;
     size_t result;
   
-    input_file = fopen( isf_file.c_str(), "rb" );
-    if (input_file==NULL) {fputs("File error",stderr); exit(1);}
+    input_file = fopen( data_file.c_str(), "rb" );
+    if (input_file==NULL) {
+        std::string error_str = string_format("File error: %s\n", data_file.c_str());
+        fputs(error_str.c_str(), stderr);
+        exit(1);
+    }
   
     // obtain file size:
     fseek(input_file , 0 , SEEK_END);
@@ -248,6 +252,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
     #ifdef ZEROT
         //Set flags and temperature
+        if (use_inverse_first_moment) {
+            std::cout << "use_inverse_first_moment disabled for zero temperature build" << std::endl;
+        }
         use_inverse_first_moment = false; //FIXME disabling inverse first moment for zero temperature (needs further investigation)
         temperature = 0.0;
     #endif
@@ -1728,6 +1735,8 @@ int main (int argc, char *argv[]) {
         .help("Maximum frequency to explore.")
         .default_value(60.0)
         .action([](const std::string& value) { return std::stod(value); });
+    program.add_argument("--frequency_file")
+        .help("Filename contianing frequency position (genome_size and omega_max will be ignored).");
     program.add_argument("--normalize")
         .help("Normalize spectrum to the zeroeth moment.")
         .default_value(false)
@@ -1833,16 +1842,25 @@ int main (int argc, char *argv[]) {
     struct xoshiro256p_state rng = xoshiro256p_init(seed);
 
     double temperature = program.get<double>("--temperature");
+    #ifndef ZEROT
+        assert(temperature > 0.0);
+    #endif
     int number_of_generations = program.get<int>("--number_of_generations");
     int population_size = program.get<int>("--population_size");
-    int genome_size = program.get<int>("--genome_size");
-    double max_frequency = program.get<double>("--omega_max");
-    
+
+    int genome_size;
     double * frequency;
-    frequency = (double*) malloc(sizeof(double)*genome_size);
-    double dfrequency = max_frequency/(genome_size - 1);
-    for (int i=0; i<genome_size; i++) {
-        frequency[i] = i*dfrequency;
+    if (auto frequency_filename = program.present("--frequency_file")) {
+        std::tie(frequency,genome_size) = load_numpy_array(*frequency_filename);
+    } else{
+        genome_size = program.get<int>("--genome_size");
+        double max_frequency = program.get<double>("--omega_max");
+
+        frequency = (double*) malloc(sizeof(double)*genome_size);
+        double dfrequency = max_frequency/(genome_size - 1);
+        for (int i=0; i<genome_size; i++) {
+            frequency[i] = i*dfrequency;
+        }
     }
 
     bool normalize = program.get<bool>("--normalize");
