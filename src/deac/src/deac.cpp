@@ -311,7 +311,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     for (int i=0; i<number_of_timeslices; i++) {
         double t = imaginary_time[i];
         #ifndef ZEROT
-            double bo2mt = 0.5*beta - t;
+            #ifdef USE_HYPERBOLIC_MODEL
+                double bo2mt = 0.5*beta - t;
+            #endif
+            #ifdef USE_STANDARD_MODEL
+                double bmt = beta - t;
+            #endif
+            #ifdef USE_NORMALIZATION_MODEL
+                double bmt = beta - t;
+            #endif
         #endif
         for (int j=0; j<genome_size; j++) {
             double f = frequency[j];
@@ -325,7 +333,17 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             }
             int isf_term_idx = i*genome_size + j;
             #ifndef ZEROT
-                isf_term[isf_term_idx] = df*cosh(bo2mt*f);
+                #ifdef USE_HYPERBOLIC_MODEL
+                    isf_term[isf_term_idx] = df*cosh(bo2mt*f);
+                #endif
+                #ifdef USE_STANDARD_MODEL
+                    isf_term[isf_term_idx] = df*(exp(-bmt*f) + exp(-t*f));
+                #endif
+                #ifdef USE_NORMALIZATION_MODEL
+                    double _num = exp(-bmt*f) + exp(-t*f);
+                    double _denom = 1.0 + exp(-beta*f);
+                    isf_term[isf_term_idx] = df*(_num/_denom);
+                #endif
             #endif
             #ifdef ZEROT
                 isf_term[isf_term_idx] = df*exp(-t*f);
@@ -393,7 +411,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 df = 0.5*(frequency[j+1] - frequency[j-1]);
             }
             #ifndef ZEROT
-                normalization_term[j] = df*cosh(0.5*beta*f);
+                #ifdef USE_HYPERBOLIC_MODEL
+                    normalization_term[j] = df*cosh(0.5*beta*f);
+                #endif
+                #ifdef USE_STANDARD_MODEL
+                    normalization_term[j] = df*(1.0 + exp(-beta*f));
+                #endif
+                #ifdef USE_NORMALIZATION_MODEL
+                    normalization_term[j] = df;
+                #endif
             #endif
             #ifdef ZEROT
                 normalization_term[j] = df;
@@ -484,7 +510,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 df = 0.5*(frequency[j+1] - frequency[j-1]);
             }
             #ifndef ZEROT
-                first_moments_term[j] = df*f*sinh(0.5*beta*f);
+                #ifdef USE_HYPERBOLIC_MODEL
+                    first_moments_term[j] = df*f*sinh(0.5*beta*f);
+                #endif
+                #ifdef USE_STANDARD_MODEL
+                    first_moments_term[j] = df*f*(1.0 - exp(-beta*f));
+                #endif
+                #ifdef USE_NORMALIZATION_MODEL
+                    first_moments_term[j] = df*f*tanh(0.5*beta*f);
+                #endif
             #endif
             #ifdef ZEROT
                 first_moments_term[j] = df*f;
@@ -555,7 +589,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 df = 0.5*(frequency[j+1] - frequency[j-1]);
             }
             #ifndef ZEROT
-                third_moments_term[j] = df*pow(f,3)*sinh(0.5*beta*f);
+                #ifdef USE_HYPERBOLIC_MODEL
+                    third_moments_term[j] = df*pow(f,3)*sinh(0.5*beta*f);
+                #endif
+                #ifdef USE_STANDARD_MODEL
+                    third_moments_term[j] = df*pow(f,3)*(1.0 - exp(-beta*f));
+                #endif
+                #ifdef USE_NORMALIZATION_MODEL
+                    third_moments_term[j] = df*pow(f,3)*tanh(0.5*beta*f);
+                #endif
             #endif
             #ifdef ZEROT
                 third_moments_term[j] = df*pow(f,3);
@@ -1498,7 +1540,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     for (int i=0; i<genome_size; i++) {
         double f = frequency[i];
         #ifndef ZEROT
-            best_dsf[i] = 0.5*population_old[genome_size*minimum_fitness_idx + i]*exp(0.5*beta*f);
+            #ifdef USE_HYPERBOLIC_MODEL
+                best_dsf[i] = 0.5*population_old[genome_size*minimum_fitness_idx + i]*exp(0.5*beta*f);
+            #endif
+            #ifdef USE_STANDARD_MODEL
+                best_dsf[i] = population_old[genome_size*minimum_fitness_idx + i];
+            #endif
+            #ifdef USE_NORMALIZATION_MODEL
+                best_dsf[i] = population_old[genome_size*minimum_fitness_idx + i]/(1.0 + exp(-beta*f));
+            #endif
         #endif
         #ifdef ZEROT
             best_dsf[i] = population_old[genome_size*minimum_fitness_idx + i];
@@ -1548,6 +1598,17 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     std::string log_filename_str = string_format("%s_log_%s.dat",deac_prefix.c_str(),uuid_str.c_str());
     fs::path log_filename = save_directory / log_filename_str;
     std::ofstream log_ofs(log_filename.c_str(), std::ios_base::out | std::ios_base::app );
+
+    //Build Type
+    #ifdef USE_HYPERBOLIC_MODEL
+        log_ofs << "build: USE_HYPERBOLIC_MODEL" << std::endl;
+    #endif
+    #ifdef USE_STANDARD_MODEL
+        log_ofs << "build: USE_STANDARD_MODEL" << std::endl;
+    #endif
+    #ifdef USE_NORMALIZATION_MODEL
+        log_ofs << "build: USE_NORMALIZATION_MODEL" << std::endl;
+    #endif
 
     //Input parameters
     log_ofs << "temperature: " << temperature << std::endl;

@@ -29,10 +29,13 @@ On Windows try:
 ## Typical installation
 As above, and with further details below, but you should consider using the following CMake options with the appropriate value instead of xxx :
 
+- `-D USE_HYPERBOLIC_MODEL=1` use hyperbolic model for spectral function S'(ω)=2S(ω)e^(-βω/2)
+- `-D USE_STANDARD_MODEL=1` use standard model for spectral function S'(ω)=S(ω)
+- `-D USE_NORMALIZATION_MODEL=1` use normalization model for spectral function S'(ω)=S(ω)(1 + e^(-βω))
 - `-D GPU_BLOCK_SIZE=xxx` equal to the maximum threadblock size and enables GPU acceleration (using [AMD's HIP language](https://github.com/ROCm-Developer-Tools/HIP))
 - `-D MAX_GPU_STREAMS=xxx` equal to maximum number of concurrent streams on GPU device
 - `-D USE_CUDA=1` use CUDA instead of HIP for GPU acceleration
-- `-DCMAKE_CUDA_ARCHITECTURES=xxx` equal to CUDA device architecture if not properly detected by CMake
+- `-D CMAKE_CUDA_ARCHITECTURES=xxx` equal to CUDA device architecture if not properly detected by CMake
 - `-D USE_TCB_SPAN=1` use [Tristan Brindle's span](https://github.com/tcbrindle/span) implementation if `std::span` of `gsl::span` unsupported
 - `-D CMAKE_C_COMPILER=xxx` equal to the name of the C99 Compiler you wish to use (or the environment variable `CC`)
 - `-D CMAKE_CXX_COMPILER=xxx` equal to the name of the C++17 compiler you wish to use (or the environment variable `CXX`)

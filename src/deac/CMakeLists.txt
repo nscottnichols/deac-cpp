@@ -42,6 +42,30 @@ if (GPU_BLOCK_SIZE)
     add_definitions(-D MAX_GPU_STREAMS=${MAX_GPU_STREAMS})
 endif()
 
+# Set dynamic structure factor model
+if ((NOT USE_HYPERBOLIC_MODEL) AND (NOT USE_STANDARD_MODEL) AND (NOT USE_NORMALIZATION_MODEL))
+    set(USE_HYPERBOLIC_MODEL 1)
+endif()
+
+# Ensure only one model is selected
+if (( USE_HYPERBOLIC_MODEL AND USE_STANDARD_MODEL ) OR 
+    ( USE_HYPERBOLIC_MODEL AND USE_NORMALIZATION_MODEL ) OR
+    ( USE_STANDARD_MODEL AND USE_NORMALIZATION_MODEL ))
+    message( FATAL_ERROR "Please only set one model: USE_HYPERBOLIC_MODEL, USE_STANDARD_MODEL, USE_NORMALIZATION_MODEL" )
+endif()
+
+if (USE_HYPERBOLIC_MODEL)
+    add_definitions(-D USE_HYPERBOLIC_MODEL)
+endif()
+
+if (USE_STANDARD_MODEL)
+    add_definitions(-D USE_STANDARD_MODEL)
+endif()
+
+if (USE_NORMALIZATION_MODEL)
+    add_definitions(-D USE_NORMALIZATION_MODEL)
+endif()
+
 # Set default build flags
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -Wall -fno-math-errno -O3")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fno-math-errno -O3")
