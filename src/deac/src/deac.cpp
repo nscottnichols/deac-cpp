@@ -1635,7 +1635,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     log_ofs << "best_dsf_filename: " << best_dsf_filename << std::endl;
     log_ofs << "frequency_filename: " << frequency_filename << std::endl;
     log_ofs << "generation: " << generation << std::endl;
+    std::cout << "generation: " << generation << std::endl;
     log_ofs << "minimum_fitness: " << minimum_fitness << std::endl;
+    std::cout << "minimum_fitness: " << minimum_fitness << std::endl;
     if (track_stats) {
         log_ofs << "fitness_mean_filename: " << fitness_mean_filename << std::endl;
         log_ofs << "fitness_minimum_filename: " << fitness_minimum_filename << std::endl;
