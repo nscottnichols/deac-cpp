@@ -30,7 +30,7 @@ endif()
 
 # Check for <span> flags
 if (USE_TCB_SPAN)
-    add_definitions(-D USE_TCB_SPAN=${USE_CUDA})
+    add_definitions(-D USE_TCB_SPAN=${USE_TCB_SPAN})
 endif()
 
 # Check for GPU acceleration
