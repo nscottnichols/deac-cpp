@@ -1799,7 +1799,7 @@ int main (int argc, char *argv[]) {
         .default_value(60.0)
         .action([](const std::string& value) { return std::stod(value); });
     program.add_argument("--frequency_file")
-        .help("Filename contianing frequency position (genome_size and omega_max will be ignored).");
+        .help("Filename containing frequency partition (genome_size and omega_max will be ignored).");
     program.add_argument("--normalize")
         .help("Normalize spectrum to the zeroeth moment.")
         .default_value(false)
@@ -1809,15 +1809,15 @@ int main (int argc, char *argv[]) {
         .default_value(false)
         .implicit_value(true);
     program.add_argument("--first_moment")
-        .help("FIXME First moment.")
+        .help("Set first frequency moment and use in fitness function.")
         .default_value(-1.0)
         .action([](const std::string& value) { return std::stod(value); });
     program.add_argument("--third_moment")
-        .help("FIXME Third moment.")
+        .help("Set third frequency moment and use in fitness function.")
         .default_value(-1.0)
         .action([](const std::string& value) { return std::stod(value); });
     program.add_argument("--third_moment_error")
-        .help("FIXME Third moment error.")
+        .help("Set error for third frequency moment.")
         .default_value(0.0)
         .action([](const std::string& value) { return std::stod(value); });
     program.add_argument("-r","--crossover_probability")
