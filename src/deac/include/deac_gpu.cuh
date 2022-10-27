@@ -42,6 +42,9 @@ namespace cuda_wrapper {
     void gpu_set_population_new_wrapper(dim3, dim3, double *, double *, int *, double *, bool *, int, int);
     void gpu_set_population_new_wrapper(dim3, dim3, cudaStream_t, double *, double *, int *, double *, bool *, int, int);
     
+    void gpu_match_population_zero_wrapper(dim3, dim3, double *, double *, int, int);
+    void gpu_match_population_zero_wrapper(dim3, dim3, cudaStream_t, double *, double *, int, int);
+    
     void gpu_set_rejection_indices_wrapper(dim3, dim3, bool *, double *, double *, int);
     void gpu_set_rejection_indices_wrapper(dim3, dim3, cudaStream_t, bool *, double *, double *, int);
     

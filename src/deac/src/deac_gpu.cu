@@ -466,6 +466,14 @@ void gpu_set_population_new(double * population_new, double * population_old, in
 }
 
 __global__
+void gpu_match_population_zero(double * population_negative_frequency, double * population_positive_frequency, int population_size, int genome_size) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i < population_size) {
+        population_negative_frequency[i*genome_size] = population_positive_frequency[i*genome_size];
+    }
+}
+
+__global__
 void gpu_set_rejection_indices(bool * rejection_indices, double * fitness_new, double * fitness_old, int population_size) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < population_size) {
@@ -703,7 +711,18 @@ namespace cuda_wrapper {
                 population_new, population_old, mutant_indices, differential_weights_new, mutate_indices, population_size, genome_size
                 );
     }
-    
+
+    void gpu_match_population_zero_wrapper(dim3 grid_size, dim3 group_size, double * population_negative_frequency, double * population_positive_frequency, int population_size, int genome_size) {
+        gpu_match_population_zero <<<grid_size, group_size, 0, 0>>> (
+                population_negative_frequency, population_positive_frequency, population_size, genome_size
+                );
+    }
+    void gpu_match_population_zero_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * population_negative_frequency, double * population_positive_frequency, int population_size, int genome_size) {
+        gpu_match_population_zero <<<grid_size, group_size, 0, stream>>> (
+                population_negative_frequency, population_positive_frequency, population_size, genome_size
+                );
+    }
+
     void gpu_set_rejection_indices_wrapper(dim3 grid_size, dim3 group_size, bool * rejection_indices, double * fitness_new, double * fitness_old, int population_size) {
         gpu_set_rejection_indices <<<grid_size, group_size, 0, 0>>> ( 
                 rejection_indices, fitness_new, fitness_old, population_size

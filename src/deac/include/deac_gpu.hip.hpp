@@ -471,6 +471,14 @@ void gpu_set_population_new(double * population_new, double * population_old, in
 }
 
 __global__
+void gpu_match_population_zero(double * population_negative_frequency, double * population_positive_frequency, int population_size, int genome_size) {
+    int i = hipBlockDim_x * hipBlockIdx_x + hipThreadIdx_x;
+    if (i < population_size) {
+        population_negative_frequency[i*genome_size] = population_positive_frequency[i*genome_size];
+    }
+}
+
+__global__
 void gpu_set_rejection_indices(bool * rejection_indices, double * fitness_new, double * fitness_old, int population_size) {
     int i = hipBlockDim_x * hipBlockIdx_x + hipThreadIdx_x;
     if (i < population_size) {
