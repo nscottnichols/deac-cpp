@@ -66,6 +66,10 @@ if (USE_NORMALIZATION_MODEL)
     add_definitions(-D USE_NORMALIZATION_MODEL)
 endif()
 
+if (SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION)
+    add_definitions(-D SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION)
+endif()
+
 # Set default build flags
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -Wall -fno-math-errno -O3")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fno-math-errno -O3")
