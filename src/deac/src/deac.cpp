@@ -3070,7 +3070,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 }
 
 int main (int argc, char *argv[]) {
-    argparse::ArgumentParser program("deac-cpp", "1.0.0");
+    argparse::ArgumentParser program("deac-cpp", "1.1.0");
     program.add_argument("-T", "--temperature")
         .help("Temperature of system.")
         .default_value(0.0)
