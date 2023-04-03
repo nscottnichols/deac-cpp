@@ -11,21 +11,7 @@
 #include <fstream> // std::ofstream
 #include <cassert>
 #include <uuid.h>
-
-#ifdef __GNUC__
-    #if __GNUC__ > 7
-        #include <filesystem>
-        namespace fs = std::filesystem;
-    #endif
-    #if __GNUC__ < 8
-        #include <experimental/filesystem>
-        namespace fs = std::experimental::filesystem;
-    #endif
-#endif
-#ifndef __GNUC__
-    #include <filesystem>
-    namespace fs = std::filesystem;
-#endif
+#include <fs.h> //fs namespace (std::filesystem or std::experimental::filesystem)
 
 //GPU acceleration
 #ifdef GPU_BLOCK_SIZE
