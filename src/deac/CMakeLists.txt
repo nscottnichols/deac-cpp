@@ -33,12 +33,28 @@ if (USE_TCB_SPAN)
     add_definitions(-D USE_TCB_SPAN=${USE_TCB_SPAN})
 endif()
 
-# Check for GPU acceleration
+# Enable GPU support
+set(GPU_BACKEND "none" CACHE STRING "Enable gpu accleration: cuda, hip, none (default: none)")
+if (NOT ${GPU_BACKEND} STREQUAL "none")
+    add_definitions(-D USE_GPU=1)
+    if (${GPU_BACKEND} STREQUAL "cuda")
+        add_definitions(-D USE_CUDA=1)
+    elseif(${GPU_BACKEND} STREQUAL "hip")
+        add_definitions(-D USE_HIP=1)
+    else()
+        message(FATAL_ERROR "Unknown GPU implementation '${GPU_BACKEND}',"
+            " please select from 'cuda, hip, none'.")
+    endif()
+endif()
+
+# Set number of threads per block
 if (GPU_BLOCK_SIZE)
     add_definitions(-D GPU_BLOCK_SIZE=${GPU_BLOCK_SIZE})
-    if (NOT MAX_GPU_STREAMS)
-        set(MAX_GPU_STREAMS 1)
-    endif()
+    add_definitions(-D MAX_GPU_STREAMS=${MAX_GPU_STREAMS})
+endif()
+
+# Set number of GPU streams
+if (MAX_GPU_STREAMS)
     add_definitions(-D MAX_GPU_STREAMS=${MAX_GPU_STREAMS})
 endif()
 
