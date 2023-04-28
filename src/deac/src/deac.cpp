@@ -1935,6 +1935,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         //Get Statistics
         if (track_stats) {
             #ifdef USE_GPU
+                int grid_size_set_stats = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
                 #ifdef USE_HIP
                     hipLaunchKernelGGL(gpu_set_fitness_mean,
                             dim3(grid_size_set_stats), dim3(GPU_BLOCK_SIZE), 0, 0,
