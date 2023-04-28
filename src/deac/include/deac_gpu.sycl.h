@@ -411,7 +411,7 @@ void gpu_get_minimum_fitness(sycl::queue q, double* fitness, double* minimum_fit
                 for (size_t i = 0; i < population_size/GPU_BLOCK_SIZE; i++) {
                     size_t j = GPU_BLOCK_SIZE*i + local_idx;
                     if (j < population_size) {
-                        _mf[local_idx] = fitness[j] < s_minimum[local_idx] ? fitness[j] : s_minimum[local_idx];
+                        _mf[local_idx] = fitness[j] < _mf[local_idx] ? fitness[j] : _mf[local_idx];
                     }
                 }
             });
@@ -430,7 +430,7 @@ void gpu_get_minimum_fitness(sycl::queue q, double* fitness, double* minimum_fit
     });
 }
 
-void gpu_set_fitness_mean(sycl::queue q, double* fitness_mean_tmp double* fitness_mean, double* fitness, size_t population_size) {
+void gpu_set_fitness_mean(sycl::queue q, size_t grid_size, double* fitness_mean_tmp, double* fitness_mean, double* fitness, size_t population_size) {
     auto event_reduce_to_fitness_mean_tmp = q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             // Set shared local memory _fm
@@ -489,7 +489,7 @@ void gpu_set_fitness_mean(sycl::queue q, double* fitness_mean_tmp double* fitnes
     });
 }
 
-void gpu_set_fitness_squared_mean(sycl::queue q, double* fitness_squared_mean_tmp double* fitness_squared_mean, double* fitness, size_t population_size) {
+void gpu_set_fitness_squared_mean(sycl::queue q, size_t grid_size, double* fitness_squared_mean_tmp, double* fitness_squared_mean, double* fitness, size_t population_size) {
     auto event_reduce_to_fitness_squared_mean_tmp = q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             // Set shared local memory _fsm
