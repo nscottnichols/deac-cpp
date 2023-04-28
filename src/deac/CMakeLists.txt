@@ -93,7 +93,7 @@ endif()
 
 # Find source files ( better to list explicitly https://stackoverflow.com/questions/1027247/specify-source-files-globally-with-glob )
 file( GLOB DEAC_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp )
-if(USE_CUDA)
+if (${GPU_BACKEND} STREQUAL "cuda")
     file( GLOB DEAC_CUDA ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cu )
     add_executable(${exe} ${DEAC_SRC} ${DEAC_CUDA})
     set_target_properties( ${exe} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
