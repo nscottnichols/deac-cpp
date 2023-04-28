@@ -14,7 +14,7 @@ uint64_t splitmix64(struct splitmix64_state *state) {
     return result ^ (result >> 31);
 }
 
-uint64_t rol64(uint64_t x, int k) {
+uint64_t rol64(uint64_t x, uint64_t k) {
     return (x << k) | (x >> (64 - k));
 }
 
@@ -22,7 +22,7 @@ struct xoshiro256p_state {
     uint64_t s[4];
 };
 
-uint64_t xoshiro256p_next(uint64_t * s) {
+uint64_t xoshiro256p_next(uint64_t* s) {
     uint64_t const result = s[0] + s[3];
     uint64_t const t = s[1] << 17;
 
@@ -61,29 +61,29 @@ struct xoshiro256p_state xoshiro256p_init(uint64_t seed) {
 /* This is the jump function for the generator. It is equivalent
  *    to 2^128 calls to next(); it can be used to generate 2^128
  *       non-overlapping subsequences for parallel computations. */
-void xoshiro256p_jump(uint64_t * s) {
-	static const uint64_t JUMP[] = { 0x180ec6d33cfd0aba, 0xd5a61266f0c9392c, 0xa9582618e03fc9aa, 0x39abdc4529b1661c };
+void xoshiro256p_jump(uint64_t* s) {
+    static const uint64_t JUMP[] = { 0x180ec6d33cfd0aba, 0xd5a61266f0c9392c, 0xa9582618e03fc9aa, 0x39abdc4529b1661c };
 
-	uint64_t s0 = 0;
-	uint64_t s1 = 0;
-	uint64_t s2 = 0;
-	uint64_t s3 = 0;
-	for(int i = 0; i < sizeof JUMP / sizeof *JUMP; i++) {
-		for(int b = 0; b < 64; b++) {
-			if (JUMP[i] & UINT64_C(1) << b) {
-				s0 ^= s[0];
-				s1 ^= s[1];
-				s2 ^= s[2];
-				s3 ^= s[3];
-			}
-			xoshiro256p_next(s);	
-		}
+    uint64_t s0 = 0;
+    uint64_t s1 = 0;
+    uint64_t s2 = 0;
+    uint64_t s3 = 0;
+    for(size_t i = 0; i < sizeof JUMP / sizeof *JUMP; i++) {
+        for(size_t b = 0; b < 64; b++) {
+            if (JUMP[i] & UINT64_C(1) << b) {
+                s0 ^= s[0];
+                s1 ^= s[1];
+                s2 ^= s[2];
+                s3 ^= s[3];
+            }
+            xoshiro256p_next(s);
+        }
     }
     
-	s[0] = s0;
-	s[1] = s1;
-	s[2] = s2;
-	s[3] = s3;
+    s[0] = s0;
+    s[1] = s1;
+    s[2] = s2;
+    s[3] = s3;
 }
 
 /* This is the long-jump function for the generator. It is equivalent to
@@ -91,32 +91,32 @@ void xoshiro256p_jump(uint64_t * s) {
  *       from each of which jump() will generate 2^64 non-overlapping
  *          subsequences for parallel distributed computations. */
 
-void xoshiro256p_long_jump(uint64_t * s) {
-	static const uint64_t LONG_JUMP[] = { 0x76e15d3efefdcbbf, 0xc5004e441c522fb3, 0x77710069854ee241, 0x39109bb02acbe635 };
-
-	uint64_t s0 = 0;
-	uint64_t s1 = 0;
-	uint64_t s2 = 0;
-	uint64_t s3 = 0;
-	for(int i = 0; i < sizeof LONG_JUMP / sizeof *LONG_JUMP; i++) {
-		for(int b = 0; b < 64; b++) {
-			if (LONG_JUMP[i] & UINT64_C(1) << b) {
-				s0 ^= s[0];
-				s1 ^= s[1];
-				s2 ^= s[2];
-				s3 ^= s[3];
-			}
-			xoshiro256p_next(s);	
-		}
-	}
-	s[0] = s0;
-	s[1] = s1;
-	s[2] = s2;
-	s[3] = s3;
+void xoshiro256p_long_jump(uint64_t* s) {
+    static const uint64_t LONG_JUMP[] = { 0x76e15d3efefdcbbf, 0xc5004e441c522fb3, 0x77710069854ee241, 0x39109bb02acbe635 };
+    
+    uint64_t s0 = 0;
+    uint64_t s1 = 0;
+    uint64_t s2 = 0;
+    uint64_t s3 = 0;
+    for(size_t i = 0; i < sizeof LONG_JUMP / sizeof *LONG_JUMP; i++) {
+        for(size_t b = 0; b < 64; b++) {
+            if (LONG_JUMP[i] & UINT64_C(1) << b) {
+                s0 ^= s[0];
+                s1 ^= s[1];
+                s2 ^= s[2];
+                s3 ^= s[3];
+            }
+            xoshiro256p_next(s);
+        }
+    }
+    s[0] = s0;
+    s[1] = s1;
+    s[2] = s2;
+    s[3] = s3;
 }
 
-void xoshiro256p_copy_state(uint64_t * s_new, uint64_t * s_old) {
-    for (int i=0; i<4; i++) {
+void xoshiro256p_copy_state(uint64_t* s_new, uint64_t* s_old) {
+    for (size_t i=0; i<4; i++) {
         s_new[i] = s_old[i];
     }
 }

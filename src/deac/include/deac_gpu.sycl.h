@@ -16,7 +16,7 @@
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 
-uint64_t gpu_rol64(uint64_t x, int k) {
+uint64_t gpu_rol64(uint64_t x, uint64_t k) {
     return (x << k) | (x >> (64 - k));
 }
 
@@ -225,7 +225,7 @@ void reduce_min(double* _c, sycl::group work_group) {
     });
 }
 
-void gpu_matrix_multiply_MxN_by_Nx1(sycl::queue q, int grid_size, double* C_tmp, double* C, double* B, double* A, int M, int N) {
+void gpu_matrix_multiply_MxN_by_Nx1(sycl::queue q, size_t grid_size, double* C_tmp, double* C, double* B, double* A, size_t M, size_t N) {
     // C = B*A where [B] = MxN and [A] = Nx1
     auto event_reduce_to_C_tmp = q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
@@ -286,12 +286,12 @@ void gpu_matrix_multiply_MxN_by_Nx1(sycl::queue q, int grid_size, double* C_tmp,
     });
 }
 
-void gpu_matrix_multiply_LxM_by_MxN(sycl::queue q, int grid_size, double* C_tmp, double* C, double* A, double* B, int L, int M) {
+void gpu_matrix_multiply_LxM_by_MxN(sycl::queue q, size_t grid_size, double* C_tmp, double* C, double* A, double* B, size_t L, size_t M) {
     // C = B*A where [B] = LxM and [A] = MxN ???? FIXME this doesn't make sense
     gpu_matrix_multiply_MxN_by_Nx1(q, grid_size, C_tmp, C, B, A, M, L);
 }
 
-void gpu_normalize_population(sycl::queue q, int grid_size, double * population, double * normalization, double zeroth_moment, int population_size, int genome_size) {
+void gpu_normalize_population(sycl::queue q, size_t grid_size, double * population, double * normalization, double zeroth_moment, size_t population_size, size_t genome_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -305,7 +305,7 @@ void gpu_normalize_population(sycl::queue q, int grid_size, double * population,
     });
 }
 
-void gpu_set_fitness(sycl::queue q, int grid_size, double* fitness_tmp, double* fitness, double* isf, double* isf_model, double* isf_error, int number_of_timeslices) {
+void gpu_set_fitness(sycl::queue q, size_t grid_size, double* fitness_tmp, double* fitness, double* isf, double* isf_model, double* isf_error, size_t number_of_timeslices) {
     auto event_reduce_to_fitness_tmp = q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             // Set shared local memory _f
@@ -364,7 +364,7 @@ void gpu_set_fitness(sycl::queue q, int grid_size, double* fitness_tmp, double* 
     });
 }
 
-void gpu_set_fitness_moments_reduced_chi_squared(sycl::queue q, int grid_size, double* fitness, double* moments, double moment, double moment_error, int population_size) {
+void gpu_set_fitness_moments_reduced_chi_squared(sycl::queue q, size_t grid_size, double* fitness, double* moments, double moment, double moment_error, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -378,7 +378,7 @@ void gpu_set_fitness_moments_reduced_chi_squared(sycl::queue q, int grid_size, d
     });
 }
 
-void gpu_set_fitness_moments_chi_squared(sycl::queue q, int grid_size, double* fitness, double* moments, double moment, int population_size) {
+void gpu_set_fitness_moments_chi_squared(sycl::queue q, size_t grid_size, double* fitness, double* moments, double moment, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -392,7 +392,7 @@ void gpu_set_fitness_moments_chi_squared(sycl::queue q, int grid_size, double* f
     });
 }
 
-void gpu_get_minimum_fitness(sycl::queue q, double* fitness, double* minimum_fitness, int population_size) {
+void gpu_get_minimum_fitness(sycl::queue q, double* fitness, double* minimum_fitness, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{1}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             // Set shared local memory _mf
@@ -428,7 +428,7 @@ void gpu_get_minimum_fitness(sycl::queue q, double* fitness, double* minimum_fit
     });
 }
 
-void gpu_set_fitness_mean(sycl::queue q, double* fitness_mean_tmp double* fitness_mean, double* fitness, int population_size) {
+void gpu_set_fitness_mean(sycl::queue q, double* fitness_mean_tmp double* fitness_mean, double* fitness, size_t population_size) {
     auto event_reduce_to_fitness_mean_tmp = q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             // Set shared local memory _fm
@@ -487,7 +487,7 @@ void gpu_set_fitness_mean(sycl::queue q, double* fitness_mean_tmp double* fitnes
     });
 }
 
-void gpu_set_fitness_squared_mean(sycl::queue q, double* fitness_squared_mean_tmp double* fitness_squared_mean, double* fitness, int population_size) {
+void gpu_set_fitness_squared_mean(sycl::queue q, double* fitness_squared_mean_tmp double* fitness_squared_mean, double* fitness, size_t population_size) {
     auto event_reduce_to_fitness_squared_mean_tmp = q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             // Set shared local memory _fsm
@@ -546,18 +546,18 @@ void gpu_set_fitness_squared_mean(sycl::queue q, double* fitness_squared_mean_tm
     });
 }
 
-void gpu_set_population_new(sycl::queue q, int grid_size, double* population_new, double* population_old, int* mutant_indices, double* differential_weights_new, bool* mutate_indices, int population_size, int genome_size) {
+void gpu_set_population_new(sycl::queue q, size_t grid_size, double* population_new, double* population_old, size_t* mutant_indices, double* differential_weights_new, bool* mutate_indices, size_t population_size, size_t genome_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                 size_t global_idx = index.get_global_id(0);
                 if (global_idx < population_size*genome_size) {
-                    int _i = global_idx/genome_size;
-                    int _j = global_idx - _i*genome_size;
+                    size_t _i = global_idx/genome_size;
+                    size_t _j = global_idx - _i*genome_size;
                     double F = differential_weights_new[_i];
-                    int mutant_index1 = mutant_indices[3*_i];
-                    int mutant_index2 = mutant_indices[3*_i + 1];
-                    int mutant_index3 = mutant_indices[3*_i + 2];
+                    size_t mutant_index1 = mutant_indices[3*_i];
+                    size_t mutant_index2 = mutant_indices[3*_i + 1];
+                    size_t mutant_index3 = mutant_indices[3*_i + 2];
                     bool mutate = mutate_indices[global_idx];
                     if (mutate) {
                         #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
@@ -574,7 +574,7 @@ void gpu_set_population_new(sycl::queue q, int grid_size, double* population_new
     });
 }
 
-void gpu_match_population_zero(sycl::queue q, int grid_size, double* population_negative_frequency, double* population_positive_frequency, int population_size, int genome_size) {
+void gpu_match_population_zero(sycl::queue q, size_t grid_size, double* population_negative_frequency, double* population_positive_frequency, size_t population_size, size_t genome_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -587,7 +587,7 @@ void gpu_match_population_zero(sycl::queue q, int grid_size, double* population_
     });
 }
 
-void gpu_set_rejection_indices(sycl::queue q, int grid_size, bool* rejection_indices, double* fitness_new, double* fitness_old, int population_size) {
+void gpu_set_rejection_indices(sycl::queue q, size_t grid_size, bool* rejection_indices, double* fitness_new, double* fitness_old, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -604,7 +604,7 @@ void gpu_set_rejection_indices(sycl::queue q, int grid_size, bool* rejection_ind
     });
 }
 
-void gpu_swap_control_parameters(sycl::queue q, int grid_size, double* control_parameter_old, double* control_parameter_new, bool* rejection_indices, int population_size) {
+void gpu_swap_control_parameters(sycl::queue q, size_t grid_size, double* control_parameter_old, double* control_parameter_new, bool* rejection_indices, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -619,7 +619,7 @@ void gpu_swap_control_parameters(sycl::queue q, int grid_size, double* control_p
     });
 }
 
-void gpu_swap_populations(sycl::queue q, int grid_size, double* population_old, double* population_new, bool* rejection_indices, int population_size, int genome_size) {
+void gpu_swap_populations(sycl::queue q, size_t grid_size, double* population_old, double* population_new, bool* rejection_indices, size_t population_size, size_t genome_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -635,7 +635,7 @@ void gpu_swap_populations(sycl::queue q, int grid_size, double* population_old, 
     });
 }
 
-void gpu_set_crossover_probabilities_new(sycl::queue q, int grid_size, uint64_t* rng_state, double* crossover_probabilities_new, double* crossover_probabilities_old, double self_adapting_crossover_probability, int population_size) {
+void gpu_set_crossover_probabilities_new(sycl::queue q, size_t grid_size, uint64_t* rng_state, double* crossover_probabilities_new, double* crossover_probabilities_old, double self_adapting_crossover_probability, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -652,7 +652,7 @@ void gpu_set_crossover_probabilities_new(sycl::queue q, int grid_size, uint64_t*
     });
 }
 
-void gpu_set_differential_weights_new(sycl::queue q, int grid_size, uint64_t* rng_state, double* differential_weights_new, double* differential_weights_old, double self_adapting_differential_weight_probability, int population_size) {
+void gpu_set_differential_weights_new(sycl::queue q, size_t grid_size, uint64_t* rng_state, double* differential_weights_new, double* differential_weights_old, double self_adapting_differential_weight_probability, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -669,7 +669,7 @@ void gpu_set_differential_weights_new(sycl::queue q, int grid_size, uint64_t* rn
     });
 }
 
-void gpu_set_mutant_indices(uint64_t* rng_state, int* mutant_indices, int mutant_index0, int length) {
+void gpu_set_mutant_indices(uint64_t* rng_state, size_t* mutant_indices, size_t mutant_index0, size_t length) {
     mutant_indices[0] = mutant_index0;
     mutant_indices[1] = mutant_index0;
     mutant_indices[2] = mutant_index0;
@@ -687,7 +687,7 @@ void gpu_set_mutant_indices(uint64_t* rng_state, int* mutant_indices, int mutant
     }
 }
 
-void gpu_set_mutant_indices(sycl::queue q, int grid_size, uint64_t* rng_state, int* mutant_indices, int population_size) {
+void gpu_set_mutant_indices(sycl::queue q, size_t grid_size, uint64_t* rng_state, size_t* mutant_indices, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -700,7 +700,7 @@ void gpu_set_mutant_indices(sycl::queue q, int grid_size, uint64_t* rng_state, i
     });
 }
 
-void gpu_set_mutate_indices(sycl::queue q, int grid_size, uint64_t* rng_state, bool* mutate_indices, double* crossover_probabilities, int population_size, int genome_size) {
+void gpu_set_mutate_indices(sycl::queue q, size_t grid_size, uint64_t* rng_state, bool* mutate_indices, double* crossover_probabilities, size_t population_size, size_t genome_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {

@@ -19,16 +19,16 @@
 
 #ifdef DEAC_DEBUG
     __global__
-    void gpu_check_array(double * _array, int length) {
-        int i = blockDim.x * blockIdx.x + threadIdx.x;
+    void gpu_check_array(double * _array, size_t length) {
+        size_t i = blockDim.x * blockIdx.x + threadIdx.x;
         if (i < length) {
-            printf("_array[%d]: %e\n", i, _array[i]);
+            prsize_tf("_array[%d]: %e\n", i, _array[i]);
         }
     }
 #endif
 
 __device__
-uint64_t gpu_rol64(uint64_t x, int k) {
+uint64_t gpu_rol64(uint64_t x, uint64_t k) {
     return (x << k) | (x >> (64 - k));
 }
 
@@ -49,7 +49,7 @@ uint64_t gpu_xoshiro256p_next(uint64_t * s) {
 }
 
 // GPU Kernel for reduction using warp (uses appropriate warp for NVIDIA vs AMD devices i. e. "portable wave aware code")
-__device__ void warp_reduce(volatile double *sdata, unsigned int thread_idx) {
+__device__ void warp_reduce(volatile double *sdata, unsigned size_t thread_idx) {
     if (warpSize == 64) { if (GPU_BLOCK_SIZE >= 128) sdata[thread_idx] += sdata[thread_idx + 64]; }
     if (GPU_BLOCK_SIZE >= 64) sdata[thread_idx] += sdata[thread_idx + 32];
     if (GPU_BLOCK_SIZE >= 32) sdata[thread_idx] += sdata[thread_idx + 16];
@@ -59,7 +59,7 @@ __device__ void warp_reduce(volatile double *sdata, unsigned int thread_idx) {
     if (GPU_BLOCK_SIZE >= 2) sdata[thread_idx] += sdata[thread_idx + 1];
 }
 
-__device__ void warp_reduce_min(volatile double *sdata, unsigned int thread_idx) {
+__device__ void warp_reduce_min(volatile double *sdata, unsigned size_t thread_idx) {
     if (warpSize == 64) { if (GPU_BLOCK_SIZE >= 128) sdata[thread_idx] = sdata[thread_idx + 64] < sdata[thread_idx] ? sdata[thread_idx + 64] : sdata[thread_idx]; }
     if (GPU_BLOCK_SIZE >= 64) sdata[thread_idx] = sdata[thread_idx + 32] < sdata[thread_idx] ? sdata[thread_idx + 32] : sdata[thread_idx];
     if (GPU_BLOCK_SIZE >= 32) sdata[thread_idx] = sdata[thread_idx + 16] < sdata[thread_idx] ? sdata[thread_idx + 16] : sdata[thread_idx];
@@ -70,9 +70,9 @@ __device__ void warp_reduce_min(volatile double *sdata, unsigned int thread_idx)
 }
 
 __global__
-void gpu_matrix_multiply_MxN_by_Nx1(double * C, double * A, double * B, int N, int idx) {
+void gpu_matrix_multiply_MxN_by_Nx1(double * C, double * A, double * B, size_t N, size_t idx) {
     __shared__ double _c[GPU_BLOCK_SIZE];
-    int _j = blockDim.x * blockIdx.x + threadIdx.x;
+    size_t _j = blockDim.x * blockIdx.x + threadIdx.x;
     if (_j < N) {
         _c[threadIdx.x] = A[idx*N + _j]*B[_j];
     } else {
@@ -126,12 +126,12 @@ void gpu_matrix_multiply_MxN_by_Nx1(double * C, double * A, double * B, int N, i
 }
 
 __global__
-void gpu_matrix_multiply_LxM_by_MxN(double * C, double * A, double * B, int L, int M, int idx) {
+void gpu_matrix_multiply_LxM_by_MxN(double * C, double * A, double * B, size_t L, size_t M, size_t idx) {
     __shared__ double _c[GPU_BLOCK_SIZE];
-    int k = blockDim.x * blockIdx.x + threadIdx.x;
+    size_t k = blockDim.x * blockIdx.x + threadIdx.x;
     if (k < M) {
-        int _i = idx/L;
-        int _j = idx - _i*L;
+        size_t _i = idx/L;
+        size_t _j = idx - _i*L;
         _c[threadIdx.x] = A[_j*M + k]*B[_i*M + k];
     } else {
         _c[threadIdx.x] = 0.0;
@@ -184,8 +184,8 @@ void gpu_matrix_multiply_LxM_by_MxN(double * C, double * A, double * B, int L, i
 }
 
 __global__
-void gpu_normalize_population(double * population, double * normalization, double zeroth_moment, int population_size, int genome_size) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+void gpu_normalize_population(double * population, double * normalization, double zeroth_moment, size_t population_size, size_t genome_size) {
+    size_t i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < population_size*genome_size) {
         double _norm = normalization[i/genome_size];
         population[i] *= zeroth_moment/_norm;
@@ -193,9 +193,9 @@ void gpu_normalize_population(double * population, double * normalization, doubl
 }
 
 __global__
-void gpu_set_fitness(double * fitness, double * isf, double * isf_model, double * isf_error, int number_of_timeslices, int idx) {
+void gpu_set_fitness(double * fitness, double * isf, double * isf_model, double * isf_error, size_t number_of_timeslices, size_t idx) {
     __shared__ double _f[GPU_BLOCK_SIZE];
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    size_t i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < number_of_timeslices) {
         _f[threadIdx.x] = pow((isf[i] - isf_model[idx*number_of_timeslices + i])/isf_error[i],2);
     } else {
@@ -249,23 +249,23 @@ void gpu_set_fitness(double * fitness, double * isf, double * isf_model, double 
 }
 
 __global__
-void gpu_set_fitness_moments_reduced_chi_squared(double * fitness, double * moments, double moment, double moment_error, int population_size) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+void gpu_set_fitness_moments_reduced_chi_squared(double * fitness, double * moments, double moment, double moment_error, size_t population_size) {
+    size_t i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < population_size) {
         fitness[i] += pow((moment - moments[i])/moment_error,2);
     } 
 }
 
 __global__
-void gpu_set_fitness_moments_chi_squared(double * fitness, double * moments, double moment, int population_size) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+void gpu_set_fitness_moments_chi_squared(double * fitness, double * moments, double moment, size_t population_size) {
+    size_t i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < population_size) {
         fitness[i] += pow((moment - moments[i]),2)/moment;
     } 
 }
 
 __global__
-void gpu_get_minimum_fitness(double * fitness, double * minimum_fitness, int population_size) {
+void gpu_get_minimum_fitness(double * fitness, double * minimum_fitness, size_t population_size) {
     __shared__ double s_minimum[GPU_BLOCK_SIZE];
     if (threadIdx.x < population_size) {
         s_minimum[threadIdx.x] = fitness[threadIdx.x];
@@ -273,8 +273,8 @@ void gpu_get_minimum_fitness(double * fitness, double * minimum_fitness, int pop
         s_minimum[threadIdx.x] = fitness[0];
     }
 
-    for (int i=0; i<population_size/GPU_BLOCK_SIZE; i++) {
-        int j = GPU_BLOCK_SIZE*i + threadIdx.x;
+    for (size_t i=0; i<population_size/GPU_BLOCK_SIZE; i++) {
+        size_t j = GPU_BLOCK_SIZE*i + threadIdx.x;
         if (j < population_size) {
             s_minimum[threadIdx.x] = fitness[j] < s_minimum[threadIdx.x] ? fitness[j] : s_minimum[threadIdx.x];
         }
@@ -324,9 +324,9 @@ void gpu_get_minimum_fitness(double * fitness, double * minimum_fitness, int pop
 }
 
 __global__
-void gpu_set_fitness_mean(double * fitness_mean, double * fitness, int population_size, int idx) {
+void gpu_set_fitness_mean(double * fitness_mean, double * fitness, size_t population_size, size_t idx) {
     __shared__ double _f[GPU_BLOCK_SIZE];
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    size_t i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < population_size) {
         _f[threadIdx.x] = fitness[i];
     } else {
@@ -380,9 +380,9 @@ void gpu_set_fitness_mean(double * fitness_mean, double * fitness, int populatio
 }
 
 __global__
-void gpu_set_fitness_squared_mean(double * fitness_squared_mean, double * fitness, int population_size, int idx) {
+void gpu_set_fitness_squared_mean(double * fitness_squared_mean, double * fitness, size_t population_size, size_t idx) {
     __shared__ double _f[GPU_BLOCK_SIZE];
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    size_t i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < population_size) {
         _f[threadIdx.x] = fitness[i]*fitness[i];
     } else {
@@ -436,15 +436,15 @@ void gpu_set_fitness_squared_mean(double * fitness_squared_mean, double * fitnes
 }
 
 __global__
-void gpu_set_population_new(double * population_new, double * population_old, int * mutant_indices, double * differential_weights_new, bool * mutate_indices, int population_size, int genome_size) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+void gpu_set_population_new(double * population_new, double * population_old, size_t * mutant_indices, double * differential_weights_new, bool * mutate_indices, size_t population_size, size_t genome_size) {
+    size_t i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < population_size*genome_size) {
-        int _i = i/genome_size;
-        int _j = i - _i*genome_size;
+        size_t _i = i/genome_size;
+        size_t _j = i - _i*genome_size;
         double F = differential_weights_new[_i];
-        int mutant_index1 = mutant_indices[3*_i];
-        int mutant_index2 = mutant_indices[3*_i + 1];
-        int mutant_index3 = mutant_indices[3*_i + 2];
+        size_t mutant_index1 = mutant_indices[3*_i];
+        size_t mutant_index2 = mutant_indices[3*_i + 1];
+        size_t mutant_index3 = mutant_indices[3*_i + 2];
         bool mutate = mutate_indices[i];
         if (mutate) {
             #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
@@ -459,16 +459,16 @@ void gpu_set_population_new(double * population_new, double * population_old, in
 }
 
 __global__
-void gpu_match_population_zero(double * population_negative_frequency, double * population_positive_frequency, int population_size, int genome_size) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+void gpu_match_population_zero(double * population_negative_frequency, double * population_positive_frequency, size_t population_size, size_t genome_size) {
+    size_t i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < population_size) {
         population_negative_frequency[i*genome_size] = population_positive_frequency[i*genome_size];
     }
 }
 
 __global__
-void gpu_set_rejection_indices(bool * rejection_indices, double * fitness_new, double * fitness_old, int population_size) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+void gpu_set_rejection_indices(bool * rejection_indices, double * fitness_new, double * fitness_old, size_t population_size) {
+    size_t i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < population_size) {
         bool accept = fitness_new[i] <= fitness_old[i];
         rejection_indices[i] = accept;
@@ -479,8 +479,8 @@ void gpu_set_rejection_indices(bool * rejection_indices, double * fitness_new, d
 }
 
 __global__
-void gpu_swap_control_parameters(double * control_parameter_old, double * control_parameter_new, bool * rejection_indices, int population_size) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+void gpu_swap_control_parameters(double * control_parameter_old, double * control_parameter_new, bool * rejection_indices, size_t population_size) {
+    size_t i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < population_size) {
         if (rejection_indices[i]) {
             control_parameter_old[i] = control_parameter_new[i];
@@ -489,10 +489,10 @@ void gpu_swap_control_parameters(double * control_parameter_old, double * contro
 }
 
 __global__
-void gpu_swap_populations(double * population_old, double * population_new, bool * rejection_indices, int population_size, int genome_size) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+void gpu_swap_populations(double * population_old, double * population_new, bool * rejection_indices, size_t population_size, size_t genome_size) {
+    size_t i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < population_size*genome_size) {
-        int _i = i/genome_size;
+        size_t _i = i/genome_size;
         if (rejection_indices[_i]) {
             population_old[i] = population_new[i];
         }
@@ -500,8 +500,8 @@ void gpu_swap_populations(double * population_old, double * population_new, bool
 }
 
 __global__
-void gpu_set_crossover_probabilities_new(uint64_t * rng_state, double * crossover_probabilities_new, double * crossover_probabilities_old, double self_adapting_crossover_probability, int population_size) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+void gpu_set_crossover_probabilities_new(uint64_t * rng_state, double * crossover_probabilities_new, double * crossover_probabilities_old, double self_adapting_crossover_probability, size_t population_size) {
+    size_t i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < population_size) {
         if ((gpu_xoshiro256p_next(rng_state + 4*i) >> 11) * 0x1.0p-53 < self_adapting_crossover_probability) {
             crossover_probabilities_new[i] = (gpu_xoshiro256p_next(rng_state + 4*i) >> 11) * 0x1.0p-53;
@@ -512,8 +512,8 @@ void gpu_set_crossover_probabilities_new(uint64_t * rng_state, double * crossove
 }
 
 __global__
-void gpu_set_differential_weights_new(uint64_t * rng_state, double * differential_weights_new, double * differential_weights_old, double self_adapting_differential_weight_probability, int population_size) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+void gpu_set_differential_weights_new(uint64_t * rng_state, double * differential_weights_new, double * differential_weights_old, double self_adapting_differential_weight_probability, size_t population_size) {
+    size_t i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < population_size) {
         if ((gpu_xoshiro256p_next(rng_state + 4*i) >> 11) * 0x1.0p-53 < self_adapting_differential_weight_probability) {
             differential_weights_new[i] = 2.0*((gpu_xoshiro256p_next(rng_state + 4*i) >> 11) * 0x1.0p-53);
@@ -524,7 +524,7 @@ void gpu_set_differential_weights_new(uint64_t * rng_state, double * differentia
 }
 
 __device__
-void gpu_set_mutant_indices(uint64_t * rng_state, int * mutant_indices, int mutant_index0, int length) {
+void gpu_set_mutant_indices(uint64_t * rng_state, size_t * mutant_indices, size_t mutant_index0, size_t length) {
     mutant_indices[0] = mutant_index0;
     mutant_indices[1] = mutant_index0;
     mutant_indices[2] = mutant_index0;
@@ -543,18 +543,18 @@ void gpu_set_mutant_indices(uint64_t * rng_state, int * mutant_indices, int muta
 }
 
 __global__
-void gpu_set_mutant_indices(uint64_t * rng_state, int * mutant_indices, int population_size) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+void gpu_set_mutant_indices(uint64_t * rng_state, size_t * mutant_indices, size_t population_size) {
+    size_t i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < population_size) {
         gpu_set_mutant_indices(rng_state + 4*i, mutant_indices + 3*i, i, population_size);
     }
 }
 
 __global__
-void gpu_set_mutate_indices(uint64_t * rng_state, bool * mutate_indices, double * crossover_probabilities, int population_size, int genome_size) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+void gpu_set_mutate_indices(uint64_t * rng_state, bool * mutate_indices, double * crossover_probabilities, size_t population_size, size_t genome_size) {
+    size_t i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < population_size*genome_size) {
-        int _i = i/genome_size;
+        size_t _i = i/genome_size;
         mutate_indices[i] = (gpu_xoshiro256p_next(rng_state + 4*i) >> 11) * 0x1.0p-53 < crossover_probabilities[_i];
     }
 }
@@ -571,212 +571,212 @@ void gpu_check_minimum_fitness(double * minimum_fitness, double stop_minimum_fit
 // ---------------------------------------------------------------------------
 namespace cuda_wrapper {
     #ifdef DEAC_DEBUG
-        void gpu_check_array_wrapper(dim3 grid_size, dim3 group_size, double * _array, int length) {
+        void gpu_check_array_wrapper(dim3 grid_size, dim3 group_size, double * _array, size_t length) {
             gpu_check_array <<<grid_size, group_size, 0, 0>>> ( 
                     _array, length
                     );
         }
     
-        void gpu_check_array_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * _array, int length) {
+        void gpu_check_array_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * _array, size_t length) {
             gpu_check_array <<<grid_size, group_size, 0, stream>>> ( 
                     _array, length
                     );
         }
     #endif
 
-    void gpu_matrix_multiply_MxN_by_Nx1_wrapper(dim3 grid_size, dim3 group_size, double * C, double * A, double * B, int N, int idx) {
+    void gpu_matrix_multiply_MxN_by_Nx1_wrapper(dim3 grid_size, dim3 group_size, double * C, double * A, double * B, size_t N, size_t idx) {
         gpu_matrix_multiply_MxN_by_Nx1 <<<grid_size, group_size, 0, 0>>> ( 
                 C, A, B, N, idx
                 );
     }
-    void gpu_matrix_multiply_MxN_by_Nx1_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * C, double * A, double * B, int N, int idx) {
+    void gpu_matrix_multiply_MxN_by_Nx1_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * C, double * A, double * B, size_t N, size_t idx) {
         gpu_matrix_multiply_MxN_by_Nx1 <<<grid_size, group_size, 0, stream>>> ( 
                 C, A, B, N, idx
                 );
     }
     
-    void gpu_matrix_multiply_LxM_by_MxN_wrapper(dim3 grid_size, dim3 group_size, double * C, double * A, double * B, int L, int M, int idx) {
+    void gpu_matrix_multiply_LxM_by_MxN_wrapper(dim3 grid_size, dim3 group_size, double * C, double * A, double * B, size_t L, size_t M, size_t idx) {
         gpu_matrix_multiply_LxM_by_MxN <<<grid_size, group_size, 0, 0>>> ( 
                 C, A, B, L, M, idx
                 );
     }
-    void gpu_matrix_multiply_LxM_by_MxN_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * C, double * A, double * B, int L, int M, int idx) {
+    void gpu_matrix_multiply_LxM_by_MxN_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * C, double * A, double * B, size_t L, size_t M, size_t idx) {
         gpu_matrix_multiply_LxM_by_MxN <<<grid_size, group_size, 0, stream>>> ( 
                 C, A, B, L, M, idx
                 );
     }
     
-    void gpu_normalize_population_wrapper(dim3 grid_size, dim3 group_size, double * population, double * normalization, double zeroth_moment, int population_size, int genome_size) {
+    void gpu_normalize_population_wrapper(dim3 grid_size, dim3 group_size, double * population, double * normalization, double zeroth_moment, size_t population_size, size_t genome_size) {
         gpu_normalize_population <<<grid_size, group_size, 0, 0>>> ( 
                 population, normalization, zeroth_moment, population_size, genome_size
                 );
     }
-    void gpu_normalize_population_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * population, double * normalization, double zeroth_moment, int population_size, int genome_size) {
+    void gpu_normalize_population_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * population, double * normalization, double zeroth_moment, size_t population_size, size_t genome_size) {
         gpu_normalize_population <<<grid_size, group_size, 0, stream>>> ( 
                 population, normalization, zeroth_moment, population_size, genome_size
                 );
     }
     
-    void gpu_set_fitness_wrapper(dim3 grid_size, dim3 group_size, double * fitness, double * isf, double * isf_model, double * isf_error, int number_of_timeslices, int idx) {
+    void gpu_set_fitness_wrapper(dim3 grid_size, dim3 group_size, double * fitness, double * isf, double * isf_model, double * isf_error, size_t number_of_timeslices, size_t idx) {
         gpu_set_fitness <<<grid_size, group_size, 0, 0>>> ( 
                 fitness, isf, isf_model, isf_error, number_of_timeslices, idx
                 );
     }
-    void gpu_set_fitness_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * fitness, double * isf, double * isf_model, double * isf_error, int number_of_timeslices, int idx) {
+    void gpu_set_fitness_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * fitness, double * isf, double * isf_model, double * isf_error, size_t number_of_timeslices, size_t idx) {
         gpu_set_fitness <<<grid_size, group_size, 0, stream>>> ( 
                 fitness, isf, isf_model, isf_error, number_of_timeslices, idx
                 );
     }
     
-    void gpu_set_fitness_moments_reduced_chi_squared_wrapper(dim3 grid_size, dim3 group_size, double * fitness, double * moments, double moment, double moment_error, int population_size) {
+    void gpu_set_fitness_moments_reduced_chi_squared_wrapper(dim3 grid_size, dim3 group_size, double * fitness, double * moments, double moment, double moment_error, size_t population_size) {
         gpu_set_fitness_moments_reduced_chi_squared <<<grid_size, group_size, 0, 0>>> ( 
                 fitness, moments, moment, moment_error, population_size
                 );
     }
-    void gpu_set_fitness_moments_reduced_chi_squared_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * fitness, double * moments, double moment, double moment_error, int population_size) {
+    void gpu_set_fitness_moments_reduced_chi_squared_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * fitness, double * moments, double moment, double moment_error, size_t population_size) {
         gpu_set_fitness_moments_reduced_chi_squared <<<grid_size, group_size, 0, stream>>> ( 
                 fitness, moments, moment, moment_error, population_size
                 );
     }
     
-    void gpu_set_fitness_moments_chi_squared_wrapper(dim3 grid_size, dim3 group_size, double * fitness, double * moments, double moment, int population_size) {
+    void gpu_set_fitness_moments_chi_squared_wrapper(dim3 grid_size, dim3 group_size, double * fitness, double * moments, double moment, size_t population_size) {
         gpu_set_fitness_moments_chi_squared <<<grid_size, group_size, 0, 0>>> ( 
                 fitness, moments, moment, population_size
                 );
     }
-    void gpu_set_fitness_moments_chi_squared_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * fitness, double * moments, double moment, int population_size) {
+    void gpu_set_fitness_moments_chi_squared_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * fitness, double * moments, double moment, size_t population_size) {
         gpu_set_fitness_moments_chi_squared <<<grid_size, group_size, 0, stream>>> ( 
                 fitness, moments, moment, population_size
                 );
     }
     
-    void gpu_get_minimum_fitness_wrapper(dim3 grid_size, dim3 group_size, double * fitness, double * minimum_fitness, int population_size) {
+    void gpu_get_minimum_fitness_wrapper(dim3 grid_size, dim3 group_size, double * fitness, double * minimum_fitness, size_t population_size) {
         gpu_get_minimum_fitness <<<grid_size, group_size, 0, 0>>> ( 
                 fitness, minimum_fitness, population_size
                 );
     }
-    void gpu_get_minimum_fitness_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * fitness, double * minimum_fitness, int population_size) {
+    void gpu_get_minimum_fitness_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * fitness, double * minimum_fitness, size_t population_size) {
         gpu_get_minimum_fitness <<<grid_size, group_size, 0, stream>>> ( 
                 fitness, minimum_fitness, population_size
                 );
     }
     
-    void gpu_set_fitness_mean_wrapper(dim3 grid_size, dim3 group_size, double * fitness_mean, double * fitness, int population_size, int idx) {
+    void gpu_set_fitness_mean_wrapper(dim3 grid_size, dim3 group_size, double * fitness_mean, double * fitness, size_t population_size, size_t idx) {
         gpu_set_fitness_mean <<<grid_size, group_size, 0, 0>>> ( 
                 fitness_mean, fitness, population_size, idx
                 );
     }
-    void gpu_set_fitness_mean_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * fitness_mean, double * fitness, int population_size, int idx) {
+    void gpu_set_fitness_mean_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * fitness_mean, double * fitness, size_t population_size, size_t idx) {
         gpu_set_fitness_mean <<<grid_size, group_size, 0, stream>>> ( 
                 fitness_mean, fitness, population_size, idx
                 );
     }
     
-    void gpu_set_fitness_squared_mean_wrapper(dim3 grid_size, dim3 group_size, double * fitness_squared_mean, double * fitness, int population_size, int idx) {
+    void gpu_set_fitness_squared_mean_wrapper(dim3 grid_size, dim3 group_size, double * fitness_squared_mean, double * fitness, size_t population_size, size_t idx) {
         gpu_set_fitness_squared_mean <<<grid_size, group_size, 0, 0>>> ( 
                 fitness_squared_mean, fitness, population_size, idx
                 );
     }
-    void gpu_set_fitness_squared_mean_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * fitness_squared_mean, double * fitness, int population_size, int idx) {
+    void gpu_set_fitness_squared_mean_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * fitness_squared_mean, double * fitness, size_t population_size, size_t idx) {
         gpu_set_fitness_squared_mean <<<grid_size, group_size, 0, stream>>> ( 
                 fitness_squared_mean, fitness, population_size, idx
                 );
     }
     
-    void gpu_set_population_new_wrapper(dim3 grid_size, dim3 group_size, double * population_new, double * population_old, int * mutant_indices, double * differential_weights_new, bool * mutate_indices, int population_size, int genome_size) {
+    void gpu_set_population_new_wrapper(dim3 grid_size, dim3 group_size, double * population_new, double * population_old, size_t * mutant_indices, double * differential_weights_new, bool * mutate_indices, size_t population_size, size_t genome_size) {
         gpu_set_population_new <<<grid_size, group_size, 0, 0>>> ( 
                 population_new, population_old, mutant_indices, differential_weights_new, mutate_indices, population_size, genome_size
                 );
     }
-    void gpu_set_population_new_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * population_new, double * population_old, int * mutant_indices, double * differential_weights_new, bool * mutate_indices, int population_size, int genome_size) {
+    void gpu_set_population_new_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * population_new, double * population_old, size_t * mutant_indices, double * differential_weights_new, bool * mutate_indices, size_t population_size, size_t genome_size) {
         gpu_set_population_new <<<grid_size, group_size, 0, stream>>> ( 
                 population_new, population_old, mutant_indices, differential_weights_new, mutate_indices, population_size, genome_size
                 );
     }
 
-    void gpu_match_population_zero_wrapper(dim3 grid_size, dim3 group_size, double * population_negative_frequency, double * population_positive_frequency, int population_size, int genome_size) {
+    void gpu_match_population_zero_wrapper(dim3 grid_size, dim3 group_size, double * population_negative_frequency, double * population_positive_frequency, size_t population_size, size_t genome_size) {
         gpu_match_population_zero <<<grid_size, group_size, 0, 0>>> (
                 population_negative_frequency, population_positive_frequency, population_size, genome_size
                 );
     }
-    void gpu_match_population_zero_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * population_negative_frequency, double * population_positive_frequency, int population_size, int genome_size) {
+    void gpu_match_population_zero_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * population_negative_frequency, double * population_positive_frequency, size_t population_size, size_t genome_size) {
         gpu_match_population_zero <<<grid_size, group_size, 0, stream>>> (
                 population_negative_frequency, population_positive_frequency, population_size, genome_size
                 );
     }
 
-    void gpu_set_rejection_indices_wrapper(dim3 grid_size, dim3 group_size, bool * rejection_indices, double * fitness_new, double * fitness_old, int population_size) {
+    void gpu_set_rejection_indices_wrapper(dim3 grid_size, dim3 group_size, bool * rejection_indices, double * fitness_new, double * fitness_old, size_t population_size) {
         gpu_set_rejection_indices <<<grid_size, group_size, 0, 0>>> ( 
                 rejection_indices, fitness_new, fitness_old, population_size
                 );
     }
-    void gpu_set_rejection_indices_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, bool * rejection_indices, double * fitness_new, double * fitness_old, int population_size) {
+    void gpu_set_rejection_indices_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, bool * rejection_indices, double * fitness_new, double * fitness_old, size_t population_size) {
         gpu_set_rejection_indices <<<grid_size, group_size, 0, stream>>> ( 
                 rejection_indices, fitness_new, fitness_old, population_size
                 );
     }
     
-    void gpu_swap_control_parameters_wrapper(dim3 grid_size, dim3 group_size, double * control_parameter_old, double * control_parameter_new, bool * rejection_indices, int population_size) {
+    void gpu_swap_control_parameters_wrapper(dim3 grid_size, dim3 group_size, double * control_parameter_old, double * control_parameter_new, bool * rejection_indices, size_t population_size) {
         gpu_swap_control_parameters <<<grid_size, group_size, 0, 0>>> ( 
                 control_parameter_old, control_parameter_new, rejection_indices, population_size
                 );
     }
-    void gpu_swap_control_parameters_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * control_parameter_old, double * control_parameter_new, bool * rejection_indices, int population_size) {
+    void gpu_swap_control_parameters_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * control_parameter_old, double * control_parameter_new, bool * rejection_indices, size_t population_size) {
         gpu_swap_control_parameters <<<grid_size, group_size, 0, stream>>> ( 
                 control_parameter_old, control_parameter_new, rejection_indices, population_size
                 );
     }
     
-    void gpu_swap_populations_wrapper(dim3 grid_size, dim3 group_size, double * population_old, double * population_new, bool * rejection_indices, int population_size, int genome_size) {
+    void gpu_swap_populations_wrapper(dim3 grid_size, dim3 group_size, double * population_old, double * population_new, bool * rejection_indices, size_t population_size, size_t genome_size) {
         gpu_swap_populations <<<grid_size, group_size, 0, 0>>> ( 
                 population_old, population_new, rejection_indices, population_size, genome_size
                 );
     }
-    void gpu_swap_populations_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * population_old, double * population_new, bool * rejection_indices, int population_size, int genome_size) {
+    void gpu_swap_populations_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * population_old, double * population_new, bool * rejection_indices, size_t population_size, size_t genome_size) {
         gpu_swap_populations <<<grid_size, group_size, 0, stream>>> ( 
                 population_old, population_new, rejection_indices, population_size, genome_size
                 );
     }
 
-    void gpu_set_crossover_probabilities_new_wrapper(dim3 grid_size, dim3 group_size, uint64_t * rng_state, double * crossover_probabilities_new, double * crossover_probabilities_old, double self_adapting_crossover_probability, int population_size) {
+    void gpu_set_crossover_probabilities_new_wrapper(dim3 grid_size, dim3 group_size, uint64_t * rng_state, double * crossover_probabilities_new, double * crossover_probabilities_old, double self_adapting_crossover_probability, size_t population_size) {
         gpu_set_crossover_probabilities_new <<<grid_size, group_size, 0, 0>>> ( 
                 rng_state, crossover_probabilities_new, crossover_probabilities_old, self_adapting_crossover_probability, population_size
                 );
     }
-    void gpu_set_crossover_probabilities_new_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, uint64_t * rng_state, double * crossover_probabilities_new, double * crossover_probabilities_old, double self_adapting_crossover_probability, int population_size) {
+    void gpu_set_crossover_probabilities_new_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, uint64_t * rng_state, double * crossover_probabilities_new, double * crossover_probabilities_old, double self_adapting_crossover_probability, size_t population_size) {
         gpu_set_crossover_probabilities_new <<<grid_size, group_size, 0, stream>>> ( 
                 rng_state, crossover_probabilities_new, crossover_probabilities_old, self_adapting_crossover_probability, population_size
                 );
     }
     
-    void gpu_set_differential_weights_new_wrapper(dim3 grid_size, dim3 group_size, uint64_t * rng_state, double * differential_weights_new, double * differential_weights_old, double self_adapting_differential_weight_probability, int population_size) {
+    void gpu_set_differential_weights_new_wrapper(dim3 grid_size, dim3 group_size, uint64_t * rng_state, double * differential_weights_new, double * differential_weights_old, double self_adapting_differential_weight_probability, size_t population_size) {
         gpu_set_differential_weights_new <<<grid_size, group_size, 0, 0>>> ( 
                 rng_state, differential_weights_new, differential_weights_old, self_adapting_differential_weight_probability, population_size
                 );
     }
-    void gpu_set_differential_weights_new_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, uint64_t * rng_state, double * differential_weights_new, double * differential_weights_old, double self_adapting_differential_weight_probability, int population_size) {
+    void gpu_set_differential_weights_new_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, uint64_t * rng_state, double * differential_weights_new, double * differential_weights_old, double self_adapting_differential_weight_probability, size_t population_size) {
         gpu_set_differential_weights_new <<<grid_size, group_size, 0, stream>>> ( 
                 rng_state, differential_weights_new, differential_weights_old, self_adapting_differential_weight_probability, population_size
                 );
     }
     
-    void gpu_set_mutant_indices_wrapper(dim3 grid_size, dim3 group_size, uint64_t * rng_state, int * mutant_indices, int population_size) {
+    void gpu_set_mutant_indices_wrapper(dim3 grid_size, dim3 group_size, uint64_t * rng_state, size_t * mutant_indices, size_t population_size) {
         gpu_set_mutant_indices <<<grid_size, group_size, 0, 0>>> ( 
                 rng_state, mutant_indices, population_size
                 );
     }
-    void gpu_set_mutant_indices_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, uint64_t * rng_state, int * mutant_indices, int population_size) {
+    void gpu_set_mutant_indices_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, uint64_t * rng_state, size_t * mutant_indices, size_t population_size) {
         gpu_set_mutant_indices <<<grid_size, group_size, 0, stream>>> ( 
                 rng_state, mutant_indices, population_size
                 );
     }
     
-    void gpu_set_mutate_indices_wrapper(dim3 grid_size, dim3 group_size, uint64_t * rng_state, bool * mutate_indices, double * crossover_probabilities, int population_size, int genome_size) {
+    void gpu_set_mutate_indices_wrapper(dim3 grid_size, dim3 group_size, uint64_t * rng_state, bool * mutate_indices, double * crossover_probabilities, size_t population_size, size_t genome_size) {
         gpu_set_mutate_indices <<<grid_size, group_size, 0, 0>>> ( 
                 rng_state, mutate_indices, crossover_probabilities, population_size, genome_size
                 );
     }
-    void gpu_set_mutate_indices_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, uint64_t * rng_state, bool * mutate_indices, double * crossover_probabilities, int population_size, int genome_size) {
+    void gpu_set_mutate_indices_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, uint64_t * rng_state, bool * mutate_indices, double * crossover_probabilities, size_t population_size, size_t genome_size) {
         gpu_set_mutate_indices <<<grid_size, group_size, 0, stream>>> ( 
                 rng_state, mutate_indices, crossover_probabilities, population_size, genome_size
                 );
