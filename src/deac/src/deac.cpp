@@ -1277,7 +1277,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
         #endif
         #ifdef USE_SYCL
-            auto d_isf_model_tmp = sycl::malloc_device< double >( grid_size_set_isf_model*population_size*number_of_time_slices, q ); 
+            auto d_isf_model_tmp = sycl::malloc_device< double >( grid_size_set_isf_model*population_size*number_of_timeslices, q ); 
             #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                 q.memset(d_isf_model, 0, bytes_isf_model).wait();
                 for (size_t i=0; i<population_size*number_of_timeslices; i++) {
