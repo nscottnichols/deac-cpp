@@ -13,7 +13,7 @@
 #ifdef DEAC_DEBUG
     #include <stdio.h>
 #endif
-#include <stdsize_t.h>
+#include <stdint.h>
 
 
 // ---------------------------------------------------------------------------

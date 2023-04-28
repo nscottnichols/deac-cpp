@@ -1,7 +1,7 @@
 #pragma once
 #include "common_gpu.hpp"
 #include "device_launch_parameters.h"
-#include <stdsize_t.h>
+#include <stdint.h>
 
 namespace cuda_wrapper {
 #ifdef DEAC_DEBUG
