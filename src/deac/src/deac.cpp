@@ -265,10 +265,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
     #ifdef USE_GPU
         //Load isf and isf error onto GPU
-        #ifndef USE_SYCL
-            double * d_isf;
-            double * d_isf_error;
-        #endif
+        double* d_isf;
+        double* d_isf_error;
         size_t bytes_isf = sizeof(double)*number_of_timeslices;
         size_t bytes_isf_error = sizeof(double)*number_of_timeslices;
         #ifdef USE_HIP
@@ -284,8 +282,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             CUDA_ASSERT(cudaMemcpy( d_isf_error, isf_error, bytes_isf_error, cudaMemcpyHostToDevice ));
         #endif
         #ifdef USE_SYCL
-            auto d_isf       = sycl::malloc_device< double >( number_of_timeslices, q ); 
-            auto d_isf_error = sycl::malloc_device< double >( number_of_timeslices, q ); 
+            d_isf       = sycl::malloc_device< double >( number_of_timeslices, q ); 
+            d_isf_error = sycl::malloc_device< double >( number_of_timeslices, q ); 
             q.memcpy( d_isf,       isf,       bytes_isf );
             q.memcpy( d_isf_error, isf_error, bytes_isf_error ).wait();
         #endif
@@ -388,13 +386,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     
     #ifdef USE_GPU
         //Load isf term onto GPU
-        #ifndef USE_SYCL
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                double * d_isf_term; // pointer to isf_term on gpu
-            #else
-                double * d_isf_term_positive_frequency;
-                double * d_isf_term_negative_frequency;
-            #endif
+        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+            double* d_isf_term; // pointer to isf_term on gpu
+        #else
+            double* d_isf_term_positive_frequency;
+            double* d_isf_term_negative_frequency;
         #endif
         #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
             #ifdef USE_HIP
@@ -406,7 +402,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMemcpy( d_isf_term, isf_term, bytes_isf_term, cudaMemcpyHostToDevice )); // Copy isf_term data to gpu
             #endif
             #ifdef USE_SYCL
-                auto d_isf_term = sycl::malloc_device< double >( genome_size*number_of_timeslices, q ); 
+                d_isf_term = sycl::malloc_device< double >( genome_size*number_of_timeslices, q ); 
                 q.memcpy( d_isf_term, isf_term, bytes_isf_term ).wait();
             #endif
         #else
@@ -423,8 +419,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMemcpy( d_isf_term_negative_frequency, isf_term_negative_frequency, bytes_isf_term, cudaMemcpyHostToDevice )); // Copy isf_term data to gpu
             #endif
             #ifdef USE_SYCL
-                auto d_isf_term_positive_frequency = sycl::malloc_device< double >( genome_size*number_of_timeslices, q ); 
-                auto d_isf_term_negative_frequency = sycl::malloc_device< double >( genome_size*number_of_timeslices, q ); 
+                d_isf_term_positive_frequency = sycl::malloc_device< double >( genome_size*number_of_timeslices, q ); 
+                d_isf_term_negative_frequency = sycl::malloc_device< double >( genome_size*number_of_timeslices, q ); 
                 q.memcpy( d_isf_term_positive_frequency, isf_term_positive_frequency, bytes_isf_term );
                 q.memcpy( d_isf_term_negative_frequency, isf_term_negative_frequency, bytes_isf_term ).wait();
             #endif
@@ -461,10 +457,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
     #ifdef USE_GPU
         #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            #ifndef USE_SYCL
-                double * d_population_old;
-                double * d_population_new;
-            #endif
+            double* d_population_old;
+            double* d_population_new;
             #ifdef USE_HIP
                 HIP_ASSERT(hipMalloc(&d_population_old, bytes_population));
                 HIP_ASSERT(hipMalloc(&d_population_new, bytes_population));
@@ -476,17 +470,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMemcpy( d_population_old, population_old, bytes_population, cudaMemcpyHostToDevice )); 
             #endif
             #ifdef USE_SYCL
-                auto d_population_old = sycl::malloc_device< double >( genome_size*population_size, q ); 
-                auto d_population_new = sycl::malloc_device< double >( genome_size*population_size, q ); 
+                d_population_old = sycl::malloc_device< double >( genome_size*population_size, q ); 
+                d_population_new = sycl::malloc_device< double >( genome_size*population_size, q ); 
                 q.memcpy( d_population_old, population_old, bytes_population ).wait();
             #endif
         #else
-            #ifndef USE_SYCL
-                double * d_population_old_positive_frequency;
-                double * d_population_old_negative_frequency;
-                double * d_population_new_positive_frequency;
-                double * d_population_new_negative_frequency;
-            #endif
+            double* d_population_old_positive_frequency;
+            double* d_population_old_negative_frequency;
+            double* d_population_new_positive_frequency;
+            double* d_population_new_negative_frequency;
             #ifdef USE_HIP
                 HIP_ASSERT(hipMalloc(&d_population_old_positive_frequency, bytes_population));
                 HIP_ASSERT(hipMalloc(&d_population_new_positive_frequency, bytes_population));
@@ -504,10 +496,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMemcpy( d_population_old_negative_frequency, population_old_negative_frequency, bytes_population, cudaMemcpyHostToDevice )); 
             #endif
             #ifdef USE_SYCL
-                auto d_population_old_positive_frequency = sycl::malloc_device< double >( genome_size*population_size, q ); 
-                auto d_population_new_positive_frequency = sycl::malloc_device< double >( genome_size*population_size, q ); 
-                auto d_population_old_negative_frequency = sycl::malloc_device< double >( genome_size*population_size, q ); 
-                auto d_population_new_negative_frequency = sycl::malloc_device< double >( genome_size*population_size, q ); 
+                d_population_old_positive_frequency = sycl::malloc_device< double >( genome_size*population_size, q ); 
+                d_population_new_positive_frequency = sycl::malloc_device< double >( genome_size*population_size, q ); 
+                d_population_old_negative_frequency = sycl::malloc_device< double >( genome_size*population_size, q ); 
+                d_population_new_negative_frequency = sycl::malloc_device< double >( genome_size*population_size, q ); 
                 q.memcpy( d_population_old_positive_frequency, population_old_positive_frequency, bytes_population );
                 q.memcpy( d_population_old_negative_frequency, population_old_negative_frequency, bytes_population ).wait();
             #endif
@@ -525,15 +517,14 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #endif
     double * normalization;
     #ifdef USE_GPU
-        #ifndef USE_SYCL
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                double * d_normalization_term;
-            #else
-                double * d_normalization_term_positive_frequency;
-                double * d_normalization_term_negative_frequency;
-            #endif
-            double * d_normalization;
+        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+            double* d_normalization_term;
+        #else
+            double* d_normalization_term_positive_frequency;
+            double* d_normalization_term_negative_frequency;
         #endif
+        double* d_normalization;
+        double* d_normalization_tmp;
     #endif
     if (normalize) {
         #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
@@ -604,8 +595,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaMemcpy( d_normalization_term, normalization_term, bytes_normalization_term, cudaMemcpyHostToDevice )); 
                 #endif
                 #ifdef USE_SYCL
-                    auto d_normalization = sycl::malloc_device< double >( population_size, q ); 
-                    auto d_normalization_term = sycl::malloc_device< double >( genome_size, q ); 
+                    d_normalization = sycl::malloc_device< double >( population_size, q ); 
+                    d_normalization_term = sycl::malloc_device< double >( genome_size, q ); 
                     q.memcpy( d_normalization_term, normalization_term, bytes_normalization_term ).wait();
                 #endif
             #endif
@@ -627,9 +618,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaMemcpy( d_normalization_term_negative_frequency, normalization_term, bytes_normalization_term, cudaMemcpyHostToDevice )); 
                 #endif
                 #ifdef USE_SYCL
-                    auto d_normalization = sycl::malloc_device< double >( population_size, q ); 
-                    auto d_normalization_term_positive_frequency = sycl::malloc_device< double >( genome_size, q ); 
-                    auto d_normalization_term_negative_frequency = sycl::malloc_device< double >( genome_size, q ); 
+                    d_normalization = sycl::malloc_device< double >( population_size, q ); 
+                    d_normalization_term_positive_frequency = sycl::malloc_device< double >( genome_size, q ); 
+                    d_normalization_term_negative_frequency = sycl::malloc_device< double >( genome_size, q ); 
                     q.memcpy( d_normalization_term_positive_frequency, normalization_term_positive_frequency, bytes_normalization_term );
                     q.memcpy( d_normalization_term_negative_frequency, normalization_term_negative_frequency, bytes_normalization_term ).wait();
                 #endif
@@ -715,7 +706,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
             #ifdef USE_SYCL
                 q.memset(d_normalization, 0, bytes_normalization).wait();
-                auto d_normalization_tmp = sycl::malloc_device< double >( grid_size_set_normalization*population_size, q ); 
+                d_normalization_tmp = sycl::malloc_device< double >( grid_size_set_normalization*population_size, q ); 
                 #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                     for (size_t i=0; i<population_size; i++) {
                         gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_normalization, d_normalization_tmp + grid_size_set_normalization*i, d_normalization + i, d_normalization_term, d_population_old + genome_size*i, population_size, genome_size );
@@ -779,20 +770,18 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
         double * first_moments_term;
         #ifdef USE_GPU
-            #ifndef USE_SYCL
-                double * d_first_moments_term;
-                double * d_first_moments;
-            #endif
+            double* d_first_moments_term;
+            double* d_first_moments;
+            double* d_first_moments_tmp;
         #endif
     #else
         double * first_moments_term_positive_frequency;
         double * first_moments_term_negative_frequency;
         #ifdef USE_GPU
-            #ifndef USE_SYCL
-                double * d_first_moments_term_positive_frequency;
-                double * d_first_moments_term_negative_frequency;
-                double * d_first_moments;
-            #endif
+            double* d_first_moments_term_positive_frequency;
+            double* d_first_moments_term_negative_frequency;
+            double* d_first_moments;
+            double* d_first_moments_tmp;
         #endif
     #endif
 
@@ -865,8 +854,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaMemcpy( d_first_moments_term, first_moments_term, bytes_first_moments_term, cudaMemcpyHostToDevice )); 
                 #endif
                 #ifdef USE_SYCL
-                    auto d_first_moments =      sycl::malloc_device< double >( population_size, q );
-                    auto d_first_moments_term = sycl::malloc_device< double >( genome_size,     q );
+                    d_first_moments =      sycl::malloc_device< double >( population_size, q );
+                    d_first_moments_term = sycl::malloc_device< double >( genome_size,     q );
                     q.memcpy( d_first_moments_term, first_moments_term, bytes_first_moments_term ).wait();
                 #endif
             #endif
@@ -887,9 +876,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaMemcpy( d_first_moments_term_negative_frequency, first_moments_term_negative_frequency, bytes_first_moments_term, cudaMemcpyHostToDevice )); 
                 #endif
                 #ifdef USE_SYCL
-                    auto d_first_moments =      sycl::malloc_device< double >( population_size, q );
-                    auto d_first_moments_term_positive_frequency = sycl::malloc_device< double >( genome_size,     q );
-                    auto d_first_moments_term_negative_frequency = sycl::malloc_device< double >( genome_size,     q );
+                    d_first_moments =      sycl::malloc_device< double >( population_size, q );
+                    d_first_moments_term_positive_frequency = sycl::malloc_device< double >( genome_size,     q );
+                    d_first_moments_term_negative_frequency = sycl::malloc_device< double >( genome_size,     q );
                     q.memcpy( d_first_moments_term_positive_frequency, first_moments_term_positive_frequency, bytes_first_moments_term );
                     q.memcpy( d_first_moments_term_negative_frequency, first_moments_term_negative_frequency, bytes_first_moments_term ).wait();
                 #endif
@@ -953,7 +942,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
             #ifdef USE_SYCL
                 q.memset(d_first_moments, 0, bytes_first_moments).wait();
-                auto d_first_moments_tmp = sycl::malloc_device< double >( grid_size_set_first_moments*population_size, q ); 
+                d_first_moments_tmp = sycl::malloc_device< double >( grid_size_set_first_moments*population_size, q ); 
                 #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                     for (size_t i=0; i<population_size; i++) {
                         gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_first_moments, d_first_moments_tmp + grid_size_set_first_moments*i, d_first_moments + i, d_first_moments_term, d_population_old + genome_size*i, population_size, genome_size );
@@ -994,20 +983,18 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
         double * third_moments_term;
         #ifdef USE_GPU
-            #ifndef USE_SYCL
-                double * d_third_moments;
-                double * d_third_moments_term;
-            #endif
+            double* d_third_moments;
+            double* d_third_moments_tmp;
+            double* d_third_moments_term;
         #endif
     #else
-        double * third_moments_term_positive_frequency;
-        double * third_moments_term_negative_frequency;
+        double* third_moments_term_positive_frequency;
+        double* third_moments_term_negative_frequency;
         #ifdef USE_GPU
-            #ifndef USE_SYCL
-                double * d_third_moments;
-                double * d_third_moments_term_positive_frequency;
-                double * d_third_moments_term_negative_frequency;
-            #endif
+            double* d_third_moments;
+            double* d_third_moments_tmp;
+            double* d_third_moments_term_positive_frequency;
+            double* d_third_moments_term_negative_frequency;
         #endif
     #endif
     if (use_third_moment) {
@@ -1078,8 +1065,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaMemcpy( d_third_moments_term, third_moments_term, bytes_third_moments_term, cudaMemcpyHostToDevice )); 
                 #endif
                 #ifdef USE_SYCL
-                    auto d_third_moments =      sycl::malloc_device< double >( population_size, q );
-                    auto d_third_moments_term = sycl::malloc_device< double >( genome_size,     q );
+                    d_third_moments =      sycl::malloc_device< double >( population_size, q );
+                    d_third_moments_term = sycl::malloc_device< double >( genome_size,     q );
                     q.memcpy( d_third_moments_term, third_moments_term, bytes_third_moments_term ).wait();
                 #endif
             #endif
@@ -1100,9 +1087,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaMemcpy( d_third_moments_term_negative_frequency, third_moments_term_negative_frequency, bytes_third_moments_term, cudaMemcpyHostToDevice )); 
                 #endif
                 #ifdef USE_SYCL
-                    auto d_third_moments =      sycl::malloc_device< double >( population_size, q );
-                    auto d_third_moments_term_positive_frequency = sycl::malloc_device< double >( genome_size,     q );
-                    auto d_third_moments_term_negative_frequency = sycl::malloc_device< double >( genome_size,     q );
+                    d_third_moments =      sycl::malloc_device< double >( population_size, q );
+                    d_third_moments_term_positive_frequency = sycl::malloc_device< double >( genome_size,     q );
+                    d_third_moments_term_negative_frequency = sycl::malloc_device< double >( genome_size,     q );
                     q.memcpy( d_third_moments_term_positive_frequency, third_moments_term_positive_frequency, bytes_third_moments_term );
                     q.memcpy( d_third_moments_term_negative_frequency, third_moments_term_negative_frequency, bytes_third_moments_term ).wait();
                 #endif
@@ -1166,7 +1153,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
             #ifdef USE_SYCL
                 q.memset(d_third_moments, 0, bytes_third_moments).wait();
-                auto d_third_moments_tmp = sycl::malloc_device< double >( grid_size_set_third_moments*population_size, q ); 
+                d_third_moments_tmp = sycl::malloc_device< double >( grid_size_set_third_moments*population_size, q ); 
                 #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                     for (size_t i=0; i<population_size; i++) {
                         gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_third_moments, d_third_moments_tmp + grid_size_set_third_moments*i, d_third_moments + i, d_third_moments_term, d_population_old + genome_size*i, population_size, genome_size );
@@ -1203,9 +1190,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     //Set isf_model and calculate fitness
     double * isf_model;
     #ifdef USE_GPU
-        #ifndef USE_SYCL
-            double * d_isf_model;
-        #endif
+        double* d_isf_model;
+        double* d_isf_model_tmp;
     #endif
     size_t bytes_isf_model = sizeof(double)*number_of_timeslices*population_size;
     isf_model = (double*) malloc(bytes_isf_model);
@@ -1217,7 +1203,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             CUDA_ASSERT(cudaMalloc(&d_isf_model, bytes_isf_model));
         #endif
         #ifdef USE_SYCL
-            auto d_isf_model = sycl::malloc_device< double >( number_of_timeslices*population_size, q );
+            d_isf_model = sycl::malloc_device< double >( number_of_timeslices*population_size, q );
         #endif
     #endif
     #ifdef USE_GPU
@@ -1277,7 +1263,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
         #endif
         #ifdef USE_SYCL
-            auto d_isf_model_tmp = sycl::malloc_device< double >( grid_size_set_isf_model*population_size*number_of_timeslices, q ); 
+            d_isf_model_tmp = sycl::malloc_device< double >( grid_size_set_isf_model*population_size*number_of_timeslices, q ); 
             #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                 q.memset(d_isf_model, 0, bytes_isf_model).wait();
                 for (size_t i=0; i<population_size*number_of_timeslices; i++) {
@@ -1321,10 +1307,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double * inverse_first_moments_term;
         double * inverse_first_moments;
         #ifdef USE_GPU
-            #ifndef USE_SYCL
-                double * d_inverse_first_moments_term;
-                double * d_inverse_first_moments;
-            #endif
+            double* d_inverse_first_moments_term;
+            double* d_inverse_first_moments;
+            double* d_inverse_first_moments_tmp;
         #endif
         size_t bytes_inverse_first_moments_term = sizeof(double)*number_of_timeslices;
         size_t bytes_inverse_first_moments = sizeof(double)*population_size;
@@ -1360,8 +1345,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaMemcpy( d_inverse_first_moments_term, inverse_first_moments_term, bytes_inverse_first_moments_term, cudaMemcpyHostToDevice )); 
                 #endif
                 #ifdef USE_SYCL
-                    auto d_inverse_first_moments_term = sycl::malloc_device< double >( number_of_timeslices, q ); 
-                    auto d_inverse_first_moments = sycl::malloc_device< double >( population_size, q ); 
+                    d_inverse_first_moments_term = sycl::malloc_device< double >( number_of_timeslices, q ); 
+                    d_inverse_first_moments = sycl::malloc_device< double >( population_size, q ); 
                     q.memcpy( d_inverse_first_moments_term, inverse_first_moments_term, bytes_inverse_first_moments_term ).wait();
                 #endif
             #endif
@@ -1389,7 +1374,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 #endif
                 #ifdef USE_SYCL
                     q.memset(d_inverse_first_moments, 0, bytes_inverse_first_moments).wait();
-                    auto d_inverse_first_moments_tmp = sycl::malloc_device< double >( grid_size_set_inverse_first_moments*population_size, q ); 
+                    d_inverse_first_moments_tmp = sycl::malloc_device< double >( grid_size_set_inverse_first_moments*population_size, q ); 
                     for (size_t i=0; i<population_size; i++) {
                         gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_inverse_first_moments, d_inverse_first_moments_tmp + grid_size_set_inverse_first_moments*i, d_inverse_first_moments + i, d_inverse_first_moments_term, d_isf_model + number_of_timeslices*i, population_size, number_of_timeslices );
                     }
@@ -1409,10 +1394,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
     double * fitness_old;
     #ifdef USE_GPU
-        #ifndef USE_SYCL
-            double * d_fitness_old;
-            double * d_fitness_new;
-        #endif
+        double* d_fitness_old;
+        double* d_fitness_new;
+        double* d_fitness_tmp;
         size_t bytes_fitness_new = sizeof(double)*population_size;
     #endif
     size_t bytes_fitness_old = sizeof(double)*population_size;
@@ -1428,8 +1412,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             CUDA_ASSERT(cudaMalloc(&d_fitness_new, bytes_fitness_new));
         #endif
         #ifdef USE_SYCL
-            auto d_fitness_old = sycl::malloc_device< double >( population_size, q ); 
-            auto d_fitness_new = sycl::malloc_device< double >( population_size, q ); 
+            d_fitness_old = sycl::malloc_device< double >( population_size, q ); 
+            d_fitness_new = sycl::malloc_device< double >( population_size, q ); 
         #endif
     #endif
     #ifdef USE_GPU
@@ -1501,7 +1485,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #endif
         #ifdef USE_SYCL
             q.memset(d_fitness_old, 0, bytes_fitness_old).wait();
-            auto d_fitness_tmp = sycl::malloc_device< double >( grid_size_set_fitness*population_size, q ); 
+            d_fitness_tmp = sycl::malloc_device< double >( grid_size_set_fitness*population_size, q ); 
             for (size_t i=0; i<population_size; i++) {
                 size_t stream_idx = i % MAX_GPU_STREAMS;
                 gpu_set_fitness(q, grid_size_set_fitness, d_fitness_tmp + grid_size_set_fitness*i, d_fitness_old + i, d_isf, d_isf_model + number_of_timeslices*i, d_isf_error, number_of_timeslices);
@@ -1556,10 +1540,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             crossover_probabilities_old[i] = crossover_probability;
         }
         #ifdef USE_GPU
-            #ifndef USE_SYCL
-                double * d_crossover_probabilities_old;
-                double * d_crossover_probabilities_new;
-            #endif
+            double* d_crossover_probabilities_old;
+            double* d_crossover_probabilities_new;
             #ifdef USE_HIP
                 HIP_ASSERT(hipMalloc(&d_crossover_probabilities_old, bytes_crossover_probabilities));
                 HIP_ASSERT(hipMalloc(&d_crossover_probabilities_new, bytes_crossover_probabilities));
@@ -1571,8 +1553,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMemcpy( d_crossover_probabilities_old, crossover_probabilities_old, bytes_crossover_probabilities, cudaMemcpyHostToDevice )); 
             #endif
             #ifdef USE_SYCL
-                auto d_crossover_probabilities_old = sycl::malloc_device< double >( population_size, q ); 
-                auto d_crossover_probabilities_new = sycl::malloc_device< double >( population_size, q ); 
+                d_crossover_probabilities_old = sycl::malloc_device< double >( population_size, q ); 
+                d_crossover_probabilities_new = sycl::malloc_device< double >( population_size, q ); 
                 q.memcpy( d_crossover_probabilities_old, crossover_probabilities_old, bytes_crossover_probabilities ).wait();
             #endif
         #endif
@@ -1590,12 +1572,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             crossover_probabilities_old_negative_frequency[i] = crossover_probability;
         }
         #ifdef USE_GPU
-            #ifndef USE_SYCL
-                double * d_crossover_probabilities_old_positive_frequency;
-                double * d_crossover_probabilities_old_negative_frequency;
-                double * d_crossover_probabilities_new_positive_frequency;
-                double * d_crossover_probabilities_new_negative_frequency;
-            #endif
+            double* d_crossover_probabilities_old_positive_frequency;
+            double* d_crossover_probabilities_old_negative_frequency;
+            double* d_crossover_probabilities_new_positive_frequency;
+            double* d_crossover_probabilities_new_negative_frequency;
             #ifdef USE_HIP
                 HIP_ASSERT(hipMalloc(&d_crossover_probabilities_old_positive_frequency, bytes_crossover_probabilities));
                 HIP_ASSERT(hipMalloc(&d_crossover_probabilities_new_positive_frequency, bytes_crossover_probabilities));
@@ -1613,10 +1593,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMemcpy( d_crossover_probabilities_old_negative_frequency, crossover_probabilities_old_negative_frequency, bytes_crossover_probabilities, cudaMemcpyHostToDevice )); 
             #endif
             #ifdef USE_SYCL
-                auto d_crossover_probabilities_old_positive_frequency = sycl::malloc_device< double >( population_size, q ); 
-                auto d_crossover_probabilities_old_negative_frequency = sycl::malloc_device< double >( population_size, q ); 
-                auto d_crossover_probabilities_new_positive_frequency = sycl::malloc_device< double >( population_size, q ); 
-                auto d_crossover_probabilities_new_negative_frequency = sycl::malloc_device< double >( population_size, q ); 
+                d_crossover_probabilities_old_positive_frequency = sycl::malloc_device< double >( population_size, q ); 
+                d_crossover_probabilities_old_negative_frequency = sycl::malloc_device< double >( population_size, q ); 
+                d_crossover_probabilities_new_positive_frequency = sycl::malloc_device< double >( population_size, q ); 
+                d_crossover_probabilities_new_negative_frequency = sycl::malloc_device< double >( population_size, q ); 
                 q.memcpy( d_crossover_probabilities_old_positive_frequency, crossover_probabilities_old_positive_frequency, bytes_crossover_probabilities );
                 q.memcpy( d_crossover_probabilities_old_negative_frequency, crossover_probabilities_old_negative_frequency, bytes_crossover_probabilities ).wait();
             #endif
@@ -1633,10 +1613,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             differential_weights_old[i] = differential_weight;
         }
         #ifdef USE_GPU
-            #ifndef USE_SYCL
-                double * d_differential_weights_old;
-                double * d_differential_weights_new;
-            #endif
+            double* d_differential_weights_old;
+            double* d_differential_weights_new;
             #ifdef USE_HIP
                 HIP_ASSERT(hipMalloc(&d_differential_weights_old, bytes_differential_weights));
                 HIP_ASSERT(hipMalloc(&d_differential_weights_new, bytes_differential_weights));
@@ -1648,8 +1626,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMemcpy( d_differential_weights_old, differential_weights_old, bytes_differential_weights, cudaMemcpyHostToDevice )); 
             #endif
             #ifdef USE_SYCL
-                auto d_differential_weights_old = sycl::malloc_device< double >( population_size, q ); 
-                auto d_differential_weights_new = sycl::malloc_device< double >( population_size, q ); 
+                d_differential_weights_old = sycl::malloc_device< double >( population_size, q ); 
+                d_differential_weights_new = sycl::malloc_device< double >( population_size, q ); 
                 q.memcpy( d_differential_weights_old, differential_weights_old, bytes_differential_weights ).wait();
             #endif
         #endif
@@ -1667,12 +1645,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             differential_weights_old_negative_frequency[i] = differential_weight;
         }
         #ifdef USE_GPU
-            #ifndef USE_SYCL
-                double * d_differential_weights_old_positive_frequency;
-                double * d_differential_weights_old_negative_frequency;
-                double * d_differential_weights_new_positive_frequency;
-                double * d_differential_weights_new_negative_frequency;
-            #endif
+            double* d_differential_weights_old_positive_frequency;
+            double* d_differential_weights_old_negative_frequency;
+            double* d_differential_weights_new_positive_frequency;
+            double* d_differential_weights_new_negative_frequency;
             #ifdef USE_HIP
                 HIP_ASSERT(hipMalloc(&d_differential_weights_old_positive_frequency, bytes_differential_weights));
                 HIP_ASSERT(hipMalloc(&d_differential_weights_new_positive_frequency, bytes_differential_weights));
@@ -1690,10 +1666,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMemcpy( d_differential_weights_old_negative_frequency, differential_weights_old_negative_frequency, bytes_differential_weights, cudaMemcpyHostToDevice )); 
             #endif
             #ifdef USE_SYCL
-                auto d_differential_weights_old_positive_frequency = sycl::malloc_device< double >( population_size, q ); 
-                auto d_differential_weights_old_negative_frequency = sycl::malloc_device< double >( population_size, q ); 
-                auto d_differential_weights_new_positive_frequency = sycl::malloc_device< double >( population_size, q ); 
-                auto d_differential_weights_new_negative_frequency = sycl::malloc_device< double >( population_size, q ); 
+                d_differential_weights_old_positive_frequency = sycl::malloc_device< double >( population_size, q ); 
+                d_differential_weights_old_negative_frequency = sycl::malloc_device< double >( population_size, q ); 
+                d_differential_weights_new_positive_frequency = sycl::malloc_device< double >( population_size, q ); 
+                d_differential_weights_new_negative_frequency = sycl::malloc_device< double >( population_size, q ); 
                 q.memcpy( d_differential_weights_old_positive_frequency, differential_weights_old_positive_frequency, bytes_differential_weights );
                 q.memcpy( d_differential_weights_old_negative_frequency, differential_weights_old_negative_frequency, bytes_differential_weights ).wait();
             #endif
@@ -1701,15 +1677,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #endif
 
     //Initialize statistics arrays
-    double * fitness_mean;
-    double * fitness_minimum;
-    double * fitness_squared_mean;
+    double* fitness_mean;
+    double* fitness_minimum;
+    double* fitness_squared_mean;
     #ifdef USE_GPU
-        #ifndef USE_SYCL
-            double * d_fitness_mean;
-            double * d_fitness_minimum;
-            double * d_fitness_squared_mean;
-        #endif
+        double* d_fitness_mean;
+        double* d_fitness_mean_tmp;
+        double* d_fitness_minimum;
+        double* d_fitness_squared_mean;
+        double* d_fitness_squared_mean_tmp;
     #endif
     size_t bytes_fitness_mean = sizeof(double)*number_of_generations;
     size_t bytes_fitness_minimum = sizeof(double)*number_of_generations;
@@ -1737,10 +1713,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMemset(d_fitness_squared_mean,0, bytes_fitness_squared_mean));
             #endif
             #ifdef USE_SYCL
-                auto d_fitness_mean             = sycl::malloc_device< double >( number_of_generations, q ); 
-                auto d_fitness_mean_tmp         = sycl::malloc_device< double >( grid_size_set_stats,   q ); 
-                auto d_fitness_squared_mean     = sycl::malloc_device< double >( number_of_generations, q ); 
-                auto d_fitness_squared_mean_tmp = sycl::malloc_device< double >( grid_size_set_stats,   q ); 
+                d_fitness_mean             = sycl::malloc_device< double >( number_of_generations, q ); 
+                d_fitness_mean_tmp         = sycl::malloc_device< double >( grid_size_set_stats,   q ); 
+                d_fitness_squared_mean     = sycl::malloc_device< double >( number_of_generations, q ); 
+                d_fitness_squared_mean_tmp = sycl::malloc_device< double >( grid_size_set_stats,   q ); 
                 q.memset(d_fitness_mean,         0, bytes_normalization);
                 q.memset(d_fitness_squared_mean, 0, bytes_normalization).wait();
             #endif
@@ -1748,13 +1724,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     }
     
     #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-        bool * mutate_indices;
+        bool* mutate_indices;
         #ifdef USE_GPU
             size_t bytes_rejection_indices = sizeof(bool)*population_size;
-            #ifndef USE_SYCL
-                bool * d_mutate_indices;
-                bool * d_rejection_indices;
-            #endif
+            bool* d_mutate_indices;
+            bool* d_rejection_indices;
         #endif
         size_t bytes_mutate_indices = sizeof(bool)*genome_size*population_size;
         mutate_indices = (bool*) malloc(bytes_mutate_indices);
@@ -1768,20 +1742,18 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMalloc(&d_rejection_indices, bytes_rejection_indices));
             #endif
             #ifdef USE_SYCL
-                auto d_mutate_indices    = sycl::malloc_device< bool >( population_size, q ); 
-                auto d_rejection_indices = sycl::malloc_device< bool >( population_size, q ); 
+                d_mutate_indices    = sycl::malloc_device< bool >( population_size, q ); 
+                d_rejection_indices = sycl::malloc_device< bool >( population_size, q ); 
             #endif
         #endif
     #else
-        bool * mutate_indices_positive_frequency;
-        bool * mutate_indices_negative_frequency;
+        bool* mutate_indices_positive_frequency;
+        bool* mutate_indices_negative_frequency;
         #ifdef USE_GPU
             size_t bytes_rejection_indices = sizeof(bool)*population_size;
-            #ifndef USE_SYCL
-                bool * d_mutate_indices_positive_frequency;
-                bool * d_mutate_indices_negative_frequency;
-                bool * d_rejection_indices;
-            #endif
+            bool* d_mutate_indices_positive_frequency;
+            bool* d_mutate_indices_negative_frequency;
+            bool* d_rejection_indices;
         #endif
         size_t bytes_mutate_indices = sizeof(bool)*genome_size*population_size;
         mutate_indices_positive_frequency = (bool*) malloc(bytes_mutate_indices);
@@ -1798,18 +1770,16 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMalloc(&d_rejection_indices, bytes_rejection_indices));
             #endif
             #ifdef USE_SYCL
-                auto d_mutate_indices_positive_frequency = sycl::malloc_device< bool >( population_size, q ); 
-                auto d_mutate_indices_negative_frequency = sycl::malloc_device< bool >( population_size, q ); 
-                auto d_rejection_indices                 = sycl::malloc_device< bool >( population_size, q ); 
+                d_mutate_indices_positive_frequency = sycl::malloc_device< bool >( population_size, q ); 
+                d_mutate_indices_negative_frequency = sycl::malloc_device< bool >( population_size, q ); 
+                d_rejection_indices                 = sycl::malloc_device< bool >( population_size, q ); 
             #endif
         #endif
     #endif
 
-    size_t * mutant_indices;
+    size_t* mutant_indices;
     #ifdef USE_GPU
-        #ifndef USE_SYCL
-            size_t* d_mutant_indices;
-        #endif
+        size_t* d_mutant_indices;
     #endif
     size_t bytes_mutant_indices = sizeof(size_t)*3*population_size;
     mutant_indices = (size_t*) malloc(bytes_mutant_indices);
@@ -1821,7 +1791,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             CUDA_ASSERT(cudaMalloc(&d_mutant_indices, bytes_mutant_indices));
         #endif
         #ifdef USE_SYCL
-            auto d_mutant_indices = sycl::malloc_device< size_t >( 3*population_size, q ); 
+            d_mutant_indices = sycl::malloc_device< size_t >( 3*population_size, q ); 
         #endif
     #endif
 
@@ -1829,9 +1799,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     size_t minimum_fitness_idx;
     #ifdef USE_GPU
         size_t bytes_minimum_fitness = sizeof(double);
-        #ifndef USE_SYCL
-            double* d_minimum_fitness;
-        #endif
+        double* d_minimum_fitness;
         #ifdef USE_HIP
             HIP_ASSERT(hipMalloc(&d_minimum_fitness, bytes_minimum_fitness));
         #endif
@@ -1847,9 +1815,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         size_t bytes_rng_state = sizeof(uint64_t)*4*population_size*(genome_size + 1);
 
         // Generate rng state
-        #ifndef USE_SYCL
-            uint64_t* d_rng_state;
-        #endif
+        uint64_t* d_rng_state;
         uint64_t* rng_state;
         rng_state = (uint64_t *) malloc(bytes_rng_state);
 
@@ -1868,7 +1834,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             CUDA_ASSERT(cudaMemcpy( d_rng_state, rng_state, bytes_rng_state, cudaMemcpyHostToDevice ));
         #endif
         #ifdef USE_SYCL
-            auto d_rng_state = sycl::malloc_device< uint64_t >( 4*population_size*(genome_size + 1), q ); 
+            d_rng_state = sycl::malloc_device< uint64_t >( 4*population_size*(genome_size + 1), q ); 
             q.memcpy( d_rng_state, rng_state, bytes_rng_state ).wait();
         #endif
     #endif
