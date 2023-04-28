@@ -49,7 +49,7 @@ uint64_t gpu_xoshiro256p_next(uint64_t * s) {
 }
 
 // GPU Kernel for reduction using warp (uses appropriate warp for NVIDIA vs AMD devices i. e. "portable wave aware code")
-__device__ void warp_reduce(volatile double *sdata, unsigned size_t thread_idx) {
+__device__ void warp_reduce(volatile double *sdata, size_t thread_idx) {
     if (warpSize == 64) { if (GPU_BLOCK_SIZE >= 128) sdata[thread_idx] += sdata[thread_idx + 64]; }
     if (GPU_BLOCK_SIZE >= 64) sdata[thread_idx] += sdata[thread_idx + 32];
     if (GPU_BLOCK_SIZE >= 32) sdata[thread_idx] += sdata[thread_idx + 16];
@@ -59,7 +59,7 @@ __device__ void warp_reduce(volatile double *sdata, unsigned size_t thread_idx) 
     if (GPU_BLOCK_SIZE >= 2) sdata[thread_idx] += sdata[thread_idx + 1];
 }
 
-__device__ void warp_reduce_min(volatile double *sdata, unsigned size_t thread_idx) {
+__device__ void warp_reduce_min(volatile double *sdata, size_t thread_idx) {
     if (warpSize == 64) { if (GPU_BLOCK_SIZE >= 128) sdata[thread_idx] = sdata[thread_idx + 64] < sdata[thread_idx] ? sdata[thread_idx + 64] : sdata[thread_idx]; }
     if (GPU_BLOCK_SIZE >= 64) sdata[thread_idx] = sdata[thread_idx + 32] < sdata[thread_idx] ? sdata[thread_idx + 32] : sdata[thread_idx];
     if (GPU_BLOCK_SIZE >= 32) sdata[thread_idx] = sdata[thread_idx + 16] < sdata[thread_idx] ? sdata[thread_idx + 16] : sdata[thread_idx];
