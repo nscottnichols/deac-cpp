@@ -607,15 +607,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     HIP_ASSERT(hipMalloc(&d_normalization, bytes_normalization));
                     HIP_ASSERT(hipMalloc(&d_normalization_term_positive_frequency, bytes_normalization_term));
                     HIP_ASSERT(hipMalloc(&d_normalization_term_negative_frequency, bytes_normalization_term));
-                    HIP_ASSERT(hipMemcpy( d_normalization_term_positive_frequency, normalization_term, bytes_normalization_term, hipMemcpyHostToDevice ));
-                    HIP_ASSERT(hipMemcpy( d_normalization_term_negative_frequency, normalization_term, bytes_normalization_term, hipMemcpyHostToDevice ));
+                    HIP_ASSERT(hipMemcpy( d_normalization_term_positive_frequency, normalization_term_positive_frequency, bytes_normalization_term, hipMemcpyHostToDevice ));
+                    HIP_ASSERT(hipMemcpy( d_normalization_term_negative_frequency, normalization_term_negative_frequency, bytes_normalization_term, hipMemcpyHostToDevice ));
                 #endif
                 #ifdef USE_CUDA
                     CUDA_ASSERT(cudaMalloc(&d_normalization, bytes_normalization));
                     CUDA_ASSERT(cudaMalloc(&d_normalization_term_positive_frequency, bytes_normalization_term));
                     CUDA_ASSERT(cudaMalloc(&d_normalization_term_negative_frequency, bytes_normalization_term));
-                    CUDA_ASSERT(cudaMemcpy( d_normalization_term_positive_frequency, normalization_term, bytes_normalization_term, cudaMemcpyHostToDevice )); 
-                    CUDA_ASSERT(cudaMemcpy( d_normalization_term_negative_frequency, normalization_term, bytes_normalization_term, cudaMemcpyHostToDevice )); 
+                    CUDA_ASSERT(cudaMemcpy( d_normalization_term_positive_frequency, normalization_term_positive_frequency, bytes_normalization_term, cudaMemcpyHostToDevice )); 
+                    CUDA_ASSERT(cudaMemcpy( d_normalization_term_negative_frequency, normalization_term_negative_frequency, bytes_normalization_term, cudaMemcpyHostToDevice )); 
                 #endif
                 #ifdef USE_SYCL
                     d_normalization = sycl::malloc_device< double >( population_size, q ); 
@@ -2187,7 +2187,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                             d_population_new_negative_frequency, d_population_old_negative_frequency, d_mutant_indices, d_differential_weights_new_negative_frequency, d_mutate_indices_negative_frequency, population_size, genome_size);
                     CUDA_ASSERT(cudaDeviceSynchronize());
 
-                    cuda_wrapper::gpu_match_population_zero(
+                    cuda_wrapper::gpu_match_population_zero_wrapper(
                             dim3(grid_size_match_population_zero), dim3(GPU_BLOCK_SIZE),
                             d_population_new_negative_frequency, d_population_new_positive_frequency, population_size, genome_size);
                     CUDA_ASSERT(cudaDeviceSynchronize());
