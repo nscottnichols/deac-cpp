@@ -1,5 +1,5 @@
 /**
- * @file deac_gpu.hip.hpp
+ * @file deac_gpu.cu
  * @author Nathan Nichols
  * @date 04.19.2021
  *
@@ -380,11 +380,11 @@ void gpu_set_fitness_mean(double * fitness_mean, double * fitness, int populatio
 }
 
 __global__
-void gpu_set_fitness_standard_deviation(double * fitness_standard_deviation, double * fitness_mean, double * fitness, int population_size, int idx) {
+void gpu_set_fitness_squared_mean(double * fitness_squared_mean, double * fitness, int population_size, int idx) {
     __shared__ double _f[GPU_BLOCK_SIZE];
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < population_size) {
-        _f[threadIdx.x] = pow(fitness[i] - fitness_mean[idx],2);
+        _f[threadIdx.x] = fitness[i]*fitness[i];
     } else {
         _f[threadIdx.x] = 0.0;
     }
@@ -431,15 +431,7 @@ void gpu_set_fitness_standard_deviation(double * fitness_standard_deviation, dou
         // again reduce those results i.e.
         // tmp_f[blockIdx.x] = _f[0];
         // ^-- reduce on this, but this code may get too bloated
-        atomicAdd(&fitness_mean[idx], _f[0]/population_size);
-    }
-}
-
-__global__
-void gpu_set_fitness_standard_deviation_sqrt(double * fitness_standard_deviation, int max_generations) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
-    if (i < max_generations) {
-        fitness_standard_deviation[i] = sqrt(fitness_standard_deviation[i]);
+        atomicAdd(&fitness_squared_mean[idx], _f[0]/population_size);
     }
 }
 
@@ -455,10 +447,11 @@ void gpu_set_population_new(double * population_new, double * population_old, in
         int mutant_index3 = mutant_indices[3*_i + 2];
         bool mutate = mutate_indices[i];
         if (mutate) {
-            population_new[i] = fabs( 
-                population_old[mutant_index1*genome_size + _j] + F*(
-                        population_old[mutant_index2*genome_size + _j] -
-                        population_old[mutant_index3*genome_size + _j]));
+            #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
+                population_new[i] = population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]);
+            #else
+                population_new[i] = fabs( population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]) );
+            #endif
         } else {
             population_new[i] = population_old[i];
         }
@@ -679,25 +672,14 @@ namespace cuda_wrapper {
                 );
     }
     
-    void gpu_set_fitness_standard_deviation_wrapper(dim3 grid_size, dim3 group_size, double * fitness_standard_deviation, double * fitness_mean, double * fitness, int population_size, int idx) {
-        gpu_set_fitness_standard_deviation <<<grid_size, group_size, 0, 0>>> ( 
-                fitness_standard_deviation, fitness_mean, fitness, population_size, idx
+    void gpu_set_fitness_squared_mean_wrapper(dim3 grid_size, dim3 group_size, double * fitness_squared_mean, double * fitness, int population_size, int idx) {
+        gpu_set_fitness_squared_mean <<<grid_size, group_size, 0, 0>>> ( 
+                fitness_squared_mean, fitness, population_size, idx
                 );
     }
-    void gpu_set_fitness_standard_deviation_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * fitness_standard_deviation, double * fitness_mean, double * fitness, int population_size, int idx) {
-        gpu_set_fitness_standard_deviation <<<grid_size, group_size, 0, stream>>> ( 
-                fitness_standard_deviation, fitness_mean, fitness, population_size, idx
-                );
-    }
-    
-    void gpu_set_fitness_standard_deviation_sqrt_wrapper(dim3 grid_size, dim3 group_size, double * fitness_standard_deviation, int max_generations) {
-        gpu_set_fitness_standard_deviation_sqrt <<<grid_size, group_size, 0, 0>>> ( 
-                fitness_standard_deviation, max_generations
-                );
-    }
-    void gpu_set_fitness_standard_deviation_sqrt_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * fitness_standard_deviation, int max_generations) {
-        gpu_set_fitness_standard_deviation_sqrt <<<grid_size, group_size, 0, stream>>> ( 
-                fitness_standard_deviation, max_generations
+    void gpu_set_fitness_squared_mean_wrapper(dim3 grid_size, dim3 group_size, cudaStream_t stream, double * fitness_squared_mean, double * fitness, int population_size, int idx) {
+        gpu_set_fitness_squared_mean <<<grid_size, group_size, 0, stream>>> ( 
+                fitness_squared_mean, fitness, population_size, idx
                 );
     }
     

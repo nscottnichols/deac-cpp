@@ -4,10 +4,12 @@
 #include <iostream>
 #include <tuple> // for tie() and tuple
 #include <argparse.hpp>
+#include <sstream> // 
+#include <algorithm> // std::none_of
 #include <rng.hpp>
 #include <memory> // string_format
 #include <string> // string_format
-#include <stdexcept> // string_format
+#include <stdexcept> // throw
 #include <fstream> // std::ofstream
 #include <cassert>
 #include <uuid.h>
@@ -19,6 +21,9 @@
 #endif
 #ifdef USE_CUDA
     #include "deac_gpu.cuh"
+#endif
+#ifdef USE_SYCL
+    #include "deac_gpu.sycl.h"
 #endif
 
 #ifdef DEAC_DEBUG
@@ -155,12 +160,12 @@ double mean(double * A, int length) {
     return _mean/length;
 }
 
-double standard_deviation(double * A, double mean, int length) {
-    double _std = 0.0;
+double squared_mean(double * A, int length) {
+    double _squared_mean = 0.0;
     for (int i=0; i<length; i++) {
-        _std += pow(A[i] - mean,2);
+        _squared_mean += A[i]*A[i];
     }
-    return sqrt(_std/length);
+    return _squared_mean/length;
 }
 
 std::tuple <int, int, int> get_mutant_indices(struct xoshiro256p_state * rng,
@@ -242,12 +247,32 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaStreamCreate(&stream_array[i]));
             #endif
         }
+        #ifdef USE_SYCL
+            auto devices = sycl::device::get_devices();
+            sycl::queue q = sycl::queue(devices[0]);
+
+            //Test for vaild subgroup size
+            auto sg_sizes = q.get_device().get_info<sycl::info::device::sub_group_sizes>();
+            if (std::none_of(sg_sizes.cbegin(), sg_sizes.cend(), [](auto i) { return i  == SUB_GROUP_SIZE; })) {
+                std::stringstream ss;
+                ss << "Invalid SUB_GROUP_SIZE. Please select from: ";
+                for (auto it = sg_sizes.cbegin(); it != sg_sizes.cend(); it++) {
+                    if (it != sg_sizes.begin()) {
+                        ss << " ";
+                    }
+                    ss << *it;
+                }
+                throw std::runtime_error( ss.str() );
+            }
+        #endif
     #endif
 
     #ifdef USE_GPU
         //Load isf and isf error onto GPU
-        double * d_isf;
-        double * d_isf_error;
+        #ifndef USE_SYCL
+            double * d_isf;
+            double * d_isf_error;
+        #endif
         size_t bytes_isf = sizeof(double)*number_of_timeslices;
         size_t bytes_isf_error = sizeof(double)*number_of_timeslices;
         #ifdef USE_HIP
@@ -261,6 +286,12 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             CUDA_ASSERT(cudaMalloc(&d_isf_error, bytes_isf_error));
             CUDA_ASSERT(cudaMemcpy( d_isf, isf, bytes_isf, cudaMemcpyHostToDevice ));
             CUDA_ASSERT(cudaMemcpy( d_isf_error, isf_error, bytes_isf_error, cudaMemcpyHostToDevice ));
+        #endif
+        #ifdef USE_SYCL
+            auto d_isf       = sycl::malloc_device< double >( number_of_timeslices, q ); 
+            auto d_isf_error = sycl::malloc_device< double >( number_of_timeslices, q ); 
+            q.memcpy( d_isf,       isf,       bytes_isf );
+            q.memcpy( d_isf_error, isf_error, bytes_isf_error ).wait();
         #endif
     #endif
 
@@ -361,11 +392,13 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     
     #ifdef USE_GPU
         //Load isf term onto GPU
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            double * d_isf_term; // pointer to isf_term on gpu
-        #else
-            double * d_isf_term_positive_frequency;
-            double * d_isf_term_negative_frequency;
+        #ifndef USE_SYCL
+            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                double * d_isf_term; // pointer to isf_term on gpu
+            #else
+                double * d_isf_term_positive_frequency;
+                double * d_isf_term_negative_frequency;
+            #endif
         #endif
         #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
             #ifdef USE_HIP
@@ -376,18 +409,28 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMalloc(&d_isf_term, bytes_isf_term)); // Allocate memory for isf_term on GPU
                 CUDA_ASSERT(cudaMemcpy( d_isf_term, isf_term, bytes_isf_term, cudaMemcpyHostToDevice )); // Copy isf_term data to gpu
             #endif
+            #ifdef USE_SYCL
+                auto d_isf_term = sycl::malloc_device< double >( genome_size*number_of_timeslices, q ); 
+                q.memcpy( d_isf_term, isf_term, bytes_isf_term ).wait();
+            #endif
         #else
             #ifdef USE_HIP
-                HIP_ASSERT(hipMalloc(&d_isf_term_postive_frequency, bytes_isf_term)); // Allocate memory for isf_term on GPU
-                HIP_ASSERT(hipMemcpy( d_isf_term_postive_frequency, isf_term_postive_frequency, bytes_isf_term, hipMemcpyHostToDevice )); // Copy isf_term data to gpu
+                HIP_ASSERT(hipMalloc(&d_isf_term_positive_frequency, bytes_isf_term)); // Allocate memory for isf_term on GPU
+                HIP_ASSERT(hipMemcpy( d_isf_term_positive_frequency, isf_term_positive_frequency, bytes_isf_term, hipMemcpyHostToDevice )); // Copy isf_term data to gpu
                 HIP_ASSERT(hipMalloc(&d_isf_term_negative_frequency, bytes_isf_term)); // Allocate memory for isf_term on GPU
                 HIP_ASSERT(hipMemcpy( d_isf_term_negative_frequency, isf_term_negative_frequency, bytes_isf_term, hipMemcpyHostToDevice )); // Copy isf_term data to gpu
             #endif
             #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMalloc(&d_isf_term_postive_frequency, bytes_isf_term)); // Allocate memory for isf_term on GPU
-                CUDA_ASSERT(cudaMemcpy( d_isf_term_postive_frequency, isf_term_postive_frequency, bytes_isf_term, cudaMemcpyHostToDevice )); // Copy isf_term data to gpu
+                CUDA_ASSERT(cudaMalloc(&d_isf_term_positive_frequency, bytes_isf_term)); // Allocate memory for isf_term on GPU
+                CUDA_ASSERT(cudaMemcpy( d_isf_term_positive_frequency, isf_term_positive_frequency, bytes_isf_term, cudaMemcpyHostToDevice )); // Copy isf_term data to gpu
                 CUDA_ASSERT(cudaMalloc(&d_isf_term_negative_frequency, bytes_isf_term)); // Allocate memory for isf_term on GPU
                 CUDA_ASSERT(cudaMemcpy( d_isf_term_negative_frequency, isf_term_negative_frequency, bytes_isf_term, cudaMemcpyHostToDevice )); // Copy isf_term data to gpu
+            #endif
+            #ifdef USE_SYCL
+                auto d_isf_term_positive_frequency = sycl::malloc_device< double >( genome_size*number_of_timeslices, q ); 
+                auto d_isf_term_negative_frequency = sycl::malloc_device< double >( genome_size*number_of_timeslices, q ); 
+                q.memcpy( d_isf_term_positive_frequency, isf_term_positive_frequency, bytes_isf_term );
+                q.memcpy( d_isf_term_negative_frequency, isf_term_negative_frequency, bytes_isf_term ).wait();
             #endif
         #endif
     #endif
@@ -403,16 +446,16 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             population_old[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
         }
     #else
-        double * population_old_postive_frequency;
+        double * population_old_positive_frequency;
         double * population_old_negative_frequency;
-        double * population_new_postive_frequency;
+        double * population_new_positive_frequency;
         double * population_new_negative_frequency;
-        population_old_postive_frequency = (double*) malloc(bytes_population);
+        population_old_positive_frequency = (double*) malloc(bytes_population);
         population_old_negative_frequency = (double*) malloc(bytes_population);
-        population_new_postive_frequency = (double*) malloc(bytes_population);
+        population_new_positive_frequency = (double*) malloc(bytes_population);
         population_new_negative_frequency = (double*) malloc(bytes_population);
         for (int i=0; i<genome_size*population_size; i++) {
-            population_old_postive_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
+            population_old_positive_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
             population_old_negative_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
         }
         for (int i=0; i<population_size; i++) {
@@ -422,8 +465,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
     #ifdef USE_GPU
         #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            double * d_population_old;
-            double * d_population_new;
+            #ifndef USE_SYCL
+                double * d_population_old;
+                double * d_population_new;
+            #endif
             #ifdef USE_HIP
                 HIP_ASSERT(hipMalloc(&d_population_old, bytes_population));
                 HIP_ASSERT(hipMalloc(&d_population_new, bytes_population));
@@ -434,26 +479,41 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMalloc(&d_population_new, bytes_population));
                 CUDA_ASSERT(cudaMemcpy( d_population_old, population_old, bytes_population, cudaMemcpyHostToDevice )); 
             #endif
+            #ifdef USE_SYCL
+                auto d_population_old = sycl::malloc_device< double >( genome_size*population_size, q ); 
+                auto d_population_new = sycl::malloc_device< double >( genome_size*population_size, q ); 
+                q.memcpy( d_population_old, population_old, bytes_population ).wait();
+            #endif
         #else
-            double * d_population_old_postive_frequency;
-            double * d_population_old;
-            double * d_population_new_postive_frequency;
-            double * d_population_new;
+            #ifndef USE_SYCL
+                double * d_population_old_positive_frequency;
+                double * d_population_old_negative_frequency;
+                double * d_population_new_positive_frequency;
+                double * d_population_new_negative_frequency;
+            #endif
             #ifdef USE_HIP
-                HIP_ASSERT(hipMalloc(&d_population_old_postive_frequency, bytes_population));
-                HIP_ASSERT(hipMalloc(&d_population_new_postive_frequency, bytes_population));
-                HIP_ASSERT(hipMemcpy( d_population_old_postive_frequency, population_old_postive_frequency, bytes_population, hipMemcpyHostToDevice ));
+                HIP_ASSERT(hipMalloc(&d_population_old_positive_frequency, bytes_population));
+                HIP_ASSERT(hipMalloc(&d_population_new_positive_frequency, bytes_population));
                 HIP_ASSERT(hipMalloc(&d_population_old_negative_frequency, bytes_population));
                 HIP_ASSERT(hipMalloc(&d_population_new_negative_frequency, bytes_population));
+                HIP_ASSERT(hipMemcpy( d_population_old_positive_frequency, population_old_positive_frequency, bytes_population, hipMemcpyHostToDevice ));
                 HIP_ASSERT(hipMemcpy( d_population_old_negative_frequency, population_old_negative_frequency, bytes_population, hipMemcpyHostToDevice ));
             #endif
             #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMalloc(&d_population_old_postive_frequency, bytes_population));
-                CUDA_ASSERT(cudaMalloc(&d_population_new_postive_frequency, bytes_population));
-                CUDA_ASSERT(cudaMemcpy( d_population_old_postive_frequency, population_old_postive_frequency, bytes_population, cudaMemcpyHostToDevice )); 
+                CUDA_ASSERT(cudaMalloc(&d_population_old_positive_frequency, bytes_population));
+                CUDA_ASSERT(cudaMalloc(&d_population_new_positive_frequency, bytes_population));
                 CUDA_ASSERT(cudaMalloc(&d_population_old_negative_frequency, bytes_population));
                 CUDA_ASSERT(cudaMalloc(&d_population_new_negative_frequency, bytes_population));
+                CUDA_ASSERT(cudaMemcpy( d_population_old_positive_frequency, population_old_positive_frequency, bytes_population, cudaMemcpyHostToDevice )); 
                 CUDA_ASSERT(cudaMemcpy( d_population_old_negative_frequency, population_old_negative_frequency, bytes_population, cudaMemcpyHostToDevice )); 
+            #endif
+            #ifdef USE_SYCL
+                auto d_population_old_positive_frequency = sycl::malloc_device< double >( genome_size*population_size, q ); 
+                auto d_population_new_positive_frequency = sycl::malloc_device< double >( genome_size*population_size, q ); 
+                auto d_population_old_negative_frequency = sycl::malloc_device< double >( genome_size*population_size, q ); 
+                auto d_population_new_negative_frequency = sycl::malloc_device< double >( genome_size*population_size, q ); 
+                q.memcpy( d_population_old_positive_frequency, population_old_positive_frequency, bytes_population );
+                q.memcpy( d_population_old_negative_frequency, population_old_negative_frequency, bytes_population ).wait();
             #endif
         #endif
     #endif
@@ -464,23 +524,26 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
         double * normalization_term;
     #else
-        double * normalization_term_postive_frequency;
+        double * normalization_term_positive_frequency;
         double * normalization_term_negative_frequency;
     #endif
     double * normalization;
     #ifdef USE_GPU
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-        #else
-            double * d_normalization_term_postive_frequency;
-            double * d_normalization_term_negative_frequency;
+        #ifndef USE_SYCL
+            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                double * d_normalization_term;
+            #else
+                double * d_normalization_term_positive_frequency;
+                double * d_normalization_term_negative_frequency;
+            #endif
+            double * d_normalization;
         #endif
-        double * d_normalization;
     #endif
     if (normalize) {
         #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
             normalization_term = (double*) malloc(bytes_normalization_term);
         #else
-            normalization_term_postive_frequency = (double*) malloc(bytes_normalization_term);
+            normalization_term_positive_frequency = (double*) malloc(bytes_normalization_term);
             normalization_term_negative_frequency = (double*) malloc(bytes_normalization_term);
         #endif
         for (int j=0; j<genome_size; j++) {
@@ -544,6 +607,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaMalloc(&d_normalization_term, bytes_normalization_term));
                     CUDA_ASSERT(cudaMemcpy( d_normalization_term, normalization_term, bytes_normalization_term, cudaMemcpyHostToDevice )); 
                 #endif
+                #ifdef USE_SYCL
+                    auto d_normalization = sycl::malloc_device< double >( population_size, q ); 
+                    auto d_normalization_term = sycl::malloc_device< double >( genome_size, q ); 
+                    q.memcpy( d_normalization_term, normalization_term, bytes_normalization_term ).wait();
+                #endif
             #endif
         #else
             #ifdef USE_GPU
@@ -551,16 +619,23 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 #ifdef USE_HIP
                     HIP_ASSERT(hipMalloc(&d_normalization, bytes_normalization));
                     HIP_ASSERT(hipMalloc(&d_normalization_term_positive_frequency, bytes_normalization_term));
-                    HIP_ASSERT(hipMemcpy( d_normalization_term_positive_frequency, normalization_term, bytes_normalization_term, hipMemcpyHostToDevice ));
                     HIP_ASSERT(hipMalloc(&d_normalization_term_negative_frequency, bytes_normalization_term));
+                    HIP_ASSERT(hipMemcpy( d_normalization_term_positive_frequency, normalization_term, bytes_normalization_term, hipMemcpyHostToDevice ));
                     HIP_ASSERT(hipMemcpy( d_normalization_term_negative_frequency, normalization_term, bytes_normalization_term, hipMemcpyHostToDevice ));
                 #endif
                 #ifdef USE_CUDA
                     CUDA_ASSERT(cudaMalloc(&d_normalization, bytes_normalization));
                     CUDA_ASSERT(cudaMalloc(&d_normalization_term_positive_frequency, bytes_normalization_term));
-                    CUDA_ASSERT(cudaMemcpy( d_normalization_term_positive_frequency, normalization_term, bytes_normalization_term, cudaMemcpyHostToDevice )); 
                     CUDA_ASSERT(cudaMalloc(&d_normalization_term_negative_frequency, bytes_normalization_term));
+                    CUDA_ASSERT(cudaMemcpy( d_normalization_term_positive_frequency, normalization_term, bytes_normalization_term, cudaMemcpyHostToDevice )); 
                     CUDA_ASSERT(cudaMemcpy( d_normalization_term_negative_frequency, normalization_term, bytes_normalization_term, cudaMemcpyHostToDevice )); 
+                #endif
+                #ifdef USE_SYCL
+                    auto d_normalization = sycl::malloc_device< double >( population_size, q ); 
+                    auto d_normalization_term_positive_frequency = sycl::malloc_device< double >( genome_size, q ); 
+                    auto d_normalization_term_negative_frequency = sycl::malloc_device< double >( genome_size, q ); 
+                    q.memcpy( d_normalization_term_positive_frequency, normalization_term_positive_frequency, bytes_normalization_term );
+                    q.memcpy( d_normalization_term_negative_frequency, normalization_term_negative_frequency, bytes_normalization_term ).wait();
                 #endif
             #endif
         #endif
@@ -598,7 +673,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     HIP_ASSERT(hipDeviceSynchronize());
                     int grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
                     hipLaunchKernelGGL(gpu_normalize_population, dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE), 0, 0,
-                            d_population_old_postive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
+                            d_population_old_positive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
                     hipLaunchKernelGGL(gpu_normalize_population, dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE), 0, 0,
                             d_population_old_negative_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
                     HIP_ASSERT(hipDeviceSynchronize());
@@ -624,7 +699,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                         int stream_idx = i % MAX_GPU_STREAMS;
                         cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
                                 dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                d_normalization, d_population_old_postive_frequency, d_normalization_term_postive_frequency, genome_size, i);
+                                d_normalization, d_population_old_positive_frequency, d_normalization_term_positive_frequency, genome_size, i);
                     }
                     for (int i=0; i<population_size; i++) {
                         int stream_idx = i % MAX_GPU_STREAMS;
@@ -636,14 +711,41 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
                     int grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
                     cuda_wrapper::gpu_normalize_population_wrapper( dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE),
-                            d_population_old_postive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
+                            d_population_old_positive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
                     cuda_wrapper::gpu_normalize_population_wrapper( dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE),
                             d_population_old_negative_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
                     CUDA_ASSERT(cudaDeviceSynchronize());
                 #endif
             #endif
-        #endif
-        #ifndef USE_GPU
+            #ifdef USE_SYCL
+                q.memset(d_normalization, 0, bytes_normalization).wait();
+                auto d_normalization_tmp = sycl::malloc_device< double >( grid_size_set_normalization*population_size, q ); 
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                    for (int i=0; i<population_size; i++) {
+                        gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_normalization, d_normalization_tmp + grid_size_set_normalization*i, d_normalization + i, d_normalization_term, d_population_old + genome_size*i, population_size, genome_size );
+                    }
+                    q.wait();
+
+                    int grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+                    gpu_normalize_population( q, grid_size_normalize_population, d_population_old, d_normalization, zeroth_moment, population_size, genome_size); 
+                    q.wait();
+                #else
+                    for (int i=0; i<population_size; i++) {
+                        gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_normalization, d_normalization_tmp + grid_size_set_normalization*i, d_normalization + i, d_normalization_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, population_size, genome_size );
+                    }
+                    q.wait();
+                    for (int i=0; i<population_size; i++) {
+                        gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_normalization, d_normalization_tmp + grid_size_set_normalization*i, d_normalization + i, d_normalization_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, population_size, genome_size );
+                    }
+                    q.wait();
+
+                    int grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+                    gpu_normalize_population( q, grid_size_normalize_population, d_population_old_positive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
+                    gpu_normalize_population( q, grid_size_normalize_population, d_population_old_negative_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
+                    q.wait();
+                #endif
+            #endif
+        #else
             for (int i=0; i<population_size; i++) {
                 normalization[i] = 0.0;
             }
@@ -681,16 +783,20 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
         double * first_moments_term;
         #ifdef USE_GPU
-            double * d_first_moments_term;
-            double * d_first_moments;
+            #ifndef USE_SYCL
+                double * d_first_moments_term;
+                double * d_first_moments;
+            #endif
         #endif
     #else
         double * first_moments_term_positive_frequency;
         double * first_moments_term_negative_frequency;
         #ifdef USE_GPU
-            double * d_first_moments_term_positive_frequency;
-            double * d_first_moments_term_negative_frequency;
-            double * d_first_moments;
+            #ifndef USE_SYCL
+                double * d_first_moments_term_positive_frequency;
+                double * d_first_moments_term_negative_frequency;
+                double * d_first_moments;
+            #endif
         #endif
     #endif
 
@@ -762,6 +868,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaMalloc(&d_first_moments_term, bytes_first_moments_term));
                     CUDA_ASSERT(cudaMemcpy( d_first_moments_term, first_moments_term, bytes_first_moments_term, cudaMemcpyHostToDevice )); 
                 #endif
+                #ifdef USE_SYCL
+                    auto d_first_moments =      sycl::malloc_device< double >( population_size, q );
+                    auto d_first_moments_term = sycl::malloc_device< double >( genome_size,     q );
+                    q.memcpy( d_first_moments_term, first_moments_term, bytes_first_moments_term ).wait();
+                #endif
             #endif
         #else
             #ifdef USE_GPU
@@ -779,12 +890,19 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaMalloc(&d_first_moments_term_negative_frequency, bytes_first_moments_term));
                     CUDA_ASSERT(cudaMemcpy( d_first_moments_term_negative_frequency, first_moments_term_negative_frequency, bytes_first_moments_term, cudaMemcpyHostToDevice )); 
                 #endif
+                #ifdef USE_SYCL
+                    auto d_first_moments =      sycl::malloc_device< double >( population_size, q );
+                    auto d_first_moments_term_positive_frequency = sycl::malloc_device< double >( genome_size,     q );
+                    auto d_first_moments_term_negative_frequency = sycl::malloc_device< double >( genome_size,     q );
+                    q.memcpy( d_first_moments_term_positive_frequency, first_moments_term_positive_frequency, bytes_first_moments_term );
+                    q.memcpy( d_first_moments_term_negative_frequency, first_moments_term_negative_frequency, bytes_first_moments_term ).wait();
+                #endif
             #endif
         #endif
         #ifdef USE_GPU
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                int grid_size_set_first_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                #ifdef USE_HIP
+            int grid_size_set_first_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            #ifdef USE_HIP
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                     HIP_ASSERT(hipMemset(d_first_moments,0, bytes_first_moments));
                     for (int i=0; i<population_size; i++) {
                         int stream_idx = i % MAX_GPU_STREAMS;
@@ -793,20 +911,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                                 d_first_moments, d_population_old, d_first_moments_term, genome_size, i);
                     }
                     HIP_ASSERT(hipDeviceSynchronize());
-                #endif
-                #ifdef USE_CUDA
-                    CUDA_ASSERT(cudaMemset(d_first_moments,0, bytes_first_moments));
-                    for (int i=0; i<population_size; i++) {
-                        int stream_idx = i % MAX_GPU_STREAMS;
-                        cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
-                                dim3(grid_size_set_first_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                d_first_moments, d_population_old, d_first_moments_term, genome_size, i);
-                    }
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #endif
-            #else
-                int grid_size_set_first_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                #ifdef USE_HIP
+                #else
                     HIP_ASSERT(hipMemset(d_first_moments,0, bytes_first_moments));
                     for (int i=0; i<population_size; i++) {
                         int stream_idx = i % MAX_GPU_STREAMS;
@@ -822,7 +927,18 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     }
                     HIP_ASSERT(hipDeviceSynchronize());
                 #endif
-                #ifdef USE_CUDA
+            #endif
+            #ifdef USE_CUDA
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                    CUDA_ASSERT(cudaMemset(d_first_moments,0, bytes_first_moments));
+                    for (int i=0; i<population_size; i++) {
+                        int stream_idx = i % MAX_GPU_STREAMS;
+                        cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
+                                dim3(grid_size_set_first_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                                d_first_moments, d_population_old, d_first_moments_term, genome_size, i);
+                    }
+                    CUDA_ASSERT(cudaDeviceSynchronize());
+                #else
                     CUDA_ASSERT(cudaMemset(d_first_moments,0, bytes_first_moments));
                     for (int i=0; i<population_size; i++) {
                         int stream_idx = i % MAX_GPU_STREAMS;
@@ -839,8 +955,26 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaDeviceSynchronize());
                 #endif
             #endif
-        #endif
-        #ifndef USE_GPU
+            #ifdef USE_SYCL
+                q.memset(d_first_moments, 0, bytes_first_moments).wait();
+                auto d_first_moments_tmp = sycl::malloc_device< double >( grid_size_set_first_moments*population_size, q ); 
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                    for (int i=0; i<population_size; i++) {
+                        gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_first_moments, d_first_moments_tmp + grid_size_set_first_moments*i, d_first_moments + i, d_first_moments_term, d_population_old + genome_size*i, population_size, genome_size );
+                    }
+                    q.wait();
+                #else
+                    for (int i=0; i<population_size; i++) {
+                        gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_first_moments, d_first_moments_tmp + grid_size_set_first_moments*i, d_first_moments + i, d_first_moments_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, population_size, genome_size );
+                    }
+                    q.wait();
+                    for (int i=0; i<population_size; i++) {
+                        gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_first_moments, d_first_moments_tmp + grid_size_set_first_moments*i, d_first_moments + i, d_first_moments_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, population_size, genome_size );
+                    }
+                    q.wait();
+                #endif
+            #endif
+        #else
             for (int i=0; i<population_size; i++) {
                 first_moments[i] = 0.0;
             }
@@ -864,16 +998,20 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
         double * third_moments_term;
         #ifdef USE_GPU
-            double * d_third_moments;
-            double * d_third_moments_term;
+            #ifndef USE_SYCL
+                double * d_third_moments;
+                double * d_third_moments_term;
+            #endif
         #endif
     #else
         double * third_moments_term_positive_frequency;
         double * third_moments_term_negative_frequency;
         #ifdef USE_GPU
-            double * d_third_moments;
-            double * d_third_moments_term_positive_frequency;
-            double * d_third_moments_term_negative_frequency;
+            #ifndef USE_SYCL
+                double * d_third_moments;
+                double * d_third_moments_term_positive_frequency;
+                double * d_third_moments_term_negative_frequency;
+            #endif
         #endif
     #endif
     if (use_third_moment) {
@@ -943,6 +1081,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaMalloc(&d_third_moments_term, bytes_third_moments_term));
                     CUDA_ASSERT(cudaMemcpy( d_third_moments_term, third_moments_term, bytes_third_moments_term, cudaMemcpyHostToDevice )); 
                 #endif
+                #ifdef USE_SYCL
+                    auto d_third_moments =      sycl::malloc_device< double >( population_size, q );
+                    auto d_third_moments_term = sycl::malloc_device< double >( genome_size,     q );
+                    q.memcpy( d_third_moments_term, third_moments_term, bytes_third_moments_term ).wait();
+                #endif
             #endif
         #else
             #ifdef USE_GPU
@@ -960,12 +1103,19 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaMalloc(&d_third_moments_term_negative_frequency, bytes_third_moments_term));
                     CUDA_ASSERT(cudaMemcpy( d_third_moments_term_negative_frequency, third_moments_term_negative_frequency, bytes_third_moments_term, cudaMemcpyHostToDevice )); 
                 #endif
+                #ifdef USE_SYCL
+                    auto d_third_moments =      sycl::malloc_device< double >( population_size, q );
+                    auto d_third_moments_term_positive_frequency = sycl::malloc_device< double >( genome_size,     q );
+                    auto d_third_moments_term_negative_frequency = sycl::malloc_device< double >( genome_size,     q );
+                    q.memcpy( d_third_moments_term_positive_frequency, third_moments_term_positive_frequency, bytes_third_moments_term );
+                    q.memcpy( d_third_moments_term_negative_frequency, third_moments_term_negative_frequency, bytes_third_moments_term ).wait();
+                #endif
             #endif
         #endif
         #ifdef USE_GPU
             int grid_size_set_third_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                #ifdef USE_HIP
+            #ifdef USE_HIP
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                     HIP_ASSERT(hipMemset(d_third_moments,0, bytes_third_moments));
                     for (int i=0; i<population_size; i++) {
                         int stream_idx = i % MAX_GPU_STREAMS;
@@ -974,19 +1124,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                                 d_third_moments, d_population_old, d_third_moments_term, genome_size, i);
                     }
                     HIP_ASSERT(hipDeviceSynchronize());
-                #endif
-                #ifdef USE_CUDA
-                    CUDA_ASSERT(cudaMemset(d_third_moments,0, bytes_third_moments));
-                    for (int i=0; i<population_size; i++) {
-                        int stream_idx = i % MAX_GPU_STREAMS;
-                        cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
-                                dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                d_third_moments, d_population_old, d_third_moments_term, genome_size, i);
-                    }
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #endif
-            #else
-                #ifdef USE_HIP
+                #else
                     HIP_ASSERT(hipMemset(d_third_moments,0, bytes_third_moments));
                     for (int i=0; i<population_size; i++) {
                         int stream_idx = i % MAX_GPU_STREAMS;
@@ -1002,7 +1140,18 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     }
                     HIP_ASSERT(hipDeviceSynchronize());
                 #endif
-                #ifdef USE_CUDA
+            #endif
+            #ifdef USE_CUDA
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                    CUDA_ASSERT(cudaMemset(d_third_moments,0, bytes_third_moments));
+                    for (int i=0; i<population_size; i++) {
+                        int stream_idx = i % MAX_GPU_STREAMS;
+                        cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
+                                dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                                d_third_moments, d_population_old, d_third_moments_term, genome_size, i);
+                    }
+                    CUDA_ASSERT(cudaDeviceSynchronize());
+                #else
                     CUDA_ASSERT(cudaMemset(d_third_moments,0, bytes_third_moments));
                     for (int i=0; i<population_size; i++) {
                         int stream_idx = i % MAX_GPU_STREAMS;
@@ -1017,6 +1166,25 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                                 d_third_moments, d_population_old_negative_frequency, d_third_moments_term_negative_frequency, genome_size, i);
                     }
                     CUDA_ASSERT(cudaDeviceSynchronize());
+                #endif
+            #endif
+            #ifdef USE_SYCL
+                q.memset(d_third_moments, 0, bytes_third_moments).wait();
+                auto d_third_moments_tmp = sycl::malloc_device< double >( grid_size_set_third_moments*population_size, q ); 
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                    for (int i=0; i<population_size; i++) {
+                        gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_third_moments, d_third_moments_tmp + grid_size_set_third_moments*i, d_third_moments + i, d_third_moments_term, d_population_old + genome_size*i, population_size, genome_size );
+                    }
+                    q.wait();
+                #else
+                    for (int i=0; i<population_size; i++) {
+                        gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_third_moments, d_third_moments_tmp + grid_size_set_third_moments*i, d_third_moments + i, d_third_moments_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, population_size, genome_size );
+                    }
+                    q.wait();
+                    for (int i=0; i<population_size; i++) {
+                        gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_third_moments, d_third_moments_tmp + grid_size_set_third_moments*i, d_third_moments + i, d_third_moments_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, population_size, genome_size );
+                    }
+                    q.wait();
                 #endif
             #endif
         #endif
@@ -1039,7 +1207,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     //Set isf_model and calculate fitness
     double * isf_model;
     #ifdef USE_GPU
-        double * d_isf_model;
+        #ifndef USE_SYCL
+            double * d_isf_model;
+        #endif
     #endif
     size_t bytes_isf_model = sizeof(double)*number_of_timeslices*population_size;
     isf_model = (double*) malloc(bytes_isf_model);
@@ -1050,11 +1220,14 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #ifdef USE_CUDA
             CUDA_ASSERT(cudaMalloc(&d_isf_model, bytes_isf_model));
         #endif
+        #ifdef USE_SYCL
+            auto d_isf_model = sycl::malloc_device< double >( number_of_timeslices*population_size, q );
+        #endif
     #endif
     #ifdef USE_GPU
         int grid_size_set_isf_model = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            #ifdef USE_HIP
+        #ifdef USE_HIP
+            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                 HIP_ASSERT(hipMemset(d_isf_model,0, bytes_isf_model));
                 for (int i=0; i<population_size*number_of_timeslices; i++) {
                     int stream_idx = i % MAX_GPU_STREAMS;
@@ -1063,19 +1236,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                             d_isf_model, d_isf_term, d_population_old, number_of_timeslices, genome_size, i);
                 }
                 HIP_ASSERT(hipDeviceSynchronize());
-            #endif
-            #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMemset(d_isf_model,0, bytes_isf_model));
-                for (int i=0; i<population_size*number_of_timeslices; i++) {
-                    int stream_idx = i % MAX_GPU_STREAMS;
-                    cuda_wrapper::gpu_matrix_multiply_LxM_by_MxN_wrapper(
-                            dim3(grid_size_set_isf_model), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                            d_isf_model, d_isf_term, d_population_old, number_of_timeslices, genome_size, i);
-                }
-                CUDA_ASSERT(cudaDeviceSynchronize());
-            #endif
-        #else
-            #ifdef USE_HIP
+            #else
                 HIP_ASSERT(hipMemset(d_isf_model,0, bytes_isf_model));
                 for (int i=0; i<population_size*number_of_timeslices; i++) {
                     int stream_idx = i % MAX_GPU_STREAMS;
@@ -1091,7 +1252,18 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 }
                 HIP_ASSERT(hipDeviceSynchronize());
             #endif
-            #ifdef USE_CUDA
+        #endif
+        #ifdef USE_CUDA
+            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                CUDA_ASSERT(cudaMemset(d_isf_model,0, bytes_isf_model));
+                for (int i=0; i<population_size*number_of_timeslices; i++) {
+                    int stream_idx = i % MAX_GPU_STREAMS;
+                    cuda_wrapper::gpu_matrix_multiply_LxM_by_MxN_wrapper(
+                            dim3(grid_size_set_isf_model), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                            d_isf_model, d_isf_term, d_population_old, number_of_timeslices, genome_size, i);
+                }
+                CUDA_ASSERT(cudaDeviceSynchronize());
+            #else
                 CUDA_ASSERT(cudaMemset(d_isf_model,0, bytes_isf_model));
                 for (int i=0; i<population_size*number_of_timeslices; i++) {
                     int stream_idx = i % MAX_GPU_STREAMS;
@@ -1108,8 +1280,33 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaDeviceSynchronize());
             #endif
         #endif
-    #endif
-    #ifndef USE_GPU
+        #ifdef USE_SYCL
+            auto d_isf_model_tmp = sycl::malloc_device< double >( grid_size_set_isf_model*population_size*number_of_time_slices, q ); 
+            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                q.memset(d_isf_model, 0, bytes_isf_model).wait();
+                for (int i=0; i<population_size*number_of_timeslices; i++) {
+                    size_t _i = i/population_size;
+                    size_t _j = i - _i*population_size;
+                    gpu_matrix_multiply_LxM_by_MxN_wrapper( q, grid_size_set_isf_model, d_isf_model_tmp + grid_size_set_normalization*i, d_isf_model + i, d_population_old + genome_size*_j, d_isf_term + genome_size*_i, number_of_timeslices, genome_size );
+                }
+                q.wait();
+            #else
+                q.memset(d_isf_model, 0, bytes_isf_model).wait();
+                for (int i=0; i<population_size*number_of_timeslices; i++) {
+                    size_t _i = i/population_size;
+                    size_t _j = i - _i*population_size;
+                    gpu_matrix_multiply_LxM_by_MxN_wrapper( q, grid_size_set_isf_model, d_isf_model_tmp + grid_size_set_normalization*i, d_isf_model + i, d_population_old_positive_frequency + genome_size*_j, d_isf_term_positive_frequency + genome_size*_i, number_of_timeslices, genome_size );
+                }
+                q.wait();
+                for (int i=0; i<population_size*number_of_timeslices; i++) {
+                    size_t _i = i/population_size;
+                    size_t _j = i - _i*population_size;
+                    gpu_matrix_multiply_LxM_by_MxN_wrapper( q, grid_size_set_isf_model, d_isf_model_tmp + grid_size_set_normalization*i, d_isf_model + i, d_population_old_negative_frequency + genome_size*_j, d_isf_term_negative_frequency + genome_size*_i, number_of_timeslices, genome_size );
+                }
+                q.wait();
+            #endif
+        #endif
+    #else
         for (int i=0; i<population_size*number_of_timeslices; i++) {
             isf_model[i] = 0.0;
         }
@@ -1128,8 +1325,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double * inverse_first_moments_term;
         double * inverse_first_moments;
         #ifdef USE_GPU
-            double * d_inverse_first_moments_term;
-            double * d_inverse_first_moments;
+            #ifndef USE_SYCL
+                double * d_inverse_first_moments_term;
+                double * d_inverse_first_moments;
+            #endif
         #endif
         size_t bytes_inverse_first_moments_term = sizeof(double)*number_of_timeslices;
         size_t bytes_inverse_first_moments = sizeof(double)*population_size;
@@ -1164,6 +1363,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaMalloc(&d_inverse_first_moments, bytes_inverse_first_moments));
                     CUDA_ASSERT(cudaMemcpy( d_inverse_first_moments_term, inverse_first_moments_term, bytes_inverse_first_moments_term, cudaMemcpyHostToDevice )); 
                 #endif
+                #ifdef USE_SYCL
+                    auto d_inverse_first_moments_term = sycl::malloc_device< double >( number_of_timeslices, q ); 
+                    auto d_inverse_first_moments = sycl::malloc_device< double >( population_size, q ); 
+                    q.memcpy( d_inverse_first_moments_term, inverse_first_moments_term, bytes_inverse_first_moments_term ).wait();
+                #endif
             #endif
             #ifdef USE_GPU
                 int grid_size_set_inverse_first_moments = (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
@@ -1186,9 +1390,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                                 d_inverse_first_moments, d_isf_model, d_inverse_first_moments_term, number_of_timeslices, i);
                     }
                     CUDA_ASSERT(cudaDeviceSynchronize());
+                #ifdef USE_SYCL
+                    q.memset(d_inverse_first_moments, 0, bytes_inverse_first_moments).wait();
+                    auto d_inverse_first_moments_tmp = sycl::malloc_device< double >( grid_size_set_inverse_first_moments*population_size, q ); 
+                    for (int i=0; i<population_size; i++) {
+                        gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_inverse_first_moments, d_inverse_first_moments_tmp + grid_size_set_inverse_first_moments*i, d_inverse_first_moments + i, d_inverse_first_moments_term, d_isf_model + number_of_timeslices*i, population_size, number_of_timeslices );
+                    }
+                    q.wait();
                 #endif
-            #endif
-            #ifndef USE_GPU
+            #else
                 for (int i=0; i<population_size; i++) {
                     inverse_first_moments[i] = 0.0;
                 }
@@ -1202,8 +1412,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
     double * fitness_old;
     #ifdef USE_GPU
-        double * d_fitness_old;
-        double * d_fitness_new;
+        #ifndef USE_SYCL
+            double * d_fitness_old;
+            double * d_fitness_new;
+        #endif
         size_t bytes_fitness_new = sizeof(double)*population_size;
     #endif
     size_t bytes_fitness_old = sizeof(double)*population_size;
@@ -1217,6 +1429,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #ifdef USE_CUDA
             CUDA_ASSERT(cudaMalloc(&d_fitness_old, bytes_fitness_old));
             CUDA_ASSERT(cudaMalloc(&d_fitness_new, bytes_fitness_new));
+        #endif
+        #ifdef USE_SYCL
+            auto d_fitness_old = sycl::malloc_device< double >( population_size, q ); 
+            auto d_fitness_new = sycl::malloc_device< double >( population_size, q ); 
         #endif
     #endif
     #ifdef USE_GPU
@@ -1286,8 +1502,32 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaDeviceSynchronize());
             }
         #endif
-    #endif
-    #ifndef USE_GPU
+        #ifdef USE_SYCL
+            q.memset(d_fitness_old, 0, bytes_fitness_old).wait();
+            auto d_fitness_tmp = sycl::malloc_device< double >( grid_size_set_fitness*population_size, q ); 
+            for (int i=0; i<population_size; i++) {
+                int stream_idx = i % MAX_GPU_STREAMS;
+                gpu_set_fitness(q, grid_size_set_fitness, d_fitness_tmp + grid_size_set_fitness*i, d_fitness_old + i, d_isf, d_isf_model + number_of_timeslices*i, d_isf_error, number_of_timeslices);
+            }
+            q.wait();
+            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                if (use_inverse_first_moment) {
+                    gpu_set_fitness_moments_reduced_chi_squared(q, grid_size_set_fitness_moments, d_fitness_old, d_inverse_first_moments, inverse_first_moment, inverse_first_moment_error, population_size);
+                    q.wait();
+                }
+            #else
+                //FIXME inverse first moment not implemented for single particle fermionic spectral function
+            #endif
+            if (use_first_moment) {
+                gpu_set_fitness_moments_reduced_chi_squared(q, grid_size_set_fitness_moments, d_fitness_old, d_first_moments, first_moment, first_moment_error, population_size);
+                q.wait();
+            }
+            if (use_third_moment) {
+                gpu_set_fitness_moments_reduced_chi_squared(q, grid_size_set_fitness_moments, d_fitness_old, d_third_moments, third_moment, third_moment_error, population_size);
+                q.wait();
+            }
+        #endif
+    #else
         for (int i=0; i<population_size; i++) {
             double _fitness = reduced_chi_square_statistic(isf,
                     isf_model + i*number_of_timeslices, isf_error,
@@ -1319,8 +1559,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             crossover_probabilities_old[i] = crossover_probability;
         }
         #ifdef USE_GPU
-            double * d_crossover_probabilities_old;
-            double * d_crossover_probabilities_new;
+            #ifndef USE_SYCL
+                double * d_crossover_probabilities_old;
+                double * d_crossover_probabilities_new;
+            #endif
             #ifdef USE_HIP
                 HIP_ASSERT(hipMalloc(&d_crossover_probabilities_old, bytes_crossover_probabilities));
                 HIP_ASSERT(hipMalloc(&d_crossover_probabilities_new, bytes_crossover_probabilities));
@@ -1330,6 +1572,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMalloc(&d_crossover_probabilities_old, bytes_crossover_probabilities));
                 CUDA_ASSERT(cudaMalloc(&d_crossover_probabilities_new, bytes_crossover_probabilities));
                 CUDA_ASSERT(cudaMemcpy( d_crossover_probabilities_old, crossover_probabilities_old, bytes_crossover_probabilities, cudaMemcpyHostToDevice )); 
+            #endif
+            #ifdef USE_SYCL
+                auto d_crossover_probabilities_old = sycl::malloc_device< double >( population_size, q ); 
+                auto d_crossover_probabilities_new = sycl::malloc_device< double >( population_size, q ); 
+                q.memcpy( d_crossover_probabilities_old, crossover_probabilities_old, bytes_crossover_probabilities ).wait();
             #endif
         #endif
     #else
@@ -1346,10 +1593,12 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             crossover_probabilities_old_negative_frequency[i] = crossover_probability;
         }
         #ifdef USE_GPU
-            double * d_crossover_probabilities_old_positive_frequency;
-            double * d_crossover_probabilities_old_negative_frequency;
-            double * d_crossover_probabilities_new_positive_frequency;
-            double * d_crossover_probabilities_new_negative_frequency;
+            #ifndef USE_SYCL
+                double * d_crossover_probabilities_old_positive_frequency;
+                double * d_crossover_probabilities_old_negative_frequency;
+                double * d_crossover_probabilities_new_positive_frequency;
+                double * d_crossover_probabilities_new_negative_frequency;
+            #endif
             #ifdef USE_HIP
                 HIP_ASSERT(hipMalloc(&d_crossover_probabilities_old_positive_frequency, bytes_crossover_probabilities));
                 HIP_ASSERT(hipMalloc(&d_crossover_probabilities_new_positive_frequency, bytes_crossover_probabilities));
@@ -1366,6 +1615,14 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMalloc(&d_crossover_probabilities_new_negative_frequency, bytes_crossover_probabilities));
                 CUDA_ASSERT(cudaMemcpy( d_crossover_probabilities_old_negative_frequency, crossover_probabilities_old_negative_frequency, bytes_crossover_probabilities, cudaMemcpyHostToDevice )); 
             #endif
+            #ifdef USE_SYCL
+                auto d_crossover_probabilities_old_positive_frequency = sycl::malloc_device< double >( population_size, q ); 
+                auto d_crossover_probabilities_old_negative_frequency = sycl::malloc_device< double >( population_size, q ); 
+                auto d_crossover_probabilities_new_positive_frequency = sycl::malloc_device< double >( population_size, q ); 
+                auto d_crossover_probabilities_new_negative_frequency = sycl::malloc_device< double >( population_size, q ); 
+                q.memcpy( d_crossover_probabilities_old_positive_frequency, crossover_probabilities_old_positive_frequency, bytes_crossover_probabilities );
+                q.memcpy( d_crossover_probabilities_old_negative_frequency, crossover_probabilities_old_negative_frequency, bytes_crossover_probabilities ).wait();
+            #endif
         #endif
     #endif
 
@@ -1379,8 +1636,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             differential_weights_old[i] = differential_weight;
         }
         #ifdef USE_GPU
-            double * d_differential_weights_old;
-            double * d_differential_weights_new;
+            #ifndef USE_SYCL
+                double * d_differential_weights_old;
+                double * d_differential_weights_new;
+            #endif
             #ifdef USE_HIP
                 HIP_ASSERT(hipMalloc(&d_differential_weights_old, bytes_differential_weights));
                 HIP_ASSERT(hipMalloc(&d_differential_weights_new, bytes_differential_weights));
@@ -1390,6 +1649,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMalloc(&d_differential_weights_old, bytes_differential_weights));
                 CUDA_ASSERT(cudaMalloc(&d_differential_weights_new, bytes_differential_weights));
                 CUDA_ASSERT(cudaMemcpy( d_differential_weights_old, differential_weights_old, bytes_differential_weights, cudaMemcpyHostToDevice )); 
+            #endif
+            #ifdef USE_SYCL
+                auto d_differential_weights_old = sycl::malloc_device< double >( population_size, q ); 
+                auto d_differential_weights_new = sycl::malloc_device< double >( population_size, q ); 
+                q.memcpy( d_differential_weights_old, differential_weights_old, bytes_differential_weights ).wait();
             #endif
         #endif
     #else
@@ -1406,10 +1670,12 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             differential_weights_old_negative_frequency[i] = differential_weight;
         }
         #ifdef USE_GPU
-            double * d_differential_weights_old_positive_frequency;
-            double * d_differential_weights_old_negative_frequency;
-            double * d_differential_weights_new_positive_frequency;
-            double * d_differential_weights_new_negative_frequency;
+            #ifndef USE_SYCL
+                double * d_differential_weights_old_positive_frequency;
+                double * d_differential_weights_old_negative_frequency;
+                double * d_differential_weights_new_positive_frequency;
+                double * d_differential_weights_new_negative_frequency;
+            #endif
             #ifdef USE_HIP
                 HIP_ASSERT(hipMalloc(&d_differential_weights_old_positive_frequency, bytes_differential_weights));
                 HIP_ASSERT(hipMalloc(&d_differential_weights_new_positive_frequency, bytes_differential_weights));
@@ -1426,41 +1692,60 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMalloc(&d_differential_weights_new_negative_frequency, bytes_differential_weights));
                 CUDA_ASSERT(cudaMemcpy( d_differential_weights_old_negative_frequency, differential_weights_old_negative_frequency, bytes_differential_weights, cudaMemcpyHostToDevice )); 
             #endif
+            #ifdef USE_SYCL
+                auto d_differential_weights_old_positive_frequency = sycl::malloc_device< double >( population_size, q ); 
+                auto d_differential_weights_old_negative_frequency = sycl::malloc_device< double >( population_size, q ); 
+                auto d_differential_weights_new_positive_frequency = sycl::malloc_device< double >( population_size, q ); 
+                auto d_differential_weights_new_negative_frequency = sycl::malloc_device< double >( population_size, q ); 
+                q.memcpy( d_differential_weights_old_positive_frequency, differential_weights_old_positive_frequency, bytes_differential_weights );
+                q.memcpy( d_differential_weights_old_negative_frequency, differential_weights_old_negative_frequency, bytes_differential_weights ).wait();
+            #endif
         #endif
     #endif
 
     //Initialize statistics arrays
     double * fitness_mean;
     double * fitness_minimum;
-    double * fitness_standard_deviation;
+    double * fitness_squared_mean;
     #ifdef USE_GPU
-        double * d_fitness_mean;
-        double * d_fitness_minimum;
-        double * d_fitness_standard_deviation;
+        #ifndef USE_SYCL
+            double * d_fitness_mean;
+            double * d_fitness_minimum;
+            double * d_fitness_squared_mean;
+        #endif
     #endif
     size_t bytes_fitness_mean = sizeof(double)*number_of_generations;
     size_t bytes_fitness_minimum = sizeof(double)*number_of_generations;
-    size_t bytes_fitness_standard_deviation = sizeof(double)*number_of_generations;
+    size_t bytes_fitness_squared_mean = sizeof(double)*number_of_generations;
     if (track_stats) {
         fitness_mean = (double*) malloc(bytes_fitness_mean);
         fitness_minimum = (double*) malloc(bytes_fitness_minimum);
-        fitness_standard_deviation = (double*) malloc(bytes_fitness_standard_deviation);
+        fitness_squared_mean = (double*) malloc(bytes_fitness_squared_mean);
         #ifdef USE_GPU
+            int grid_size_set_stats = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
             #ifdef USE_HIP
                 HIP_ASSERT(hipMalloc(&d_fitness_mean, bytes_fitness_mean));
                 HIP_ASSERT(hipMalloc(&d_fitness_minimum, bytes_fitness_minimum));
-                HIP_ASSERT(hipMalloc(&d_fitness_standard_deviation, bytes_fitness_standard_deviation));
+                HIP_ASSERT(hipMalloc(&d_fitness_squared_mean, bytes_fitness_squared_mean));
                 HIP_ASSERT(hipMemset(d_fitness_mean,0, bytes_fitness_mean));
                 HIP_ASSERT(hipMemset(d_fitness_minimum,0, bytes_fitness_minimum));
-                HIP_ASSERT(hipMemset(d_fitness_standard_deviation,0, bytes_fitness_standard_deviation));
+                HIP_ASSERT(hipMemset(d_fitness_squared_mean,0, bytes_fitness_squared_mean));
             #endif
             #ifdef USE_CUDA
                 CUDA_ASSERT(cudaMalloc(&d_fitness_mean, bytes_fitness_mean));
                 CUDA_ASSERT(cudaMalloc(&d_fitness_minimum, bytes_fitness_minimum));
-                CUDA_ASSERT(cudaMalloc(&d_fitness_standard_deviation, bytes_fitness_standard_deviation));
+                CUDA_ASSERT(cudaMalloc(&d_fitness_squared_mean, bytes_fitness_squared_mean));
                 CUDA_ASSERT(cudaMemset(d_fitness_mean,0, bytes_fitness_mean));
                 CUDA_ASSERT(cudaMemset(d_fitness_minimum,0, bytes_fitness_minimum));
-                CUDA_ASSERT(cudaMemset(d_fitness_standard_deviation,0, bytes_fitness_standard_deviation));
+                CUDA_ASSERT(cudaMemset(d_fitness_squared_mean,0, bytes_fitness_squared_mean));
+            #endif
+            #ifdef USE_SYCL
+                auto d_fitness_mean             = sycl::malloc_device< double >( number_of_generations, q ); 
+                auto d_fitness_mean_tmp         = sycl::malloc_device< double >( grid_size_set_stats,   q ); 
+                auto d_fitness_squared_mean     = sycl::malloc_device< double >( number_of_generations, q ); 
+                auto d_fitness_squared_mean_tmp = sycl::malloc_device< double >( grid_size_set_stats,   q ); 
+                q.memset(d_fitness_mean,         0, bytes_normalization);
+                q.memset(d_fitness_squared_mean, 0, bytes_normalization).wait();
             #endif
         #endif
     }
@@ -1468,9 +1753,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
         bool * mutate_indices;
         #ifdef USE_GPU
-            bool * d_mutate_indices;
-            bool * d_rejection_indices;
             size_t bytes_rejection_indices = sizeof(bool)*population_size;
+            #ifndef USE_SYCL
+                bool * d_mutate_indices;
+                bool * d_rejection_indices;
+            #endif
         #endif
         size_t bytes_mutate_indices = sizeof(bool)*genome_size*population_size;
         mutate_indices = (bool*) malloc(bytes_mutate_indices);
@@ -1483,15 +1770,21 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMalloc(&d_mutate_indices, bytes_mutate_indices));
                 CUDA_ASSERT(cudaMalloc(&d_rejection_indices, bytes_rejection_indices));
             #endif
+            #ifdef USE_SYCL
+                auto d_mutate_indices    = sycl::malloc_device< bool >( population_size, q ); 
+                auto d_rejection_indices = sycl::malloc_device< bool >( population_size, q ); 
+            #endif
         #endif
     #else
         bool * mutate_indices_positive_frequency;
         bool * mutate_indices_negative_frequency;
         #ifdef USE_GPU
-            bool * d_mutate_indices_positive_frequency;
-            bool * d_mutate_indices_negative_frequency;
-            bool * d_rejection_indices;
             size_t bytes_rejection_indices = sizeof(bool)*population_size;
+            #ifndef USE_SYCL
+                bool * d_mutate_indices_positive_frequency;
+                bool * d_mutate_indices_negative_frequency;
+                bool * d_rejection_indices;
+            #endif
         #endif
         size_t bytes_mutate_indices = sizeof(bool)*genome_size*population_size;
         mutate_indices_positive_frequency = (bool*) malloc(bytes_mutate_indices);
@@ -1507,12 +1800,19 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMalloc(&d_mutate_indices_negative_frequency, bytes_mutate_indices));
                 CUDA_ASSERT(cudaMalloc(&d_rejection_indices, bytes_rejection_indices));
             #endif
+            #ifdef USE_SYCL
+                auto d_mutate_indices_positive_frequency = sycl::malloc_device< bool >( population_size, q ); 
+                auto d_mutate_indices_negative_frequency = sycl::malloc_device< bool >( population_size, q ); 
+                auto d_rejection_indices                 = sycl::malloc_device< bool >( population_size, q ); 
+            #endif
         #endif
     #endif
 
     int * mutant_indices;
     #ifdef USE_GPU
-        int * d_mutant_indices;
+        #ifndef USE_SYCL
+            int* d_mutant_indices;
+        #endif
     #endif
     size_t bytes_mutant_indices = sizeof(int)*3*population_size;
     mutant_indices = (int*) malloc(bytes_mutant_indices);
@@ -1523,26 +1823,37 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #ifdef USE_CUDA
             CUDA_ASSERT(cudaMalloc(&d_mutant_indices, bytes_mutant_indices));
         #endif
+        #ifdef USE_SYCL
+            auto d_mutant_indices = sycl::malloc_device< int >( 3*population_size, q ); 
+        #endif
     #endif
 
     double minimum_fitness;
     int minimum_fitness_idx;
     #ifdef USE_GPU
-        double * d_minimum_fitness;
         size_t bytes_minimum_fitness = sizeof(double);
+        #ifndef USE_SYCL
+            double* d_minimum_fitness;
+        #endif
         #ifdef USE_HIP
             HIP_ASSERT(hipMalloc(&d_minimum_fitness, bytes_minimum_fitness));
         #endif
         #ifdef USE_CUDA
             CUDA_ASSERT(cudaMalloc(&d_minimum_fitness, bytes_minimum_fitness));
         #endif
+        #ifdef USE_SYCL
+            auto h_minimum_fitness = sycl::malloc_host< double >( 1, q ); 
+        #endif
     #endif
 
     #ifdef USE_GPU
-        // Generate rng state
-        uint64_t * rng_state;
-        uint64_t * d_rng_state;
         size_t bytes_rng_state = sizeof(uint64_t)*4*population_size*(genome_size + 1);
+
+        // Generate rng state
+        #ifndef USE_SYCL
+            uint64_t* rng_state;
+            uint64_t* d_rng_state;
+        #endif
         rng_state = (uint64_t *) malloc(bytes_rng_state);
 
         for (int i=0; i<population_size; i++) {
@@ -1558,6 +1869,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #ifdef USE_CUDA
             CUDA_ASSERT(cudaMalloc(&d_rng_state, bytes_rng_state));
             CUDA_ASSERT(cudaMemcpy( d_rng_state, rng_state, bytes_rng_state, cudaMemcpyHostToDevice ));
+        #endif
+        #ifdef USE_SYCL
+            auto d_rng_state = sycl::malloc_device< uint64_t >( 4*population_size*(genome_size + 1), q ); 
+            q.memcpy( d_rng_state, rng_state, bytes_rng_state ).wait();
         #endif
     #endif
     
@@ -1578,6 +1893,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                         d_fitness_old, d_minimum_fitness, population_size);
                 CUDA_ASSERT(cudaDeviceSynchronize());
                 cudaMemcpy(&minimum_fitness, d_minimum_fitness, bytes_minimum_fitness, cudaMemcpyDeviceToHost);
+            #endif
+            #ifdef USE_SYCL
+                gpu_get_minimum_fitness( q, d_fitness_old, h_minimum_fitness, population_size);
+                q.wait();
             #endif
         #endif
         #ifndef USE_GPU
@@ -1615,49 +1934,55 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         //Get Statistics
         if (track_stats) {
             #ifdef USE_GPU
-                int grid_size_set_fitness_mean = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                int grid_size_set_fitness_standard_deviation = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
                 #ifdef USE_HIP
                     hipLaunchKernelGGL(gpu_set_fitness_mean,
-                            dim3(grid_size_set_fitness_mean), dim3(GPU_BLOCK_SIZE), 0, 0,
+                            dim3(grid_size_set_stats), dim3(GPU_BLOCK_SIZE), 0, 0,
                             d_fitness_mean, d_fitness_old, population_size, ii);
-                    HIP_ASSERT(hipDeviceSynchronize());
                     hipMemcpy(d_fitness_minimum + ii, d_minimum_fitness, bytes_minimum_fitness, hipMemcpyDeviceToDevice);
-                    hipLaunchKernelGGL(gpu_set_fitness_standard_deviation,
-                            dim3(grid_size_set_fitness_standard_deviation), dim3(GPU_BLOCK_SIZE), 0, 0,
-                            d_fitness_standard_deviation, d_fitness_mean, d_fitness_old, population_size, ii);
+                    hipLaunchKernelGGL(gpu_set_fitness_squared_mean,
+                            dim3(grid_size_set_stats), dim3(GPU_BLOCK_SIZE), 0, 0,
+                            d_fitness_squared_mean, d_fitness_old, population_size, ii);
                     HIP_ASSERT(hipDeviceSynchronize());
                 #endif
                 #ifdef USE_CUDA
                     cuda_wrapper::gpu_set_fitness_mean_wrapper(
-                            dim3(grid_size_set_fitness_mean), dim3(GPU_BLOCK_SIZE),
+                            dim3(grid_size_set_stats), dim3(GPU_BLOCK_SIZE),
                             d_fitness_mean, d_fitness_old, population_size, ii);
-                    CUDA_ASSERT(cudaDeviceSynchronize());
                     cudaMemcpy(d_fitness_minimum + ii, d_minimum_fitness, bytes_minimum_fitness, cudaMemcpyDeviceToDevice);
-                    cuda_wrapper::gpu_set_fitness_standard_deviation_wrapper(
-                            dim3(grid_size_set_fitness_standard_deviation), dim3(GPU_BLOCK_SIZE),
-                            d_fitness_standard_deviation, d_fitness_mean, d_fitness_old, population_size, ii);
+                    cuda_wrapper::gpu_set_fitness_squared_mean_wrapper(
+                            dim3(grid_size_set_stats), dim3(GPU_BLOCK_SIZE),
+                            d_fitness_squared_mean, d_fitness_old, population_size, ii);
                     CUDA_ASSERT(cudaDeviceSynchronize());
+                #endif
+                #ifdef USE_SYCL
+                    gpu_set_fitness_mean( q, grid_size_set_stats, d_fitness_mean_tmp, d_fitness_mean + ii, d_fitness_old, population_size );
+                    fitness_minimum[ii] = h_minimum_fitness[0];
+                    gpu_set_fitness_squared_mean_wrapper( q, grid_size_set_stats, d_fitness_squared_mean_tmp, d_fitness_squared_mean + ii, d_fitness_mean + ii, d_fitness_old, population_size );
+                    q.wait();
                 #endif
             #endif
             #ifndef USE_GPU
                 fitness_mean[ii] = mean(fitness_old, population_size);
                 fitness_minimum[ii] = minimum_fitness;
-                fitness_standard_deviation[ii] = standard_deviation(fitness_old,
-                        fitness_mean[ii], population_size);
+                fitness_squared_mean[ii] = squared_mean(fitness_old, population_size);
             #endif
         }
         
         //Stopping criteria
-        if (minimum_fitness <= stop_minimum_fitness) {
-            break;
-        }
+        #ifndef USE_SYCL
+            if (minimum_fitness <= stop_minimum_fitness) {
+                break;
+            }
+        #else
+            if (h_minimum_fitness[0] <= stop_minimum_fitness) {
+                break;
+            }
+        #endif
 
-
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            #ifdef USE_GPU
-                int grid_size_self_adapting_parameters = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                #ifdef USE_HIP
+        #ifdef USE_GPU
+            int grid_size_self_adapting_parameters = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            #ifdef USE_HIP
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                     hipLaunchKernelGGL(gpu_set_crossover_probabilities_new,
                             dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
                             d_rng_state, d_crossover_probabilities_new, d_crossover_probabilities_old, self_adapting_crossover_probability, population_size);
@@ -1665,21 +1990,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                             dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
                             d_rng_state + 4*population_size, d_differential_weights_new, d_differential_weights_old, self_adapting_differential_weight_probability, population_size);
                     HIP_ASSERT(hipDeviceSynchronize());
-                #endif
-                #ifdef USE_CUDA
-                    cuda_wrapper::gpu_set_crossover_probabilities_new_wrapper(
-                            dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), stream_array[0],
-                            d_rng_state, d_crossover_probabilities_new, d_crossover_probabilities_old, self_adapting_crossover_probability, population_size);
-                    cuda_wrapper::gpu_set_differential_weights_new_wrapper(
-                            dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
-                            d_rng_state + 4*population_size, d_differential_weights_new, d_differential_weights_old, self_adapting_differential_weight_probability, population_size);
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #endif
-            #endif
-        #else
-            #ifdef USE_GPU
-                int grid_size_self_adapting_parameters = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                #ifdef USE_HIP
+                #else
                     hipLaunchKernelGGL(gpu_set_crossover_probabilities_new,
                             dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
                             d_rng_state, d_crossover_probabilities_new_positive_frequency, d_crossover_probabilities_old_positive_frequency, self_adapting_crossover_probability, population_size);
@@ -1694,7 +2005,17 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                             d_rng_state + 4*population_size, d_differential_weights_new_negative_frequency, d_differential_weights_old_negative_frequency, self_adapting_differential_weight_probability, population_size);
                     HIP_ASSERT(hipDeviceSynchronize());
                 #endif
-                #ifdef USE_CUDA
+            #endif
+            #ifdef USE_CUDA
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                    cuda_wrapper::gpu_set_crossover_probabilities_new_wrapper(
+                            dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), stream_array[0],
+                            d_rng_state, d_crossover_probabilities_new, d_crossover_probabilities_old, self_adapting_crossover_probability, population_size);
+                    cuda_wrapper::gpu_set_differential_weights_new_wrapper(
+                            dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
+                            d_rng_state + 4*population_size, d_differential_weights_new, d_differential_weights_old, self_adapting_differential_weight_probability, population_size);
+                    CUDA_ASSERT(cudaDeviceSynchronize());
+                #else
                     cuda_wrapper::gpu_set_crossover_probabilities_new_wrapper(
                             dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), stream_array[0],
                             d_rng_state, d_crossover_probabilities_new_positive_frequency, d_crossover_probabilities_old_positive_frequency, self_adapting_crossover_probability, population_size);
@@ -1710,9 +2031,21 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaDeviceSynchronize());
                 #endif
             #endif
-        #endif
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            #ifndef USE_GPU
+            #ifdef USE_SYCL
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                    gpu_set_crossover_probabilities_new( q, grid_size_self_adapting_parametersd, d_rng_state, d_crossover_probabilities_new, d_crossover_probabilities_old, self_adapting_crossover_probability, population_size );
+                    gpu_set_differential_weights_new( q, grid_size_self_adapting_parameters, d_rng_state + 4*population_size, d_differential_weights_new, d_differential_weights_old, self_adapting_differential_weight_probability, population_size );
+                    q.wait();
+                #else
+                    gpu_set_crossover_probabilities_new( q, grid_size_self_adapting_parameters, d_rng_state, d_crossover_probabilities_new_positive_frequency, d_crossover_probabilities_old_positive_frequency, self_adapting_crossover_probability, population_size );
+                    gpu_set_differential_weights_new( q, grid_size_self_adapting_parameters, d_rng_state + 4*population_size, d_differential_weights_new_positive_frequency, d_differential_weights_old_positive_frequency, self_adapting_differential_weight_probability, population_size );
+                    gpu_set_crossover_probabilities_new( q, grid_size_self_adapting_parameters, d_rng_state, d_crossover_probabilities_new_negative_frequency, d_crossover_probabilities_old_negative_frequency, self_adapting_crossover_probability, population_size );
+                    gpu_set_differential_weights_new( q, grid_size_self_adapting_parameters, d_rng_state + 4*population_size, d_differential_weights_new_negative_frequency, d_differential_weights_old_negative_frequency, self_adapting_differential_weight_probability, population_size );
+                    q.wait();
+                #endif
+            #endif
+        #else
+            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                 //Set crossover probabilities and differential weights
                 for (int i=0; i<population_size; i++) {
                     if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_crossover_probability) {
@@ -1730,9 +2063,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                         differential_weights_new[i] = differential_weights_old[i];
                     }
                 }
-            #endif
-        #else
-            #ifndef USE_GPU
+            #else
                 //Set crossover probabilities and differential weights
                 for (int i=0; i<population_size; i++) {
                     if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_crossover_probability) {
@@ -1768,11 +2099,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
         #endif
 
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            #ifdef USE_GPU
-                int grid_size_set_mutant_indices = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                int grid_size_set_mutate_indices = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                #ifdef USE_HIP
+        #ifdef USE_GPU
+            int grid_size_set_mutant_indices = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            int grid_size_set_mutate_indices = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            #ifdef USE_HIP
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                     hipLaunchKernelGGL(gpu_set_mutant_indices,
                             dim3(grid_size_set_mutant_indices), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
                             d_rng_state, d_mutant_indices, population_size);
@@ -1780,32 +2111,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                             dim3(grid_size_set_mutate_indices), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
                             d_rng_state + 4*population_size, d_mutate_indices, d_crossover_probabilities_new, population_size, genome_size);
                     HIP_ASSERT(hipDeviceSynchronize());
-                #endif
-                #ifdef USE_CUDA
-                    cuda_wrapper::gpu_set_mutant_indices_wrapper(
-                            dim3(grid_size_set_mutant_indices), dim3(GPU_BLOCK_SIZE), stream_array[0],
-                            d_rng_state, d_mutant_indices, population_size);
-                    cuda_wrapper::gpu_set_mutate_indices_wrapper(
-                            dim3(grid_size_set_mutate_indices), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
-                            d_rng_state + 4*population_size, d_mutate_indices, d_crossover_probabilities_new, population_size, genome_size);
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #endif
-            #endif
-            #ifndef USE_GPU
-            //Set mutant population and indices 
-                for (int i=0; i<population_size; i++) {
-                    set_mutant_indices(rng, mutant_indices + 3*i, i, population_size);
-                    double crossover_rate = crossover_probabilities_new[i];
-                    for (int j=0; j<genome_size; j++) {
-                        mutate_indices[i*genome_size + j] = (xoshiro256p(rng) >> 11) * 0x1.0p-53 < crossover_rate;
-                    }
-                }
-            #endif
-        #else
-            #ifdef USE_GPU
-                int grid_size_set_mutant_indices = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                int grid_size_set_mutate_indices = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                #ifdef USE_HIP
+                #else
                     hipLaunchKernelGGL(gpu_set_mutant_indices,
                             dim3(grid_size_set_mutant_indices), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
                             d_rng_state, d_mutant_indices, population_size);
@@ -1817,7 +2123,17 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                             d_rng_state + 4*population_size, d_mutate_indices_negative_frequency, d_crossover_probabilities_new_negative_frequency, population_size, genome_size);
                     HIP_ASSERT(hipDeviceSynchronize());
                 #endif
-                #ifdef USE_CUDA
+            #endif
+            #ifdef USE_CUDA
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                    cuda_wrapper::gpu_set_mutant_indices_wrapper(
+                            dim3(grid_size_set_mutant_indices), dim3(GPU_BLOCK_SIZE), stream_array[0],
+                            d_rng_state, d_mutant_indices, population_size);
+                    cuda_wrapper::gpu_set_mutate_indices_wrapper(
+                            dim3(grid_size_set_mutate_indices), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
+                            d_rng_state + 4*population_size, d_mutate_indices, d_crossover_probabilities_new, population_size, genome_size);
+                    CUDA_ASSERT(cudaDeviceSynchronize());
+                #else
                     cuda_wrapper::gpu_set_mutant_indices_wrapper(
                             dim3(grid_size_set_mutant_indices), dim3(GPU_BLOCK_SIZE), stream_array[0],
                             d_rng_state, d_mutant_indices, population_size);
@@ -1830,8 +2146,30 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaDeviceSynchronize());
                 #endif
             #endif
-            #ifndef USE_GPU
-            //Set mutant population and indices 
+            #ifdef USE_SYCL
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                    gpu_set_mutant_indices( q, grid_size_set_mutant_indices, d_rng_state, d_mutant_indices, population_size );
+                    gpu_set_mutate_indices( q, grid_size_set_mutate_indices, d_rng_state + 4*population_size, d_mutate_indices, d_crossover_probabilities_new, population_size, genome_size );
+                    q.wait();
+                #else
+                    gpu_set_mutant_indices( q, grid_size_set_mutant_indices, d_rng_state, d_mutant_indices, population_size );
+                    gpu_set_mutate_indices( q, grid_size_set_mutate_indices, d_rng_state + 4*population_size, d_mutate_indices_positive_frequency, d_crossover_probabilities_new_positive_frequency, population_size, genome_size );
+                    gpu_set_mutate_indices( q, grid_size_set_mutate_indices, d_rng_state + 4*population_size, d_mutate_indices_negative_frequency, d_crossover_probabilities_new_negative_frequency, population_size, genome_size );
+                    q.wait();
+                #endif
+            #endif
+        #else
+            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                //Set mutant population and indices 
+                for (int i=0; i<population_size; i++) {
+                    set_mutant_indices(rng, mutant_indices + 3*i, i, population_size);
+                    double crossover_rate = crossover_probabilities_new[i];
+                    for (int j=0; j<genome_size; j++) {
+                        mutate_indices[i*genome_size + j] = (xoshiro256p(rng) >> 11) * 0x1.0p-53 < crossover_rate;
+                    }
+                }
+            #else
+                //Set mutant population and indices 
                 for (int i=0; i<population_size; i++) {
                     set_mutant_indices(rng, mutant_indices + 3*i, i, population_size);
                     double crossover_rate_positive_frequency = crossover_probabilities_new_positive_frequency[i];
@@ -1846,23 +2184,68 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
         #endif
 
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            #ifdef USE_GPU
-                int grid_size_set_population_new = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                #ifdef USE_HIP
+        #ifdef USE_GPU
+            int grid_size_set_population_new = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            #ifdef USE_HIP
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                     hipLaunchKernelGGL(gpu_set_population_new,
                             dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE), 0, 0,
                             d_population_new, d_population_old, d_mutant_indices, d_differential_weights_new, d_mutate_indices, population_size, genome_size);
                     HIP_ASSERT(hipDeviceSynchronize());
+                #else
+                    int grid_size_match_population_zero = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                    hipLaunchKernelGGL(gpu_set_population_new,
+                            dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
+                            d_population_new_positive_frequency, d_population_old_positive_frequency, d_mutant_indices, d_differential_weights_new_positive_frequency, d_mutate_indices_positive_frequency, population_size, genome_size);
+                    hipLaunchKernelGGL(gpu_set_population_new,
+                            dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
+                            d_population_new_negative_frequency, d_population_old_negative_frequency, d_mutant_indices, d_differential_weights_new_negative_frequency, d_mutate_indices_negative_frequency, population_size, genome_size);
+                    HIP_ASSERT(hipDeviceSynchronize());
+
+                    hipLaunchKernelGGL(gpu_match_population_zero,
+                            dim3(grid_size_match_population_zero), dim3(GPU_BLOCK_SIZE), 0, 0,
+                            d_population_new_negative_frequency, d_population_new_positive_frequency, population_size, genome_size);
+                    HIP_ASSERT(hipDeviceSynchronize());
                 #endif
-                #ifdef USE_CUDA
+            #endif
+            #ifdef USE_CUDA
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                     cuda_wrapper::gpu_set_population_new_wrapper(
                             dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE),
                             d_population_new, d_population_old, d_mutant_indices, d_differential_weights_new, d_mutate_indices, population_size, genome_size);
                     CUDA_ASSERT(cudaDeviceSynchronize());
+                #else
+                    int grid_size_match_population_zero = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                    cuda_wrapper::gpu_set_population_new_wrapper(
+                            dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE), stream_array[0],
+                            d_population_new_positive_frequency, d_population_old_positive_frequency, d_mutant_indices, d_differential_weights_new_positive_frequency, d_mutate_indices_positive_frequency, population_size, genome_size);
+                    cuda_wrapper::gpu_set_population_new_wrapper(
+                            dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
+                            d_population_new_negative_frequency, d_population_old_negative_frequency, d_mutant_indices, d_differential_weights_new_negative_frequency, d_mutate_indices_negative_frequency, population_size, genome_size);
+                    CUDA_ASSERT(cudaDeviceSynchronize());
+
+                    cuda_wrapper::gpu_match_population_zero(
+                            dim3(grid_size_match_population_zero), dim3(GPU_BLOCK_SIZE),
+                            d_population_new_negative_frequency, d_population_new_positive_frequency, population_size, genome_size);
+                    CUDA_ASSERT(cudaDeviceSynchronize());
                 #endif
             #endif
-            #ifndef USE_GPU
+            #ifdef USE_SYCL
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                    gpu_set_population_new( q, grid_size_set_population_new, d_population_new, d_population_old, d_mutant_indices, d_differential_weights_new, d_mutate_indices, population_size, genome_size );
+                    q.wait();
+                #else
+                    int grid_size_match_population_zero = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                    gpu_set_population_new(q, grid_size_set_population_new, d_population_new_positive_frequency, d_population_old_positive_frequency, d_mutant_indices, d_differential_weights_new_positive_frequency, d_mutate_indices_positive_frequency, population_size, genome_size);
+                    gpu_set_population_new(q, grid_size_set_population_new, d_population_new_negative_frequency, d_population_old_negative_frequency, d_mutant_indices, d_differential_weights_new_negative_frequency, d_mutate_indices_negative_frequency, population_size, genome_size);
+                    q.wait();
+
+                    gpu_match_population_zero(q, grid_size_match_population_zero, d_population_new_negative_frequency, d_population_new_positive_frequency, population_size, genome_size);
+                    q.wait();
+                #endif
+            #endif
+        #else
+            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                 for (int i=0; i<population_size; i++) {
                     double F = differential_weights_new[i];
                     int mutant_index1 = mutant_indices[3*i];
@@ -1880,41 +2263,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                         }
                     }
                 }
-            #endif
-        #else
-            #ifdef USE_GPU
-                int grid_size_set_population_new = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                int grid_size_match_population_zero = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                #ifdef USE_HIP
-                    hipLaunchKernelGGL(gpu_set_population_new,
-                            dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
-                            d_population_new_positive_frequency, d_population_old_positive_frequency, d_mutant_indices, d_differential_weights_new_positive_frequency, d_mutate_indices_positive_frequency, population_size, genome_size);
-                    hipLaunchKernelGGL(gpu_set_population_new,
-                            dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
-                            d_population_new_negative_frequency, d_population_old_negative_frequency, d_mutant_indices, d_differential_weights_new_negative_frequency, d_mutate_indices_negative_frequency, population_size, genome_size);
-                    HIP_ASSERT(hipDeviceSynchronize());
-
-                    hipLaunchKernelGGL(gpu_match_population_zero,
-                            dim3(grid_size_match_population_zero), dim3(GPU_BLOCK_SIZE), 0, 0,
-                            d_population_new_negative_frequency, d_population_new_positive_frequency, population_size, genome_size);
-                    HIP_ASSERT(hipDeviceSynchronize());
-                #endif
-                #ifdef USE_CUDA
-                    cuda_wrapper::gpu_set_population_new_wrapper(
-                            dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE), stream_array[0],
-                            d_population_new_positive_frequency, d_population_old_positive_frequency, d_mutant_indices, d_differential_weights_new_positive_frequency, d_mutate_indices_positive_frequency, population_size, genome_size);
-                    cuda_wrapper::gpu_set_population_new_wrapper(
-                            dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
-                            d_population_new_negative_frequency, d_population_old_negative_frequency, d_mutant_indices, d_differential_weights_new_negative_frequency, d_mutate_indices_negative_frequency, population_size, genome_size);
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-
-                    cuda_wrapper::gpu_match_population_zero(
-                            dim3(grid_size_match_population_zero), dim3(GPU_BLOCK_SIZE),
-                            d_population_new_negative_frequency, d_population_new_positive_frequency, population_size, genome_size);
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #endif
-            #endif
-            #ifndef USE_GPU
+            #else
                 for (int i=0; i<population_size; i++) {
                     double F_positive_frequency = differential_weights_new_positive_frequency[i];
                     double F_negative_frequency = differential_weights_new_negative_frequency[i];
@@ -1951,11 +2300,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
         // Normalization
         if (normalize) {
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                #ifdef USE_GPU
-                    int grid_size_set_normalization = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                    #ifdef USE_HIP
-                        HIP_ASSERT(hipMemset(d_normalization,0, bytes_normalization));
+            #ifdef USE_GPU
+                int grid_size_set_normalization = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                #ifdef USE_HIP
+                    HIP_ASSERT(hipMemset(d_normalization, 0, bytes_normalization));
+                    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                         for (int i=0; i<population_size; i++) {
                             int stream_idx = i % MAX_GPU_STREAMS;
                             hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
@@ -1967,9 +2316,31 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                         hipLaunchKernelGGL(gpu_normalize_population, dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE), 0, 0,
                                 d_population_new, d_normalization, zeroth_moment, population_size, genome_size); 
                         HIP_ASSERT(hipDeviceSynchronize());
+                    #else
+                        for (int i=0; i<population_size; i++) {
+                            int stream_idx = i % MAX_GPU_STREAMS;
+                            hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
+                                    dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                                    d_normalization, d_population_new_positive_frequency, d_normalization_term_positive_frequency, genome_size, i);
+                        }
+                        for (int i=0; i<population_size; i++) {
+                            int stream_idx = i % MAX_GPU_STREAMS;
+                            hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
+                                    dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                                    d_normalization, d_population_new_negative_frequency, d_normalization_term_negative_frequency, genome_size, i);
+                        }
+                        HIP_ASSERT(hipDeviceSynchronize());
+                        int grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+                        hipLaunchKernelGGL(gpu_normalize_population, dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE), 0, 0,
+                                d_population_new_positive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
+                        hipLaunchKernelGGL(gpu_normalize_population, dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE), 0, 0,
+                                d_population_new_negative_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
+                        HIP_ASSERT(hipDeviceSynchronize());
                     #endif
-                    #ifdef USE_CUDA
-                        CUDA_ASSERT(cudaMemset(d_normalization,0, bytes_normalization));
+                #endif
+                #ifdef USE_CUDA
+                    CUDA_ASSERT(cudaMemset(d_normalization, 0, bytes_normalization));
+                    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                         for (int i=0; i<population_size; i++) {
                             int stream_idx = i % MAX_GPU_STREAMS;
                             cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
@@ -1977,16 +2348,66 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                                     d_normalization, d_population_new, d_normalization_term, genome_size, i);
                         }
                         CUDA_ASSERT(cudaDeviceSynchronize());
+
                         int grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
                         cuda_wrapper::gpu_normalize_population_wrapper( dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE),
                                 d_population_new, d_normalization, zeroth_moment, population_size, genome_size); 
                         CUDA_ASSERT(cudaDeviceSynchronize());
+                    #else
+                        for (int i=0; i<population_size; i++) {
+                            int stream_idx = i % MAX_GPU_STREAMS;
+                            cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
+                                    dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                                    d_normalization, d_population_new_positive_frequency, d_normalization_term_positive_frequency, genome_size, i);
+                        }
+                        for (int i=0; i<population_size; i++) {
+                            int stream_idx = i % MAX_GPU_STREAMS;
+                            cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
+                                    dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                                    d_normalization, d_population_new_negative_frequency, d_normalization_term_negative_frequency, genome_size, i);
+                        }
+                        CUDA_ASSERT(cudaDeviceSynchronize());
+
+                        int grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+                        cuda_wrapper::gpu_normalize_population_wrapper( dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE),
+                                d_population_new_positive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
+                        cuda_wrapper::gpu_normalize_population_wrapper( dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE),
+                                d_population_new_negative_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
+                        CUDA_ASSERT(cudaDeviceSynchronize());
                     #endif
                 #endif
-                #ifndef USE_GPU
-                    for (int i=0; i<population_size; i++) {
-                        normalization[i] = 0.0;
-                    }
+                #ifdef USE_SYCL
+                    q.memset(d_normalization, 0, bytes_normalization).wait();
+                    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                        for (int i=0; i<population_size; i++) {
+                            gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_normalization, d_normalization_tmp + grid_size_set_normalization*i, d_normalization + i, d_normalization_term, d_population_new + genome_size*i, population_size, genome_size );
+                        }
+                        q.wait();
+
+                        int grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+                        gpu_normalize_population( q, grid_size_normalize_population, d_population_new, d_normalization, zeroth_moment, population_size, genome_size); 
+                        q.wait();
+                    #else
+                        for (int i=0; i<population_size; i++) {
+                            gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_normalization, d_normalization_tmp + grid_size_set_normalization*i, d_normalization + i, d_normalization_term_positive_frequency, d_population_new_positive_frequency + genome_size*i, population_size, genome_size );
+                        }
+                        q.wait();
+                        for (int i=0; i<population_size; i++) {
+                            gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_normalization, d_normalization_tmp + grid_size_set_normalization*i, d_normalization + i, d_normalization_term_negative_frequency, d_population_new_negative_frequency + genome_size*i, population_size, genome_size );
+                        }
+                        q.wait();
+
+                        int grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+                        gpu_normalize_population( q, grid_size_normalize_population, d_population_new_positive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
+                        gpu_normalize_population( q, grid_size_normalize_population, d_population_new_negative_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
+                        q.wait();
+                    #endif
+                #endif
+            #else
+                for (int i=0; i<population_size; i++) {
+                    normalization[i] = 0.0;
+                }
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                     matrix_multiply_MxN_by_Nx1(normalization, population_new,
                             normalization_term, population_size, genome_size);
                     for (int i=0; i<population_size; i++) {
@@ -1995,59 +2416,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                             population_new[i*genome_size + j] *= zeroth_moment/_norm;
                         }
                     }
-                #endif
-            #else
-                #ifdef USE_GPU
-                    int grid_size_set_normalization = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                    #ifdef USE_HIP
-                        HIP_ASSERT(hipMemset(d_normalization,0, bytes_normalization));
-                        for (int i=0; i<population_size; i++) {
-                            int stream_idx = i % MAX_GPU_STREAMS;
-                            hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
-                                    dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
-                                    d_normalization, d_population_new_positive_frequency, d_normalization_term_positive_frequency, genome_size, i);
-                        }
-                        for (int i=0; i<population_size; i++) {
-                            int stream_idx = i % MAX_GPU_STREAMS;
-                            hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
-                                    dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
-                                    d_normalization, d_population_new_negative_frequency, d_normalization_term_negative_frequency, genome_size, i);
-                        }
-                        HIP_ASSERT(hipDeviceSynchronize());
-                        int grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
-                        hipLaunchKernelGGL(gpu_normalize_population, dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
-                                d_population_new_positive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
-                        hipLaunchKernelGGL(gpu_normalize_population, dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
-                                d_population_new_negative_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
-                        HIP_ASSERT(hipDeviceSynchronize());
-                    #endif
-                    #ifdef USE_CUDA
-                        CUDA_ASSERT(cudaMemset(d_normalization,0, bytes_normalization));
-                        for (int i=0; i<population_size; i++) {
-                            int stream_idx = i % MAX_GPU_STREAMS;
-                            cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
-                                    dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                    d_normalization, d_population_new_positive_frequency, d_normalization_term_positive_frequency, genome_size, i);
-                        }
-                        for (int i=0; i<population_size; i++) {
-                            int stream_idx = i % MAX_GPU_STREAMS;
-                            cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
-                                    dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                    d_normalization, d_population_new_negative_frequency, d_normalization_term_negative_frequency, genome_size, i);
-                        }
-                        CUDA_ASSERT(cudaDeviceSynchronize());
-                        int grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
-                        cuda_wrapper::gpu_normalize_population_wrapper( dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE), stream_array[0],
-                                d_population_new_positive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
-                        cuda_wrapper::gpu_normalize_population_wrapper( dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
-                                d_population_new_negative_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
-                        CUDA_ASSERT(cudaDeviceSynchronize());
-                    #endif
-                #endif
-                #ifndef USE_GPU
-                    for (int i=0; i<population_size; i++) {
-                        normalization[i] = 0.0;
-                    }
+                #else
                     matrix_multiply_MxN_by_Nx1(normalization, population_new_positive_frequency,
                             normalization_term_positive_frequency, population_size, genome_size);
                     matrix_multiply_MxN_by_Nx1(normalization, population_new_negative_frequency,
@@ -2065,10 +2434,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
         //Rejection
         //Set model isf for new population
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            #ifdef USE_GPU
-                int grid_size_set_isf_model = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                #ifdef USE_HIP
+        
+        #ifdef USE_GPU
+            int grid_size_set_isf_model = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            #ifdef USE_HIP
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                     HIP_ASSERT(hipMemset(d_isf_model,0, bytes_isf_model));
                     for (int i=0; i<population_size*number_of_timeslices; i++) {
                         int stream_idx = i % MAX_GPU_STREAMS;
@@ -2077,8 +2447,25 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                                 d_isf_model, d_isf_term, d_population_new, number_of_timeslices, genome_size, i);
                     }
                     HIP_ASSERT(hipDeviceSynchronize());
+                #else
+                    HIP_ASSERT(hipMemset(d_isf_model,0, bytes_isf_model));
+                    for (int i=0; i<population_size*number_of_timeslices; i++) {
+                        int stream_idx = i % MAX_GPU_STREAMS;
+                        hipLaunchKernelGGL(gpu_matrix_multiply_LxM_by_MxN,
+                                dim3(grid_size_set_isf_model), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                                d_isf_model, d_isf_term_positive_frequency, d_population_new_positive_frequency, number_of_timeslices, genome_size, i);
+                    }
+                    for (int i=0; i<population_size*number_of_timeslices; i++) {
+                        int stream_idx = i % MAX_GPU_STREAMS;
+                        hipLaunchKernelGGL(gpu_matrix_multiply_LxM_by_MxN,
+                                dim3(grid_size_set_isf_model), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                                d_isf_model, d_isf_term_negative_frequency, d_population_new_negative_frequency, number_of_timeslices, genome_size, i);
+                    }
+                    HIP_ASSERT(hipDeviceSynchronize());
                 #endif
-                #ifdef USE_CUDA
+            #endif
+            #ifdef USE_CUDA
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                     CUDA_ASSERT(cudaMemset(d_isf_model,0, bytes_isf_model));
                     for (int i=0; i<population_size*number_of_timeslices; i++) {
                         int stream_idx = i % MAX_GPU_STREAMS;
@@ -2087,55 +2474,56 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                                 d_isf_model, d_isf_term, d_population_new, number_of_timeslices, genome_size, i);
                     }
                     CUDA_ASSERT(cudaDeviceSynchronize());
+                #else
+                    CUDA_ASSERT(cudaMemset(d_isf_model,0, bytes_isf_model));
+                    for (int i=0; i<population_size*number_of_timeslices; i++) {
+                        int stream_idx = i % MAX_GPU_STREAMS;
+                        cuda_wrapper::gpu_matrix_multiply_LxM_by_MxN_wrapper(
+                                dim3(grid_size_set_isf_model), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                                d_isf_model, d_isf_term_positive_frequency, d_population_new_positive_frequency, number_of_timeslices, genome_size, i);
+                    }
+                    for (int i=0; i<population_size*number_of_timeslices; i++) {
+                        int stream_idx = i % MAX_GPU_STREAMS;
+                        cuda_wrapper::gpu_matrix_multiply_LxM_by_MxN_wrapper(
+                                dim3(grid_size_set_isf_model), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                                d_isf_model, d_isf_term_negative_frequency, d_population_new_negative_frequency, number_of_timeslices, genome_size, i);
+                    }
+                    CUDA_ASSERT(cudaDeviceSynchronize());
                 #endif
             #endif
-            #ifndef USE_GPU
-                for (int i=0; i<population_size*number_of_timeslices; i++) {
-                    isf_model[i] = 0.0;
-                }
-                matrix_multiply_LxM_by_MxN(isf_model, isf_term, population_new,
-                        number_of_timeslices, genome_size, population_size);
+            #ifdef USE_SYCL
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                    q.memset(d_isf_model, 0, bytes_isf_model).wait();
+                    for (int i=0; i<population_size*number_of_timeslices; i++) {
+                        size_t _i = i/population_size;
+                        size_t _j = i - _i*population_size;
+                        gpu_matrix_multiply_LxM_by_MxN_wrapper( q, grid_size_set_isf_model, d_isf_model_tmp + grid_size_set_normalization*i, d_isf_model + i, d_population_new + genome_size*_j, d_isf_term + genome_size*_i, number_of_timeslices, genome_size );
+                    }
+                    q.wait();
+                #else
+                    q.memset(d_isf_model, 0, bytes_isf_model).wait();
+                    for (int i=0; i<population_size*number_of_timeslices; i++) {
+                        size_t _i = i/population_size;
+                        size_t _j = i - _i*population_size;
+                        gpu_matrix_multiply_LxM_by_MxN_wrapper( q, grid_size_set_isf_model, d_isf_model_tmp + grid_size_set_normalization*i, d_isf_model + i, d_population_new_positive_frequency + genome_size*_j, d_isf_term_positive_frequency + genome_size*_i, number_of_timeslices, genome_size );
+                    }
+                    q.wait();
+                    for (int i=0; i<population_size*number_of_timeslices; i++) {
+                        size_t _i = i/population_size;
+                        size_t _j = i - _i*population_size;
+                        gpu_matrix_multiply_LxM_by_MxN_wrapper( q, grid_size_set_isf_model, d_isf_model_tmp + grid_size_set_normalization*i, d_isf_model + i, d_population_new_negative_frequency + genome_size*_j, d_isf_term_negative_frequency + genome_size*_i, number_of_timeslices, genome_size );
+                    }
+                    q.wait();
+                #endif
             #endif
         #else
-            #ifdef USE_GPU
-                int grid_size_set_isf_model = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                #ifdef USE_HIP
-                    HIP_ASSERT(hipMemset(d_isf_model,0, bytes_isf_model));
-                    for (int i=0; i<population_size*number_of_timeslices; i++) {
-                        int stream_idx = i % MAX_GPU_STREAMS;
-                        hipLaunchKernelGGL(gpu_matrix_multiply_LxM_by_MxN,
-                                dim3(grid_size_set_isf_model), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
-                                d_isf_model, d_isf_term_positive_frequency, d_population_new_positive_frequency, number_of_timeslices, genome_size, i);
-                    }
-                    for (int i=0; i<population_size*number_of_timeslices; i++) {
-                        int stream_idx = i % MAX_GPU_STREAMS;
-                        hipLaunchKernelGGL(gpu_matrix_multiply_LxM_by_MxN,
-                                dim3(grid_size_set_isf_model), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
-                                d_isf_model, d_isf_term_negative_frequency, d_population_new_negative_frequency, number_of_timeslices, genome_size, i);
-                    }
-                    HIP_ASSERT(hipDeviceSynchronize());
-                #endif
-                #ifdef USE_CUDA
-                    CUDA_ASSERT(cudaMemset(d_isf_model,0, bytes_isf_model));
-                    for (int i=0; i<population_size*number_of_timeslices; i++) {
-                        int stream_idx = i % MAX_GPU_STREAMS;
-                        cuda_wrapper::gpu_matrix_multiply_LxM_by_MxN_wrapper(
-                                dim3(grid_size_set_isf_model), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                d_isf_model, d_isf_term_positive_frequency, d_population_new_positive_frequency, number_of_timeslices, genome_size, i);
-                    }
-                    for (int i=0; i<population_size*number_of_timeslices; i++) {
-                        int stream_idx = i % MAX_GPU_STREAMS;
-                        cuda_wrapper::gpu_matrix_multiply_LxM_by_MxN_wrapper(
-                                dim3(grid_size_set_isf_model), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                d_isf_model, d_isf_term_negative_frequency, d_population_new_negative_frequency, number_of_timeslices, genome_size, i);
-                    }
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #endif
-            #endif
-            #ifndef USE_GPU
-                for (int i=0; i<population_size*number_of_timeslices; i++) {
-                    isf_model[i] = 0.0;
-                }
+            for (int i=0; i<population_size*number_of_timeslices; i++) {
+                isf_model[i] = 0.0;
+            }
+            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                matrix_multiply_LxM_by_MxN(isf_model, isf_term, population_new,
+                        number_of_timeslices, genome_size, population_size);
+            #else
                 matrix_multiply_LxM_by_MxN(isf_model, isf_term_positive_frequency, population_new_positive_frequency,
                         number_of_timeslices, genome_size, population_size);
                 matrix_multiply_LxM_by_MxN(isf_model, isf_term_negative_frequency, population_new_negative_frequency,
@@ -2167,25 +2555,29 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                                     d_inverse_first_moments, d_isf_model, d_inverse_first_moments_term, number_of_timeslices, i);
                         }
                         CUDA_ASSERT(cudaDeviceSynchronize());
+                    #ifdef USE_SYCL
+                        q.memset(d_inverse_first_moments, 0, bytes_inverse_first_moments).wait();
+                        for (int i=0; i<population_size; i++) {
+                            gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_inverse_first_moments, d_inverse_first_moments_tmp + grid_size_set_inverse_first_moments*i, d_inverse_first_moments + i, d_inverse_first_moments_term, d_isf_model + number_of_timeslices*i, population_size, number_of_timeslices );
+                        }
+                        q.wait();
                     #endif
-                #endif
-                #ifndef USE_GPU
+                #else
                     for (int i=0; i<population_size; i++) {
                         inverse_first_moments[i] = 0.0;
                     }
                     matrix_multiply_MxN_by_Nx1(inverse_first_moments, isf_model,
-                            inverse_first_moments_term, population_size,
-                            number_of_timeslices);
+                            inverse_first_moments_term, population_size, number_of_timeslices);
                 #endif
             #else
                 //FIXME inverse first moment not implemented for single particle fermionic spectral function
             #endif
         }
         if (use_first_moment) {
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                #ifdef USE_GPU
-                    int grid_size_set_first_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                    #ifdef USE_HIP
+            #ifdef USE_GPU
+                int grid_size_set_first_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                #ifdef USE_HIP
+                    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                         HIP_ASSERT(hipMemset(d_first_moments,0, bytes_first_moments));
                         for (int i=0; i<population_size; i++) {
                             int stream_idx = i % MAX_GPU_STREAMS;
@@ -2194,8 +2586,25 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                                     d_first_moments, d_population_new, d_first_moments_term, genome_size, i);
                         }
                         HIP_ASSERT(hipDeviceSynchronize());
+                    #else
+                        HIP_ASSERT(hipMemset(d_first_moments,0, bytes_first_moments));
+                        for (int i=0; i<population_size; i++) {
+                            int stream_idx = i % MAX_GPU_STREAMS;
+                            hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
+                                    dim3(grid_size_set_first_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                                    d_first_moments, d_population_new_positive_frequency, d_first_moments_term_positive_frequency, genome_size, i);
+                        }
+                        for (int i=0; i<population_size; i++) {
+                            int stream_idx = i % MAX_GPU_STREAMS;
+                            hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
+                                    dim3(grid_size_set_first_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                                    d_first_moments, d_population_new_negative_frequency, d_first_moments_term_negative_frequency, genome_size, i);
+                        }
+                        HIP_ASSERT(hipDeviceSynchronize());
                     #endif
-                    #ifdef USE_CUDA
+                #endif
+                #ifdef USE_CUDA
+                    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                         CUDA_ASSERT(cudaMemset(d_first_moments,0, bytes_first_moments));
                         for (int i=0; i<population_size; i++) {
                             int stream_idx = i % MAX_GPU_STREAMS;
@@ -2204,55 +2613,49 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                                     d_first_moments, d_population_new, d_first_moments_term, genome_size, i);
                         }
                         CUDA_ASSERT(cudaDeviceSynchronize());
+                    #else
+                        CUDA_ASSERT(cudaMemset(d_first_moments,0, bytes_first_moments));
+                        for (int i=0; i<population_size; i++) {
+                            int stream_idx = i % MAX_GPU_STREAMS;
+                            cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
+                                    dim3(grid_size_set_first_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                                    d_first_moments, d_population_new_positive_frequency, d_first_moments_term_positive_frequency, genome_size, i);
+                        }
+                        for (int i=0; i<population_size; i++) {
+                            int stream_idx = i % MAX_GPU_STREAMS;
+                            cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
+                                    dim3(grid_size_set_first_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                                    d_first_moments, d_population_new_negative_frequency, d_first_moments_term_negative_frequency, genome_size, i);
+                        }
+                        CUDA_ASSERT(cudaDeviceSynchronize());
                     #endif
                 #endif
-                #ifndef USE_GPU
-                    for (int i=0; i<population_size; i++) {
-                        first_moments[i] = 0.0;
-                    }
-                    matrix_multiply_MxN_by_Nx1(first_moments, population_new,
-                            first_moments_term, population_size, genome_size);
+                #ifdef USE_SYCL
+                    q.memset(d_first_moments, 0, bytes_first_moments).wait();
+                    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                        for (int i=0; i<population_size; i++) {
+                            gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_first_moments, d_first_moments_tmp + grid_size_set_first_moments*i, d_first_moments + i, d_first_moments_term, d_population_new + genome_size*i, population_size, genome_size );
+                        }
+                        q.wait();
+                    #else
+                        for (int i=0; i<population_size; i++) {
+                            gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_first_moments, d_first_moments_tmp + grid_size_set_first_moments*i, d_first_moments + i, d_first_moments_term_positive_frequency, d_population_new_positive_frequency + genome_size*i, population_size, genome_size );
+                        }
+                        q.wait();
+                        for (int i=0; i<population_size; i++) {
+                            gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_first_moments, d_first_moments_tmp + grid_size_set_first_moments*i, d_first_moments + i, d_first_moments_term_negative_frequency, d_population_new_negative_frequency + genome_size*i, population_size, genome_size );
+                        }
+                        q.wait();
+                    #endif
                 #endif
             #else
-                #ifdef USE_GPU
-                    int grid_size_set_first_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                    #ifdef USE_HIP
-                        HIP_ASSERT(hipMemset(d_first_moments,0, bytes_first_moments));
-                        for (int i=0; i<population_size; i++) {
-                            int stream_idx = i % MAX_GPU_STREAMS;
-                            hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
-                                    dim3(grid_size_set_first_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
-                                    d_first_moments, d_population_new_positive_frequency, d_first_moments_term_positive_frequency, genome_size, i);
-                        }
-                        for (int i=0; i<population_size; i++) {
-                            int stream_idx = i % MAX_GPU_STREAMS;
-                            hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
-                                    dim3(grid_size_set_first_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
-                                    d_first_moments, d_population_new_negative_frequency, d_first_moments_term_negative_frequency, genome_size, i);
-                        }
-                        HIP_ASSERT(hipDeviceSynchronize());
-                    #endif
-                    #ifdef USE_CUDA
-                        CUDA_ASSERT(cudaMemset(d_first_moments,0, bytes_first_moments));
-                        for (int i=0; i<population_size; i++) {
-                            int stream_idx = i % MAX_GPU_STREAMS;
-                            cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
-                                    dim3(grid_size_set_first_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                    d_first_moments, d_population_new_positive_frequency, d_first_moments_term_positive_frequency, genome_size, i);
-                        }
-                        for (int i=0; i<population_size; i++) {
-                            int stream_idx = i % MAX_GPU_STREAMS;
-                            cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
-                                    dim3(grid_size_set_first_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                    d_first_moments, d_population_new_negative_frequency, d_first_moments_term_negative_frequency, genome_size, i);
-                        }
-                        CUDA_ASSERT(cudaDeviceSynchronize());
-                    #endif
-                #endif
-                #ifndef USE_GPU
-                    for (int i=0; i<population_size; i++) {
-                        first_moments[i] = 0.0;
-                    }
+                for (int i=0; i<population_size; i++) {
+                    first_moments[i] = 0.0;
+                }
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                    matrix_multiply_MxN_by_Nx1(first_moments, population_new,
+                            first_moments_term, population_size, genome_size);
+                #else
                     matrix_multiply_MxN_by_Nx1(first_moments, population_new_positive_frequency,
                             first_moments_term_positive_frequency, population_size, genome_size);
                     matrix_multiply_MxN_by_Nx1(first_moments, population_new_negative_frequency,
@@ -2261,10 +2664,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
         }
         if (use_third_moment) {
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                #ifdef USE_GPU
-                    int grid_size_set_third_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                    #ifdef USE_HIP
+            #ifdef USE_GPU
+                int grid_size_set_third_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                #ifdef USE_HIP
+                    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                         HIP_ASSERT(hipMemset(d_third_moments,0, bytes_third_moments));
                         for (int i=0; i<population_size; i++) {
                             int stream_idx = i % MAX_GPU_STREAMS;
@@ -2273,8 +2676,25 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                                     d_third_moments, d_population_new, d_third_moments_term, genome_size, i);
                         }
                         HIP_ASSERT(hipDeviceSynchronize());
+                    #else
+                        HIP_ASSERT(hipMemset(d_third_moments,0, bytes_third_moments));
+                        for (int i=0; i<population_size; i++) {
+                            int stream_idx = i % MAX_GPU_STREAMS;
+                            hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
+                                    dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                                    d_third_moments, d_population_new_positive_frequency, d_third_moments_term_positive_frequency, genome_size, i);
+                        }
+                        for (int i=0; i<population_size; i++) {
+                            int stream_idx = i % MAX_GPU_STREAMS;
+                            hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
+                                    dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
+                                    d_third_moments, d_population_new_negative_frequency, d_third_moments_term_negative_frequency, genome_size, i);
+                        }
+                        HIP_ASSERT(hipDeviceSynchronize());
                     #endif
-                    #ifdef USE_CUDA
+                #endif
+                #ifdef USE_CUDA
+                    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                         CUDA_ASSERT(cudaMemset(d_third_moments,0, bytes_third_moments));
                         for (int i=0; i<population_size; i++) {
                             int stream_idx = i % MAX_GPU_STREAMS;
@@ -2283,55 +2703,49 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                                     d_third_moments, d_population_new, d_third_moments_term, genome_size, i);
                         }
                         CUDA_ASSERT(cudaDeviceSynchronize());
+                    #else
+                        CUDA_ASSERT(cudaMemset(d_third_moments,0, bytes_third_moments));
+                        for (int i=0; i<population_size; i++) {
+                            int stream_idx = i % MAX_GPU_STREAMS;
+                            cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
+                                    dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                                    d_third_moments, d_population_new_positive_frequency, d_third_moments_term_positive_frequency, genome_size, i);
+                        }
+                        for (int i=0; i<population_size; i++) {
+                            int stream_idx = i % MAX_GPU_STREAMS;
+                            cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
+                                    dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
+                                    d_third_moments, d_population_new_negative_frequency, d_third_moments_term_negative_frequency, genome_size, i);
+                        }
+                        CUDA_ASSERT(cudaDeviceSynchronize());
                     #endif
                 #endif
-                #ifndef USE_GPU
-                    for (int i=0; i<population_size; i++) {
-                        third_moments[i] = 0.0;
-                    }
-                    matrix_multiply_MxN_by_Nx1(third_moments, population_new,
-                            third_moments_term, population_size, genome_size);
+                #ifdef USE_SYCL
+                    q.memset(d_third_moments, 0, bytes_third_moments).wait();
+                    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                        for (int i=0; i<population_size; i++) {
+                            gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_third_moments, d_third_moments_tmp + grid_size_set_third_moments*i, d_third_moments + i, d_third_moments_term, d_population_new + genome_size*i, population_size, genome_size );
+                        }
+                        q.wait();
+                    #else
+                        for (int i=0; i<population_size; i++) {
+                            gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_third_moments, d_third_moments_tmp + grid_size_set_third_moments*i, d_third_moments + i, d_third_moments_term_positive_frequency, d_population_new_positive_frequency + genome_size*i, population_size, genome_size );
+                        }
+                        q.wait();
+                        for (int i=0; i<population_size; i++) {
+                            gpu_matrix_multiply_MxN_by_Nx1(q, grid_size_set_third_moments, d_third_moments_tmp + grid_size_set_third_moments*i, d_third_moments + i, d_third_moments_term_negative_frequency, d_population_new_negative_frequency + genome_size*i, population_size, genome_size );
+                        }
+                        q.wait();
+                    #endif
                 #endif
             #else
-                #ifdef USE_GPU
-                    int grid_size_set_third_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                    #ifdef USE_HIP
-                        HIP_ASSERT(hipMemset(d_third_moments,0, bytes_third_moments));
-                        for (int i=0; i<population_size; i++) {
-                            int stream_idx = i % MAX_GPU_STREAMS;
-                            hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
-                                    dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
-                                    d_third_moments, d_population_new_positive_frequency, d_third_moments_term_positive_frequency, genome_size, i);
-                        }
-                        for (int i=0; i<population_size; i++) {
-                            int stream_idx = i % MAX_GPU_STREAMS;
-                            hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
-                                    dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
-                                    d_third_moments, d_population_new_negative_frequency, d_third_moments_term_negative_frequency, genome_size, i);
-                        }
-                        HIP_ASSERT(hipDeviceSynchronize());
-                    #endif
-                    #ifdef USE_CUDA
-                        CUDA_ASSERT(cudaMemset(d_third_moments,0, bytes_third_moments));
-                        for (int i=0; i<population_size; i++) {
-                            int stream_idx = i % MAX_GPU_STREAMS;
-                            cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
-                                    dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                    d_third_moments, d_population_new_positive_frequency, d_third_moments_term_positive_frequency, genome_size, i);
-                        }
-                        for (int i=0; i<population_size; i++) {
-                            int stream_idx = i % MAX_GPU_STREAMS;
-                            cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
-                                    dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                    d_third_moments, d_population_new_negative_frequency, d_third_moments_term_negative_frequency, genome_size, i);
-                        }
-                        CUDA_ASSERT(cudaDeviceSynchronize());
-                    #endif
-                #endif
-                #ifndef USE_GPU
-                    for (int i=0; i<population_size; i++) {
-                        third_moments[i] = 0.0;
-                    }
+                for (int i=0; i<population_size; i++) {
+                    third_moments[i] = 0.0;
+                }
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                    matrix_multiply_MxN_by_Nx1(third_moments, population_new,
+                            third_moments_term, population_size, genome_size);
+                #else
                     matrix_multiply_MxN_by_Nx1(third_moments, population_new_positive_frequency,
                             third_moments_term_positive_frequency, population_size, genome_size);
                     matrix_multiply_MxN_by_Nx1(third_moments, population_new_negative_frequency,
@@ -2375,47 +2789,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                             d_fitness_new, d_third_moments, third_moment, third_moment_error, population_size);
                     HIP_ASSERT(hipDeviceSynchronize());
                 }
-
-                //Rejection step
-                int grid_size_set_rejection_indices = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                int grid_size_swap_control_parameters = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                int grid_size_swap_populations = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                hipLaunchKernelGGL(gpu_set_rejection_indices,
-                        dim3(grid_size_set_rejection_indices), dim3(GPU_BLOCK_SIZE), 0, 0,
-                        d_rejection_indices, d_fitness_new, d_fitness_old, population_size);
-                HIP_ASSERT(hipDeviceSynchronize());
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    hipLaunchKernelGGL(gpu_swap_control_parameters,
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
-                            d_crossover_probabilities_old, d_crossover_probabilities_new, d_rejection_indices, population_size);
-                    hipLaunchKernelGGL(gpu_swap_control_parameters,
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
-                            d_differential_weights_old, d_differential_weights_new, d_rejection_indices, population_size);
-                    hipLaunchKernelGGL(gpu_swap_populations,
-                            dim3(grid_size_swap_populations), dim3(GPU_BLOCK_SIZE), 0, stream_array[2 % MAX_GPU_STREAMS],
-                            d_population_old, d_population_new, d_rejection_indices, population_size, genome_size);
-                #else
-                    hipLaunchKernelGGL(gpu_swap_control_parameters,
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
-                            d_crossover_probabilities_old_positive_frequency, d_crossover_probabilities_new_positive_frequency, d_rejection_indices, population_size);
-                    hipLaunchKernelGGL(gpu_swap_control_parameters,
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
-                            d_differential_weights_old_positive_frequency, d_differential_weights_new_positive_frequency, d_rejection_indices, population_size);
-                    hipLaunchKernelGGL(gpu_swap_populations,
-                            dim3(grid_size_swap_populations), dim3(GPU_BLOCK_SIZE), 0, stream_array[2 % MAX_GPU_STREAMS],
-                            d_population_old_positive_frequency, d_population_new_positive_frequency, d_rejection_indices, population_size, genome_size);
-
-                    hipLaunchKernelGGL(gpu_swap_control_parameters,
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[3 % MAX_GPU_STREAMS],
-                            d_crossover_probabilities_old_negative_frequency, d_crossover_probabilities_new_negative_frequency, d_rejection_indices, population_size);
-                    hipLaunchKernelGGL(gpu_swap_control_parameters,
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[4 % MAX_GPU_STREAMS],
-                            d_differential_weights_old_negative_frequency, d_differential_weights_new_negative_frequency, d_rejection_indices, population_size);
-                    hipLaunchKernelGGL(gpu_swap_populations,
-                            dim3(grid_size_swap_populations), dim3(GPU_BLOCK_SIZE), 0, stream_array[5 % MAX_GPU_STREAMS],
-                            d_population_old_negative_frequency, d_population_new_negative_frequency, d_rejection_indices, population_size, genome_size);
-                #endif
-                HIP_ASSERT(hipDeviceSynchronize());
             #endif
             #ifdef USE_CUDA
                 CUDA_ASSERT(cudaMemset(d_fitness_new,0, bytes_fitness_new));
@@ -2448,11 +2821,80 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                             d_fitness_new, d_third_moments, third_moment, third_moment_error, population_size);
                     CUDA_ASSERT(cudaDeviceSynchronize());
                 }
+            #endif
+            #ifdef USE_SYCL
+                q.memset(d_fitness_new, 0, bytes_fitness_new).wait();
+                for (int i=0; i<population_size; i++) {
+                    int stream_idx = i % MAX_GPU_STREAMS;
+                    gpu_set_fitness(q, grid_size_set_fitness, d_fitness_tmp + grid_size_set_fitness*i, d_fitness_new + i, d_isf, d_isf_model + number_of_timeslices*i, d_isf_error, number_of_timeslices);
+                }
+                q.wait();
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                    if (use_inverse_first_moment) {
+                        gpu_set_fitness_moments_reduced_chi_squared(q, grid_size_set_fitness_moments, d_fitness_new, d_inverse_first_moments, inverse_first_moment, inverse_first_moment_error, population_size);
+                        q.wait();
+                    }
+                #else
+                    //FIXME inverse first moment not implemented for single particle fermionic spectral function
+                #endif
+                if (use_first_moment) {
+                    gpu_set_fitness_moments_reduced_chi_squared(q, grid_size_set_fitness_moments, d_fitness_new, d_first_moments, first_moment, first_moment_error, population_size);
+                    q.wait();
+                }
+                if (use_third_moment) {
+                    gpu_set_fitness_moments_reduced_chi_squared(q, grid_size_set_fitness_moments, d_fitness_new, d_third_moments, third_moment, third_moment_error, population_size);
+                    q.wait();
+                }
+            #endif
+        #else
+            // Fitness set in rejection step
+        #endif
 
-                //Rejection step
-                int grid_size_set_rejection_indices = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                int grid_size_swap_control_parameters = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                int grid_size_swap_populations = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+        //Rejection step
+        #ifdef USE_GPU
+            int grid_size_set_rejection_indices = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            int grid_size_swap_control_parameters = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            int grid_size_swap_populations = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            #ifdef USE_HIP
+                hipLaunchKernelGGL(gpu_set_rejection_indices,
+                        dim3(grid_size_set_rejection_indices), dim3(GPU_BLOCK_SIZE), 0, 0,
+                        d_rejection_indices, d_fitness_new, d_fitness_old, population_size);
+                HIP_ASSERT(hipDeviceSynchronize());
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                    hipLaunchKernelGGL(gpu_swap_control_parameters,
+                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
+                            d_crossover_probabilities_old, d_crossover_probabilities_new, d_rejection_indices, population_size);
+                    hipLaunchKernelGGL(gpu_swap_control_parameters,
+                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
+                            d_differential_weights_old, d_differential_weights_new, d_rejection_indices, population_size);
+                    hipLaunchKernelGGL(gpu_swap_populations,
+                            dim3(grid_size_swap_populations), dim3(GPU_BLOCK_SIZE), 0, stream_array[2 % MAX_GPU_STREAMS],
+                            d_population_old, d_population_new, d_rejection_indices, population_size, genome_size);
+                    HIP_ASSERT(hipDeviceSynchronize());
+                #else
+                    hipLaunchKernelGGL(gpu_swap_control_parameters,
+                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
+                            d_crossover_probabilities_old_positive_frequency, d_crossover_probabilities_new_positive_frequency, d_rejection_indices, population_size);
+                    hipLaunchKernelGGL(gpu_swap_control_parameters,
+                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
+                            d_differential_weights_old_positive_frequency, d_differential_weights_new_positive_frequency, d_rejection_indices, population_size);
+                    hipLaunchKernelGGL(gpu_swap_populations,
+                            dim3(grid_size_swap_populations), dim3(GPU_BLOCK_SIZE), 0, stream_array[2 % MAX_GPU_STREAMS],
+                            d_population_old_positive_frequency, d_population_new_positive_frequency, d_rejection_indices, population_size, genome_size);
+
+                    hipLaunchKernelGGL(gpu_swap_control_parameters,
+                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[3 % MAX_GPU_STREAMS],
+                            d_crossover_probabilities_old_negative_frequency, d_crossover_probabilities_new_negative_frequency, d_rejection_indices, population_size);
+                    hipLaunchKernelGGL(gpu_swap_control_parameters,
+                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[4 % MAX_GPU_STREAMS],
+                            d_differential_weights_old_negative_frequency, d_differential_weights_new_negative_frequency, d_rejection_indices, population_size);
+                    hipLaunchKernelGGL(gpu_swap_populations,
+                            dim3(grid_size_swap_populations), dim3(GPU_BLOCK_SIZE), 0, stream_array[5 % MAX_GPU_STREAMS],
+                            d_population_old_negative_frequency, d_population_new_negative_frequency, d_rejection_indices, population_size, genome_size);
+                    HIP_ASSERT(hipDeviceSynchronize());
+                #endif
+            #endif
+            #ifdef USE_CUDA
                 cuda_wrapper::gpu_set_rejection_indices_wrapper(
                         dim3(grid_size_set_rejection_indices), dim3(GPU_BLOCK_SIZE),
                         d_rejection_indices, d_fitness_new, d_fitness_old, population_size);
@@ -2467,6 +2909,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     cuda_wrapper::gpu_swap_populations_wrapper(
                             dim3(grid_size_swap_populations), dim3(GPU_BLOCK_SIZE), stream_array[2 % MAX_GPU_STREAMS],
                             d_population_old, d_population_new, d_rejection_indices, population_size, genome_size);
+                    CUDA_ASSERT(cudaDeviceSynchronize());
                 #else
                     cuda_wrapper::gpu_swap_control_parameters_wrapper(
                             dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), stream_array[0],
@@ -2487,11 +2930,29 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     cuda_wrapper::gpu_swap_populations_wrapper(
                             dim3(grid_size_swap_populations), dim3(GPU_BLOCK_SIZE), stream_array[5 % MAX_GPU_STREAMS],
                             d_population_old_negative_frequency, d_population_new_negative_frequency, d_rejection_indices, population_size, genome_size);
+                    CUDA_ASSERT(cudaDeviceSynchronize());
                 #endif
-                CUDA_ASSERT(cudaDeviceSynchronize());
             #endif
-        #endif
-        #ifndef USE_GPU
+            #ifdef USE_SYCL
+                gpu_set_rejection_indices( q, grid_size_set_rejection_indices, d_rejection_indices, d_fitness_new, d_fitness_old, population_size );
+                q.wait();
+                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                    gpu_swap_control_parameters( q, grid_size_swap_control_parameters, d_crossover_probabilities_old, d_crossover_probabilities_new, d_rejection_indices, population_size );
+                    gpu_swap_control_parameters( q, grid_size_swap_control_parameters, d_differential_weights_old, d_differential_weights_new, d_rejection_indices, population_size );
+                    gpu_swap_populations( q, grid_size_swap_populations, d_population_old, d_population_new, d_rejection_indices, population_size, genome_size );
+                    q.wait();
+                #else
+                    gpu_swap_control_parameters( q, grid_size_swap_control_parameters, d_crossover_probabilities_old_positive_frequency, d_crossover_probabilities_new_positive_frequency, d_rejection_indices, population_size );
+                    gpu_swap_control_parameters( q, grid_size_swap_control_parameters, d_differential_weights_old_positive_frequency, d_differential_weights_new_positive_frequency, d_rejection_indices, population_size );
+                    gpu_swap_populations( q, grid_size_swap_populations, d_population_old_positive_frequency, d_population_new_positive_frequency, d_rejection_indices, population_size, genome_size );
+
+                    gpu_swap_control_parameters( q, grid_size_swap_control_parameters, d_crossover_probabilities_old_negative_frequency, d_crossover_probabilities_new_negative_frequency, d_rejection_indices, population_size );
+                    gpu_swap_control_parameters( q, grid_size_swap_control_parameters, d_differential_weights_old_negative_frequency, d_differential_weights_new_negative_frequency, d_rejection_indices, population_size );
+                    gpu_swap_populations( q, grid_size_swap_populations, d_population_old_negative_frequency, d_population_new_negative_frequency, d_rejection_indices, population_size, genome_size );
+                    q.wait();
+                #endif
+            #endif
+        #else
             for (int i=0; i<population_size; i++) {
                 double _fitness = reduced_chi_square_statistic(isf,
                         isf_model + i*number_of_timeslices, isf_error,
@@ -2535,7 +2996,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
     //Transfer data from gpu to host
     #ifdef USE_GPU
-        int grid_size_set_fitness_standard_deviation_sqrt = (generation + 1 + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
         #ifdef USE_HIP
             HIP_ASSERT(hipDeviceSynchronize());
             HIP_ASSERT(hipMemcpy(fitness_old, d_fitness_old, bytes_fitness_old, hipMemcpyDeviceToHost));
@@ -2546,13 +3006,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 HIP_ASSERT(hipMemcpy(population_old_negative_frequency, d_population_old_negative_frequency, bytes_population, hipMemcpyDeviceToHost));
             #endif
             if (track_stats) {
-                hipLaunchKernelGGL(gpu_set_fitness_standard_deviation_sqrt,
-                        dim3(grid_size_set_fitness_standard_deviation_sqrt), dim3(GPU_BLOCK_SIZE), 0, 0,
-                        d_fitness_standard_deviation, generation + 1);
-                HIP_ASSERT(hipDeviceSynchronize());
                 HIP_ASSERT(hipMemcpy(fitness_mean, d_fitness_mean, bytes_fitness_mean, hipMemcpyDeviceToHost));
                 HIP_ASSERT(hipMemcpy(fitness_minimum, d_fitness_minimum, bytes_fitness_minimum, hipMemcpyDeviceToHost));
-                HIP_ASSERT(hipMemcpy(fitness_standard_deviation, d_fitness_standard_deviation, bytes_fitness_standard_deviation, hipMemcpyDeviceToHost));
+                HIP_ASSERT(hipMemcpy(fitness_squared_mean, d_fitness_squared_mean, bytes_fitness_squared_mean, hipMemcpyDeviceToHost));
             }
         #endif
         #ifdef USE_CUDA
@@ -2565,18 +3021,29 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMemcpy(population_old_negative_frequency, d_population_old_negative_frequency, bytes_population, cudaMemcpyDeviceToHost));
             #endif
             if (track_stats) {
-                cuda_wrapper::gpu_set_fitness_standard_deviation_sqrt_wrapper(
-                        dim3(grid_size_set_fitness_standard_deviation_sqrt), dim3(GPU_BLOCK_SIZE),
-                        d_fitness_standard_deviation, generation + 1);
-                CUDA_ASSERT(cudaDeviceSynchronize());
                 CUDA_ASSERT(cudaMemcpy(fitness_mean, d_fitness_mean, bytes_fitness_mean, cudaMemcpyDeviceToHost));
                 CUDA_ASSERT(cudaMemcpy(fitness_minimum, d_fitness_minimum, bytes_fitness_minimum, cudaMemcpyDeviceToHost));
-                CUDA_ASSERT(cudaMemcpy(fitness_standard_deviation, d_fitness_standard_deviation, bytes_fitness_standard_deviation, cudaMemcpyDeviceToHost));
+                CUDA_ASSERT(cudaMemcpy(fitness_squared_mean, d_fitness_squared_mean, bytes_fitness_squared_mean, cudaMemcpyDeviceToHost));
             }
+        #endif
+        #ifdef USE_SYCL
+            q.memcpy(fitness_old, d_fitness_old, bytes_fitness_old);
+            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+                q.memcpy(population_old, d_population_old, bytes_population);
+            #else
+                q.memcpy(population_old_positive_frequency, d_population_old_positive_frequency, bytes_population);
+                q.memcpy(population_old_negative_frequency, d_population_old_negative_frequency, bytes_population);
+            #endif
+            if (track_stats) {
+                q.memcpy(fitness_mean, d_fitness_mean, bytes_fitness_mean);
+                q.memcpy(fitness_minimum, d_fitness_minimum, bytes_fitness_minimum);
+                q.memcpy(fitness_squared_mean, d_fitness_squared_mean, bytes_fitness_squared_mean);
+            }
+            q.wait();
         #endif
     #endif
 
-    std::tie(minimum_fitness_idx,minimum_fitness) = argmin_and_min(fitness_old,population_size);
+    std::tie(minimum_fitness_idx, minimum_fitness) = argmin_and_min(fitness_old, population_size);
 
     double * best_dsf;
     double * best_frequency;
@@ -2635,8 +3102,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         if (track_stats) {
             fitness_mean[generation] = mean(fitness_old, population_size);
             fitness_minimum[generation] = minimum_fitness;
-            fitness_standard_deviation[generation] = standard_deviation(fitness_old,
-                    fitness_mean[generation], population_size);
+            fitness_squared_mean[generation] = squared_mean(fitness_old, population_size);
         }
     }
 
@@ -2669,17 +3135,17 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #endif
     fs::path fitness_mean_filename;
     fs::path fitness_minimum_filename;
-    fs::path fitness_standard_deviation_filename;
+    fs::path fitness_squared_mean_filename;
     if (track_stats) {
         std::string fitness_mean_filename_str = string_format("%s_stats_fitness-mean_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
         std::string fitness_minimum_filename_str = string_format("%s_stats_fitness-minimum_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
-        std::string fitness_standard_deviation_filename_str = string_format("%s_stats_fitness-standard-deviation_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
+        std::string fitness_squared_mean_filename_str = string_format("%s_stats_fitness-squared-mean_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
         fs::path fitness_mean_filename = save_directory / fitness_mean_filename_str;
         fs::path fitness_minimum_filename = save_directory / fitness_minimum_filename_str;
-        fs::path fitness_standard_deviation_filename = save_directory / fitness_standard_deviation_filename_str;
+        fs::path fitness_squared_mean_filename = save_directory / fitness_squared_mean_filename_str;
         write_array(fitness_mean_filename, fitness_mean, generation + 1);
         write_array(fitness_minimum_filename, fitness_minimum, generation + 1);
-        write_array(fitness_standard_deviation_filename, fitness_standard_deviation, generation + 1);
+        write_array(fitness_squared_mean_filename, fitness_squared_mean, generation + 1);
     }
 
     //Write to log file
@@ -2734,7 +3200,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     if (track_stats) {
         log_ofs << "fitness_mean_filename: " << fitness_mean_filename << std::endl;
         log_ofs << "fitness_minimum_filename: " << fitness_minimum_filename << std::endl;
-        log_ofs << "fitness_standard_deviation_filename: " << fitness_standard_deviation_filename << std::endl;
+        log_ofs << "fitness_squared_mean_filename: " << fitness_squared_mean_filename << std::endl;
     }
     log_ofs.close();
 
@@ -2768,7 +3234,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         if (track_stats) {
             free(fitness_mean);
             free(fitness_minimum);
-            free(fitness_standard_deviation);
+            free(fitness_squared_mean);
         }
         free(mutate_indices);
         free(mutant_indices);
@@ -2814,7 +3280,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         if (track_stats) {
             free(fitness_mean);
             free(fitness_minimum);
-            free(fitness_standard_deviation);
+            free(fitness_squared_mean);
         }
         free(mutate_indices_positive_frequency);
         free(mutate_indices_negative_frequency);
@@ -2859,7 +3325,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 if (track_stats) {
                     HIP_ASSERT(hipFree(d_fitness_mean));
                     HIP_ASSERT(hipFree(d_fitness_minimum));
-                    HIP_ASSERT(hipFree(d_fitness_standard_deviation));
+                    HIP_ASSERT(hipFree(d_fitness_squared_mean));
                 }
                 HIP_ASSERT(hipFree(d_mutate_indices));
                 HIP_ASSERT(hipFree(d_rejection_indices));
@@ -2899,13 +3365,59 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 if (track_stats) {
                     CUDA_ASSERT(cudaFree(d_fitness_mean));
                     CUDA_ASSERT(cudaFree(d_fitness_minimum));
-                    CUDA_ASSERT(cudaFree(d_fitness_standard_deviation));
+                    CUDA_ASSERT(cudaFree(d_fitness_squared_mean));
                 }
                 CUDA_ASSERT(cudaFree(d_mutate_indices));
                 CUDA_ASSERT(cudaFree(d_rejection_indices));
                 CUDA_ASSERT(cudaFree(d_mutant_indices));
                 CUDA_ASSERT(cudaFree(d_minimum_fitness));
                 CUDA_ASSERT(cudaFree(d_rng_state));
+            #endif
+            #ifdef USE_SYCL
+                sycl::free(d_isf, q);
+                sycl::free(d_isf_error, q);
+                sycl::free(d_isf_term, q);
+                sycl::free(d_population_old, q);
+                sycl::free(d_population_new, q);
+                sycl::free(d_fitness_old, q);
+                sycl::free(d_fitness_new, q);
+                if (normalize) {
+                    sycl::free(d_normalization_term, q);
+                    sycl::free(d_normalization, q);
+                    sycl::free(d_normalization_tmp, q);
+                }
+                if (use_first_moment) {
+                    sycl::free(d_first_moments_term, q);
+                    sycl::free(d_first_moments, q);
+                    sycl::free(d_first_moments_tmp, q);
+                }
+                if (use_third_moment) {
+                    sycl::free(d_third_moments_term, q);
+                    sycl::free(d_third_moments, q);
+                    sycl::free(d_third_moments_tmp, q);
+                }
+                sycl::free(d_isf_model, q);
+                sycl::free(d_isf_model_tmp, q);
+                if (use_inverse_first_moment) {
+                    sycl::free(d_inverse_first_moments_term, q);
+                    sycl::free(d_inverse_first_moments, q);
+                }
+                sycl::free(d_crossover_probabilities_old, q);
+                sycl::free(d_crossover_probabilities_new, q);
+                sycl::free(d_differential_weights_old, q);
+                sycl::free(d_differential_weights_new, q);
+                if (track_stats) {
+                    sycl::free(d_fitness_mean, q);
+                    sycl::free(d_fitness_mean_tmp, q);
+                    sycl::free(d_fitness_minimum, q);
+                    sycl::free(d_fitness_squared_mean, q);
+                    sycl::free(d_fitness_squared_mean_tmp, q);
+                }
+                sycl::free(d_mutate_indices, q);
+                sycl::free(d_rejection_indices, q);
+                sycl::free(d_mutant_indices, q);
+                sycl::free(d_minimum_fitness, q);
+                sycl::free(d_rng_state, q);
             #endif
             // Destroy Streams
             for (int i = 0; i < MAX_GPU_STREAMS; i++) {
@@ -2964,7 +3476,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 if (track_stats) {
                     HIP_ASSERT(hipFree(d_fitness_mean));
                     HIP_ASSERT(hipFree(d_fitness_minimum));
-                    HIP_ASSERT(hipFree(d_fitness_standard_deviation));
+                    HIP_ASSERT(hipFree(d_fitness_squared_mean));
                 }
                 HIP_ASSERT(hipFree(d_mutate_indices_positive_frequency));
                 HIP_ASSERT(hipFree(d_mutate_indices_negative_frequency));
@@ -3016,7 +3528,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 if (track_stats) {
                     CUDA_ASSERT(cudaFree(d_fitness_mean));
                     CUDA_ASSERT(cudaFree(d_fitness_minimum));
-                    CUDA_ASSERT(cudaFree(d_fitness_standard_deviation));
+                    CUDA_ASSERT(cudaFree(d_fitness_squared_mean));
                 }
                 CUDA_ASSERT(cudaFree(d_mutate_indices_positive_frequency));
                 CUDA_ASSERT(cudaFree(d_mutate_indices_negative_frequency));
@@ -3024,6 +3536,64 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaFree(d_mutant_indices));
                 CUDA_ASSERT(cudaFree(d_minimum_fitness));
                 CUDA_ASSERT(cudaFree(d_rng_state));
+            #endif
+            #ifdef USE_SYCL
+                sycl::free(d_isf, q);
+                sycl::free(d_isf_error, q);
+                sycl::free(d_isf_term_positive_frequency, q);
+                sycl::free(d_isf_term_negative_frequency, q);
+                sycl::free(d_population_old_positive_frequency, q);
+                sycl::free(d_population_old_negative_frequency, q);
+                sycl::free(d_population_new_positive_frequency, q);
+                sycl::free(d_population_new_negative_frequency, q);
+                sycl::free(d_fitness_old, q);
+                sycl::free(d_fitness_new, q);
+                if (normalize) {
+                    sycl::free(d_normalization_term_positive_frequency, q);
+                    sycl::free(d_normalization_term_negative_frequency, q);
+                    sycl::free(d_normalization, q);
+                    sycl::free(d_normalization_tmp, q);
+                }
+                if (use_first_moment) {
+                    sycl::free(d_first_moments_term_positive_frequency, q);
+                    sycl::free(d_first_moments_term_negative_frequency, q);
+                    sycl::free(d_first_moments, q);
+                    sycl::free(d_first_moments_tmp, q);
+                }
+                if (use_third_moment) {
+                    sycl::free(d_third_moments_term_positive_frequency, q);
+                    sycl::free(d_third_moments_term_negative_frequency, q);
+                    sycl::free(d_third_moments, q);
+                    sycl::free(d_third_moments_tmp, q);
+                }
+                sycl::free(d_isf_model, q);
+                sycl::free(d_isf_model_tmp, q);
+                if (use_inverse_first_moment) {
+                    sycl::free(d_inverse_first_moments_term_positive_frequency, q);
+                    sycl::free(d_inverse_first_moments_term_negative_frequency, q);
+                    sycl::free(d_inverse_first_moments, q);
+                }
+                sycl::free(d_crossover_probabilities_old_positive_frequency, q);
+                sycl::free(d_crossover_probabilities_old_negative_frequency, q);
+                sycl::free(d_crossover_probabilities_new_positive_frequency, q);
+                sycl::free(d_crossover_probabilities_new_negative_frequency, q);
+                sycl::free(d_differential_weights_old_positive_frequency, q);
+                sycl::free(d_differential_weights_old_negative_frequency, q);
+                sycl::free(d_differential_weights_new_positive_frequency, q);
+                sycl::free(d_differential_weights_new_negative_frequency, q);
+                if (track_stats) {
+                    sycl::free(d_fitness_mean, q);
+                    sycl::free(d_fitness_mean_tmp, q);
+                    sycl::free(d_fitness_minimum, q);
+                    sycl::free(d_fitness_squared_mean, q);
+                    sycl::free(d_fitness_squared_mean_tmp, q);
+                }
+                sycl::free(d_mutate_indices_positive_frequency, q);
+                sycl::free(d_mutate_indices_negative_frequency, q);
+                sycl::free(d_rejection_indices, q);
+                sycl::free(d_mutant_indices, q);
+                sycl::free(d_minimum_fitness, q);
+                sycl::free(d_rng_state, q);
             #endif
             // Destroy Streams
             for (int i = 0; i < MAX_GPU_STREAMS; i++) {
@@ -3209,11 +3779,20 @@ int main (int argc, char *argv[]) {
     fs::create_directory(save_directory);
 
     //Write to log file
-    #ifndef ZEROT
-        std::string deac_prefix = "deac";
-    #endif
-    #ifdef ZEROT
-        std::string deac_prefix = "deac-zT";
+    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+        #ifndef ZEROT
+            std::string deac_prefix = "deac";
+        #endif
+        #ifdef ZEROT
+            std::string deac_prefix = "deac-zT";
+        #endif
+    #else
+        #ifndef ZEROT
+            std::string deac_prefix = "deac-spfsf";
+        #endif
+        #ifdef ZEROT
+            std::string deac_prefix = "deac-zT-spfsf";
+        #endif
     #endif
     std::string log_filename_str = string_format("%s_log_%s.dat",deac_prefix.c_str(),uuid_str.c_str());
     fs::path log_filename = save_directory / log_filename_str;

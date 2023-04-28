@@ -33,11 +33,8 @@ namespace cuda_wrapper {
     void gpu_set_fitness_mean_wrapper(dim3, dim3, double *, double *, int, int);
     void gpu_set_fitness_mean_wrapper(dim3, dim3, cudaStream_t, double *, double *, int, int);
     
-    void gpu_set_fitness_standard_deviation_wrapper(dim3, dim3, double *, double *, double *, int, int);
-    void gpu_set_fitness_standard_deviation_wrapper(dim3, dim3, cudaStream_t, double *, double *, double *, int, int);
-    
-    void gpu_set_fitness_standard_deviation_sqrt_wrapper(dim3, dim3, double *, int);
-    void gpu_set_fitness_standard_deviation_sqrt_wrapper(dim3, dim3, cudaStream_t, double *, int);
+    void gpu_set_fitness_squared_mean_wrapper(dim3, dim3, double *, double *, int, int);
+    void gpu_set_fitness_squared_mean_wrapper(dim3, dim3, cudaStream_t, double *, double *, int, int);
     
     void gpu_set_population_new_wrapper(dim3, dim3, double *, double *, int *, double *, bool *, int, int);
     void gpu_set_population_new_wrapper(dim3, dim3, cudaStream_t, double *, double *, int *, double *, bool *, int, int);

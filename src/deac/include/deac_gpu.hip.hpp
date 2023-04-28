@@ -385,11 +385,11 @@ void gpu_set_fitness_mean(double * fitness_mean, double * fitness, int populatio
 }
 
 __global__
-void gpu_set_fitness_standard_deviation(double * fitness_standard_deviation, double * fitness_mean, double * fitness, int population_size, int idx) {
+void gpu_set_fitness_squared_mean(double * fitness_squared_mean, double * fitness, int population_size, int idx) {
     __shared__ double _f[GPU_BLOCK_SIZE];
     int i = hipBlockDim_x * hipBlockIdx_x + hipThreadIdx_x;
     if (i < population_size) {
-        _f[hipThreadIdx_x] = pow(fitness[i] - fitness_mean[idx],2);
+        _f[hipThreadIdx_x] = fitness[i]*fitness[i];
     } else {
         _f[hipThreadIdx_x] = 0.0;
     }
@@ -436,15 +436,7 @@ void gpu_set_fitness_standard_deviation(double * fitness_standard_deviation, dou
         // again reduce those results i.e.
         // tmp_f[hipBlockIdx_x] = _f[0];
         // ^-- reduce on this, but this code may get too bloated
-        atomicAdd(&fitness_mean[idx], _f[0]/population_size);
-    }
-}
-
-__global__
-void gpu_set_fitness_standard_deviation_sqrt(double * fitness_standard_deviation, int max_generations) {
-    int i = hipBlockDim_x * hipBlockIdx_x + hipThreadIdx_x;
-    if (i < max_generations) {
-        fitness_standard_deviation[i] = sqrt(fitness_standard_deviation[i]);
+        atomicAdd(&fitness_squared_mean[idx], _f[0]/population_size);
     }
 }
 
@@ -460,10 +452,11 @@ void gpu_set_population_new(double * population_new, double * population_old, in
         int mutant_index3 = mutant_indices[3*_i + 2];
         bool mutate = mutate_indices[i];
         if (mutate) {
-            population_new[i] = fabs( 
-                population_old[mutant_index1*genome_size + _j] + F*(
-                        population_old[mutant_index2*genome_size + _j] -
-                        population_old[mutant_index3*genome_size + _j]));
+            #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
+                population_new[i] = population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]);
+            #else
+                population_new[i] = fabs( population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]) );
+            #endif
         } else {
             population_new[i] = population_old[i];
         }
