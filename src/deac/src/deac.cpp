@@ -3227,11 +3227,12 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             free(third_moments);
         }
         free(isf_model);
-        if (use_inverse_first_moment) {
-            free(inverse_first_moments_term_positive_frequency);
-            free(inverse_first_moments_term_negative_frequency);
-            free(inverse_first_moments);
-        }
+        //FIXME need to add inverse first moment functionality
+        //if (use_inverse_first_moment) {
+        //    free(inverse_first_moments_term_positive_frequency);
+        //    free(inverse_first_moments_term_negative_frequency);
+        //    free(inverse_first_moments);
+        //}
         free(crossover_probabilities_old_positive_frequency);
         free(crossover_probabilities_old_negative_frequency);
         free(crossover_probabilities_new_positive_frequency);
@@ -3422,11 +3423,12 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     HIP_ASSERT(hipFree(d_third_moments));
                 }
                 HIP_ASSERT(hipFree(d_isf_model));
-                if (use_inverse_first_moment) {
-                    HIP_ASSERT(hipFree(d_inverse_first_moments_term_positive_frequency));
-                    HIP_ASSERT(hipFree(d_inverse_first_moments_term_negative_frequency));
-                    HIP_ASSERT(hipFree(d_inverse_first_moments));
-                }
+                //FIXME need to add inverse first moment functionality
+                //if (use_inverse_first_moment) {
+                //    HIP_ASSERT(hipFree(d_inverse_first_moments_term_positive_frequency));
+                //    HIP_ASSERT(hipFree(d_inverse_first_moments_term_negative_frequency));
+                //    HIP_ASSERT(hipFree(d_inverse_first_moments));
+                //}
                 HIP_ASSERT(hipFree(d_crossover_probabilities_old_positive_frequency));
                 HIP_ASSERT(hipFree(d_crossover_probabilities_old_negative_frequency));
                 HIP_ASSERT(hipFree(d_crossover_probabilities_new_positive_frequency));
@@ -3474,11 +3476,12 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaFree(d_third_moments));
                 }
                 CUDA_ASSERT(cudaFree(d_isf_model));
-                if (use_inverse_first_moment) {
-                    CUDA_ASSERT(cudaFree(d_inverse_first_moments_term_positive_frequency));
-                    CUDA_ASSERT(cudaFree(d_inverse_first_moments_term_negative_frequency));
-                    CUDA_ASSERT(cudaFree(d_inverse_first_moments));
-                }
+                //FIXME need to add inverse first moment functionality
+                //if (use_inverse_first_moment) {
+                //    CUDA_ASSERT(cudaFree(d_inverse_first_moments_term_positive_frequency));
+                //    CUDA_ASSERT(cudaFree(d_inverse_first_moments_term_negative_frequency));
+                //    CUDA_ASSERT(cudaFree(d_inverse_first_moments));
+                //}
                 CUDA_ASSERT(cudaFree(d_crossover_probabilities_old_positive_frequency));
                 CUDA_ASSERT(cudaFree(d_crossover_probabilities_old_negative_frequency));
                 CUDA_ASSERT(cudaFree(d_crossover_probabilities_new_positive_frequency));
@@ -3530,11 +3533,12 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 }
                 sycl::free(d_isf_model, q);
                 sycl::free(d_isf_model_tmp, q);
-                if (use_inverse_first_moment) {
-                    sycl::free(d_inverse_first_moments_term_positive_frequency, q);
-                    sycl::free(d_inverse_first_moments_term_negative_frequency, q);
-                    sycl::free(d_inverse_first_moments, q);
-                }
+                //FIXME need to add inverse first moment functionality
+                //if (use_inverse_first_moment) {
+                //    sycl::free(d_inverse_first_moments_term_positive_frequency, q);
+                //    sycl::free(d_inverse_first_moments_term_negative_frequency, q);
+                //    sycl::free(d_inverse_first_moments, q);
+                //}
                 sycl::free(d_crossover_probabilities_old_positive_frequency, q);
                 sycl::free(d_crossover_probabilities_old_negative_frequency, q);
                 sycl::free(d_crossover_probabilities_new_positive_frequency, q);
