@@ -1390,6 +1390,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                                 d_inverse_first_moments, d_isf_model, d_inverse_first_moments_term, number_of_timeslices, i);
                     }
                     CUDA_ASSERT(cudaDeviceSynchronize());
+                #endif
                 #ifdef USE_SYCL
                     q.memset(d_inverse_first_moments, 0, bytes_inverse_first_moments).wait();
                     auto d_inverse_first_moments_tmp = sycl::malloc_device< double >( grid_size_set_inverse_first_moments*population_size, q ); 
