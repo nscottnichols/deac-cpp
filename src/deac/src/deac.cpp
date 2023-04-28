@@ -1283,7 +1283,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 for (size_t i=0; i<population_size*number_of_timeslices; i++) {
                     size_t _i = i/population_size;
                     size_t _j = i - _i*population_size;
-                    gpu_matrix_multiply_LxM_by_MxN_wrapper( q, grid_size_set_isf_model, d_isf_model_tmp + grid_size_set_normalization*i, d_isf_model + i, d_population_old + genome_size*_j, d_isf_term + genome_size*_i, number_of_timeslices, genome_size );
+                    gpu_matrix_multiply_LxM_by_MxN_wrapper( q, grid_size_set_isf_model, d_isf_model_tmp + grid_size_set_isf_model*i, d_isf_model + i, d_population_old + genome_size*_j, d_isf_term + genome_size*_i, number_of_timeslices, genome_size );
                 }
                 q.wait();
             #else
@@ -1291,13 +1291,13 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 for (size_t i=0; i<population_size*number_of_timeslices; i++) {
                     size_t _i = i/population_size;
                     size_t _j = i - _i*population_size;
-                    gpu_matrix_multiply_LxM_by_MxN_wrapper( q, grid_size_set_isf_model, d_isf_model_tmp + grid_size_set_normalization*i, d_isf_model + i, d_population_old_positive_frequency + genome_size*_j, d_isf_term_positive_frequency + genome_size*_i, number_of_timeslices, genome_size );
+                    gpu_matrix_multiply_LxM_by_MxN_wrapper( q, grid_size_set_isf_model, d_isf_model_tmp + grid_size_set_isf_model*i, d_isf_model + i, d_population_old_positive_frequency + genome_size*_j, d_isf_term_positive_frequency + genome_size*_i, number_of_timeslices, genome_size );
                 }
                 q.wait();
                 for (size_t i=0; i<population_size*number_of_timeslices; i++) {
                     size_t _i = i/population_size;
                     size_t _j = i - _i*population_size;
-                    gpu_matrix_multiply_LxM_by_MxN_wrapper( q, grid_size_set_isf_model, d_isf_model_tmp + grid_size_set_normalization*i, d_isf_model + i, d_population_old_negative_frequency + genome_size*_j, d_isf_term_negative_frequency + genome_size*_i, number_of_timeslices, genome_size );
+                    gpu_matrix_multiply_LxM_by_MxN_wrapper( q, grid_size_set_isf_model, d_isf_model_tmp + grid_size_set_isf_model*i, d_isf_model + i, d_population_old_negative_frequency + genome_size*_j, d_isf_term_negative_frequency + genome_size*_i, number_of_timeslices, genome_size );
                 }
                 q.wait();
             #endif
@@ -1516,7 +1516,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 //FIXME inverse first moment not implemented for single particle fermionic spectral function
             #endif
             if (use_first_moment) {
-                gpu_set_fitness_moments_reduced_chi_squared(q, grid_size_set_fitness_moments, d_fitness_old, d_first_moments, first_moment, first_moment_error, population_size);
+                gpu_set_fitness_moments_chi_squared(q, grid_size_set_fitness_moments, d_fitness_old, d_first_moments, first_moment, population_size);
                 q.wait();
             }
             if (use_third_moment) {
@@ -2837,7 +2837,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     //FIXME inverse first moment not implemented for single particle fermionic spectral function
                 #endif
                 if (use_first_moment) {
-                    gpu_set_fitness_moments_reduced_chi_squared(q, grid_size_set_fitness_moments, d_fitness_new, d_first_moments, first_moment, first_moment_error, population_size);
+                    gpu_set_fitness_moments_chi_squared(q, grid_size_set_fitness_moments, d_fitness_new, d_first_moments, first_moment, population_size);
                     q.wait();
                 }
                 if (use_third_moment) {
