@@ -315,8 +315,8 @@ void gpu_set_fitness(sycl::queue q, size_t grid_size, double* fitness_tmp, doubl
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                 size_t global_idx = index.get_global_id(0);
                 size_t local_idx = index.get_local_id(0);
-                if (global_idx < number_of_time_slices) {
-                    _f[local_idx] = sycl::pown((isf[i] - isf_model[i])/isf_error[i], 2);
+                if (global_idx < number_of_timeslices) {
+                    _f[local_idx] = sycl::pown((isf[global_idx] - isf_model[global_idx])/isf_error[global_idx], 2);
                 } else {
                     _f[local_idx] = 0.0;
                 }
@@ -438,8 +438,8 @@ void gpu_set_fitness_mean(sycl::queue q, double* fitness_mean_tmp double* fitnes
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                 size_t global_idx = index.get_global_id(0);
                 size_t local_idx = index.get_local_id(0);
-                if (global_idx < number_of_time_slices) {
-                    _fm[local_idx] = fitness[i];
+                if (global_idx < population_size) {
+                    _fm[local_idx] = fitness[global_idx];
                 } else {
                     _fm[local_idx] = 0.0;
                 }
@@ -497,8 +497,8 @@ void gpu_set_fitness_squared_mean(sycl::queue q, double* fitness_squared_mean_tm
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                 size_t global_idx = index.get_global_id(0);
                 size_t local_idx = index.get_local_id(0);
-                if (global_idx < number_of_time_slices) {
-                    _fsm[local_idx] = fitness[i]*fitness[i];
+                if (global_idx < population_size) {
+                    _fsm[local_idx] = fitness[global_idx]*fitness[global_idx];
                 } else {
                     _fsm[local_idx] = 0.0;
                 }
