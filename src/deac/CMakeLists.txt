@@ -1,23 +1,10 @@
 cmake_minimum_required(VERSION 3.18.0)
 
-if (USE_CUDA)
-    project(deac.e LANGUAGES CXX CUDA)
-    add_definitions(-D USE_CUDA=${USE_CUDA})
-else()
-    project(deac.e LANGUAGES CXX)
-endif()
+project(deac.e LANGUAGES CXX)
 
 # Set c++ standard
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_STANDARD_REQUIRED TRUE)
-if (USE_CUDA)
-    set(CMAKE_CUDA_STANDARD 14)
-    set(CMAKE_CUDA_STANDARD_REQUIRED TRUE)
-    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-        set(CMAKE_CUDA_ARCHITECTURES 70)
-    endif()
-    message("CUDA architectures set to ${CMAKE_CUDA_ARCHITECTURES}.")
-endif()
 
 # Check for static build
 if(STATIC)
@@ -33,37 +20,53 @@ if (USE_TCB_SPAN)
     add_definitions(-D USE_TCB_SPAN=${USE_TCB_SPAN})
 endif()
 
-# Check for GPU acceleration
-if (GPU_BLOCK_SIZE)
-    add_definitions(-D GPU_BLOCK_SIZE=${GPU_BLOCK_SIZE})
-    if (NOT MAX_GPU_STREAMS)
-        set(MAX_GPU_STREAMS 1)
+# Enable GPU support
+set(GPU_BACKEND "none" CACHE STRING "Enable gpu accleration: cuda, hip, sycl, none (default: none)")
+if (NOT ${GPU_BACKEND} STREQUAL "none")
+    add_definitions(-D USE_GPU=1)
+    if (${GPU_BACKEND} STREQUAL "cuda")
+        enable_language(CUDA)
+        add_definitions(-D USE_CUDA=1)
+        set(CMAKE_CUDA_STANDARD 14)
+        set(CMAKE_CUDA_STANDARD_REQUIRED TRUE)
+        if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+            set(CMAKE_CUDA_ARCHITECTURES 70)
+        endif()
+        message("CUDA architectures set to ${CMAKE_CUDA_ARCHITECTURES}.")
+        include_directories("${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}")
+    elseif(${GPU_BACKEND} STREQUAL "hip")
+        add_definitions(-D USE_HIP=1)
+    elseif(${GPU_BACKEND} STREQUAL "sycl")
+        add_definitions(-D USE_SYCL=1)
+    else()
+        message(FATAL_ERROR "Unknown GPU implementation '${GPU_BACKEND}',"
+            " please select from 'cuda, hip, sycl, none'.")
     endif()
-    add_definitions(-D MAX_GPU_STREAMS=${MAX_GPU_STREAMS})
 endif()
+
+# Set number of threads per block
+set(GPU_BLOCK_SIZE "1024" CACHE STRING "Set gpu block size (default: 1024)")
+add_definitions(-D GPU_BLOCK_SIZE=${GPU_BLOCK_SIZE})
+
+# Set sub-group size (warpsize/wavefront/SIMD lanes/etc.)
+set(SUB_GROUP_SIZE "32" CACHE STRING "Set sub-group size (default: 32)")
+add_definitions(-D SUB_GROUP_SIZE=${SUB_GROUP_SIZE})
+
+# Set number of GPU streams
+set(MAX_GPU_STREAMS "1" CACHE STRING "Set number of gpu streams (default: 1)")
+add_definitions(-D MAX_GPU_STREAMS=${MAX_GPU_STREAMS})
 
 # Set dynamic structure factor model
-if ((NOT USE_HYPERBOLIC_MODEL) AND (NOT USE_STANDARD_MODEL) AND (NOT USE_NORMALIZATION_MODEL))
-    set(USE_HYPERBOLIC_MODEL 1)
-endif()
-
-# Ensure only one model is selected
-if (( USE_HYPERBOLIC_MODEL AND USE_STANDARD_MODEL ) OR 
-    ( USE_HYPERBOLIC_MODEL AND USE_NORMALIZATION_MODEL ) OR
-    ( USE_STANDARD_MODEL AND USE_NORMALIZATION_MODEL ))
-    message( FATAL_ERROR "Please only set one model: USE_HYPERBOLIC_MODEL, USE_STANDARD_MODEL, USE_NORMALIZATION_MODEL" )
-endif()
-
-if (USE_HYPERBOLIC_MODEL)
-    add_definitions(-D USE_HYPERBOLIC_MODEL)
-endif()
-
-if (USE_STANDARD_MODEL)
-    add_definitions(-D USE_STANDARD_MODEL)
-endif()
-
-if (USE_NORMALIZATION_MODEL)
-    add_definitions(-D USE_NORMALIZATION_MODEL)
+set(DEAC_MODEL "standard" CACHE STRING "Set deac-cpp model: standard, hyperbolic, normalization (default: standard)")
+if (${DEAC_MODEL} STREQUAL "standard")
+    add_definitions(-D USE_STANDARD_MODEL=1)
+elseif(${DEAC_MODEL} STREQUAL "hyperbolic")
+    add_definitions(-D USE_HYPERBOLIC_MODEL=1)
+elseif(${DEAC_MODEL} STREQUAL "normalization")
+    add_definitions(-D USE_NORMALIZATION_MODEL=1)
+else()
+    message(FATAL_ERROR "Unknown deac-cpp model '${DEAC_MODEL}',"
+        " please select from 'standard, hyperbolic, normalization'.")
 endif()
 
 if (SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION)
@@ -71,8 +74,16 @@ if (SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION)
 endif()
 
 # Set default build flags
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -Wall -fno-math-errno -O3")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fno-math-errno -O3")
+if(${GPU_BACKEND} STREQUAL "sycl")
+    if(NOT DEFINED SYCL_FLAGS)
+        message(FATAL_ERROR "Please set SYCL_FLAGS CMake variable for target architecture and device,"
+            " e.g. to target an NVIDIA A100 GPU:"
+            "     '-DSYCL_FLAGS=\"-fsycl -fsycl-targets=nvptx64-nvidia-cuda -Xsycl-target-backend --cuda-gpu-arch=sm_80\"'")
+    endif()
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${SYCL_FLAGS} -march=native -Wall -fno-math-errno -O3")
+else()
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -Wall -fno-math-errno -O3")
+endif()
 
 # Determine executable name
 set(exe deac.e)
@@ -86,7 +97,7 @@ endif()
 
 # Find source files ( better to list explicitly https://stackoverflow.com/questions/1027247/specify-source-files-globally-with-glob )
 file( GLOB DEAC_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp )
-if(USE_CUDA)
+if (${GPU_BACKEND} STREQUAL "cuda")
     file( GLOB DEAC_CUDA ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cu )
     add_executable(${exe} ${DEAC_SRC} ${DEAC_CUDA})
     set_target_properties( ${exe} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
