@@ -1848,9 +1848,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
         // Generate rng state
         #ifndef USE_SYCL
-            uint64_t* rng_state;
             uint64_t* d_rng_state;
         #endif
+        uint64_t* rng_state;
         rng_state = (uint64_t *) malloc(bytes_rng_state);
 
         for (size_t i=0; i<population_size; i++) {
