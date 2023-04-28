@@ -247,7 +247,7 @@ void gpu_matrix_multiply_MxN_by_Nx1(sycl::queue q, size_t grid_size, double* C_t
 
             //Set C_tmp
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t group_idx = index.get_group_id(0);
+                size_t group_idx = wGroup.get_group_id(0);
                 size_t local_idx = index.get_local_id(0);
                 if (local_idx == 0) {
                      C_tmp[group_idx] = _c[0];
@@ -278,7 +278,7 @@ void gpu_matrix_multiply_MxN_by_Nx1(sycl::queue q, size_t grid_size, double* C_t
 
             //Set C
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t group_idx = index.get_group_id(0);
+                size_t group_idx = wGroup.get_group_id(0);
                 size_t local_idx = index.get_local_id(0);
                 if (local_idx == 0) {
                      C[0] = _c[0];
@@ -327,7 +327,7 @@ void gpu_set_fitness(sycl::queue q, size_t grid_size, double* fitness_tmp, doubl
 
             //Set fitness_tmp
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t group_idx = index.get_group_id(0);
+                size_t group_idx = wGroup.get_group_id(0);
                 size_t local_idx = index.get_local_id(0);
                 if (local_idx == 0) {
                      fitness_tmp[group_idx] = _f[0];
@@ -373,7 +373,7 @@ void gpu_set_fitness_moments_reduced_chi_squared(sycl::queue q, size_t grid_size
                 size_t global_idx = index.get_global_id(0);
                 size_t local_idx = index.get_local_id(0);
                 if (global_idx < population_size) {
-                    fitness[global_idx] += pown((moment - moments[global_idx])/moment_error, 2);
+                    fitness[global_idx] += sycl::pown((moment - moments[global_idx])/moment_error, 2);
                 }
             });
         }));
@@ -387,7 +387,7 @@ void gpu_set_fitness_moments_chi_squared(sycl::queue q, size_t grid_size, double
                 size_t global_idx = index.get_global_id(0);
                 size_t local_idx = index.get_local_id(0);
                 if (global_idx < population_size) {
-                    fitness[global_idx] += pown(moment - moments[global_idx], 2);
+                    fitness[global_idx] += sycl::pown(moment - moments[global_idx], 2);
                 }
             });
         }));
@@ -450,7 +450,7 @@ void gpu_set_fitness_mean(sycl::queue q, size_t grid_size, double* fitness_mean_
 
             //Set fitness_mean_tmp
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t group_idx = index.get_group_id(0);
+                size_t group_idx = wGroup.get_group_id(0);
                 size_t local_idx = index.get_local_id(0);
                 if (local_idx == 0) {
                      fitness_mean_tmp[group_idx] = _fm[0];
@@ -509,7 +509,7 @@ void gpu_set_fitness_squared_mean(sycl::queue q, size_t grid_size, double* fitne
 
             //Set fitness_squared_mean_tmp
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t group_idx = index.get_group_id(0);
+                size_t group_idx = wGroup.get_group_id(0);
                 size_t local_idx = index.get_local_id(0);
                 if (local_idx == 0) {
                      fitness_squared_mean_tmp[group_idx] = _fsm[0];
