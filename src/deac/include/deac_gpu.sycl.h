@@ -35,7 +35,8 @@ uint64_t gpu_xoshiro256p_next(uint64_t* s) {
     return result;
 }
 
-void reduce_add(double* _c, sycl::group work_group) {
+template <int Dimensions = 1>
+void reduce_add(double* _c, sycl::group<Dimensions> work_group) {
 
     // Reduce _c (using shared local memory)
     #if GPU_BLOCK_SIZE >= 1024 && SUB_GROUP_SIZE < 512
@@ -130,7 +131,8 @@ void reduce_add(double* _c, sycl::group work_group) {
     });
 }
 
-void reduce_min(double* _c, sycl::group work_group) {
+template <int Dimensions = 1>
+void reduce_min(double* _c, sycl::group<Dimensions> work_group) {
 
     // Reduce _c (using shared local memory)
     #if GPU_BLOCK_SIZE >= 1024 && SUB_GROUP_SIZE < 512
