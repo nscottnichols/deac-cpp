@@ -1487,7 +1487,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             q.memset(d_fitness_old, 0, bytes_fitness_old).wait();
             d_fitness_tmp = sycl::malloc_device< double >( grid_size_set_fitness*population_size, q ); 
             for (size_t i=0; i<population_size; i++) {
-                size_t stream_idx = i % MAX_GPU_STREAMS;
                 gpu_set_fitness(q, grid_size_set_fitness, d_fitness_tmp + grid_size_set_fitness*i, d_fitness_old + i, d_isf, d_isf_model + number_of_timeslices*i, d_isf_error, number_of_timeslices);
             }
             q.wait();
@@ -2790,7 +2789,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #ifdef USE_SYCL
                 q.memset(d_fitness_new, 0, bytes_fitness_new).wait();
                 for (size_t i=0; i<population_size; i++) {
-                    size_t stream_idx = i % MAX_GPU_STREAMS;
                     gpu_set_fitness(q, grid_size_set_fitness, d_fitness_tmp + grid_size_set_fitness*i, d_fitness_new + i, d_isf, d_isf_model + number_of_timeslices*i, d_isf_error, number_of_timeslices);
                 }
                 q.wait();
@@ -3374,14 +3372,13 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 if (track_stats) {
                     sycl::free(d_fitness_mean, q);
                     sycl::free(d_fitness_mean_tmp, q);
-                    sycl::free(d_fitness_minimum, q);
                     sycl::free(d_fitness_squared_mean, q);
                     sycl::free(d_fitness_squared_mean_tmp, q);
                 }
                 sycl::free(d_mutate_indices, q);
                 sycl::free(d_rejection_indices, q);
                 sycl::free(d_mutant_indices, q);
-                sycl::free(d_minimum_fitness, q);
+                sycl::free(h_minimum_fitness, q);
                 sycl::free(d_rng_state, q);
             #endif
             // Destroy Streams
@@ -3549,7 +3546,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 if (track_stats) {
                     sycl::free(d_fitness_mean, q);
                     sycl::free(d_fitness_mean_tmp, q);
-                    sycl::free(d_fitness_minimum, q);
                     sycl::free(d_fitness_squared_mean, q);
                     sycl::free(d_fitness_squared_mean_tmp, q);
                 }
@@ -3557,7 +3553,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 sycl::free(d_mutate_indices_negative_frequency, q);
                 sycl::free(d_rejection_indices, q);
                 sycl::free(d_mutant_indices, q);
-                sycl::free(d_minimum_fitness, q);
+                sycl::free(h_minimum_fitness, q);
                 sycl::free(d_rng_state, q);
             #endif
             // Destroy Streams
