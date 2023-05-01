@@ -3582,15 +3582,15 @@ int main (int argc, char *argv[]) {
     program.add_argument("-N", "--number_of_generations")
         .help("Number of generations before genetic algorithm quits.")
         .default_value(100000)
-        .action([](const std::string& value) { return std::stoi(value); });
+        .action([](const std::string& value) { return std::stoul(value); });
     program.add_argument("-P","--population_size")
         .help("Size of initial population")
         .default_value(512)
-        .action([](const std::string& value) { return std::stoi(value); });
+        .action([](const std::string& value) { return std::stoul(value); });
     program.add_argument("-M","--genome_size")
         .help("Size of genome.")
         .default_value(512)
-        .action([](const std::string& value) { return std::stoi(value); });
+        .action([](const std::string& value) { return std::stoul(value); });
     program.add_argument("--omega_max")
         .help("Maximum frequency to explore.")
         .default_value(60.0)
@@ -3648,7 +3648,7 @@ int main (int argc, char *argv[]) {
     program.add_argument("--seed")
         .help("Seed to pass to random number generator.")
         .default_value(0)
-        .action([](const std::string& value) { return std::stoi(value); });
+        .action([](const std::string& value) { return std::stoul(value); });
     program.add_argument("--save_state")
         .help("Save state of DEAC algorithm. Saves the random number generator, population, and population fitness.")
         .default_value(false)
@@ -3697,23 +3697,23 @@ int main (int argc, char *argv[]) {
     double * const isf = numpy_data + number_of_timeslices;
     double * const isf_error = numpy_data + 2*number_of_timeslices;
 
-    uint64_t seed = 1407513600 + static_cast<uint64_t>(program.get<size_t>("--seed"));
-    size_t seed_int = program.get<size_t>("--seed");
+    uint64_t seed = 1407513600 + static_cast<uint64_t>(program.get<unsigned long>("--seed"));
+    uint64_t seed_int = static_cast<uint64_t>(program.get<unsigned long>("--seed"));
     struct xoshiro256p_state rng = xoshiro256p_init(seed);
 
     double temperature = program.get<double>("--temperature");
     #ifndef ZEROT
         assert(temperature > 0.0);
     #endif
-    size_t number_of_generations = program.get<size_t>("--number_of_generations");
-    size_t population_size = program.get<size_t>("--population_size");
+    size_t number_of_generations = static_cast<size_t>(program.get<unsigned long>("--number_of_generations"));
+    size_t population_size = static_cast<size_t>(program.get<unsigned long>("--population_size"));
 
     size_t genome_size;
     double * frequency;
     if (auto frequency_filename = program.present("--frequency_file")) {
         std::tie(frequency,genome_size) = load_numpy_array(*frequency_filename);
     } else{
-        genome_size = program.get<size_t>("--genome_size");
+        genome_size = static_cast<size_t>(program.get<unsigned long>("--genome_size"));
         double max_frequency = program.get<double>("--omega_max");
 
         frequency = (double*) malloc(sizeof(double)*genome_size);
