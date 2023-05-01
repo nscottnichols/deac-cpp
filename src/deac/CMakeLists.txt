@@ -88,7 +88,7 @@ endif()
 # Determine executable name
 set(exe deac.e)
 if(CMAKE_BUILD_TYPE MATCHES Debug)
-    set(exe daecd.e)
+    set(exe deacd.e)
 elseif(CMAKE_BUILD_TYPE MATCHES ZeroT)
     set(exe deac-zT.e)
 elseif(CMAKE_BUILD_TYPE MATCHES ZeroTDebug)

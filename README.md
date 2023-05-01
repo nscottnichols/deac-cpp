@@ -40,7 +40,7 @@ As above, and with further details below, but you should consider using the foll
 - `-D CMAKE_C_COMPILER=xxx` equal to the name of the C99 Compiler you wish to use (or the environment variable `CC`)
 - `-D CMAKE_CXX_COMPILER=xxx` equal to the name of the C++17 compiler you wish to use (or the environment variable `CXX`)
 - `-D CMAKE_PREFIX_PATH=xxx` to add a non-standard location for CMake to search for libraries, headers or programs
-- `-D CMAKE_INSTALL_PREFIX=xxx` to install pimc to a non-standard location
+- `-D CMAKE_INSTALL_PREFIX=xxx` to install deac to a non-standard location
 - `-D STATIC=1` to enable a static build
 - `-D CMAKE_BUILD_TYPE=Debug` to build deac in debug mode (deacd.e)
 - `-D CMAKE_BUILD_TYPE=ZeroT` to build deac for zero temperature (deac-zT.e)
