@@ -352,7 +352,7 @@ void gpu_matrix_multiply_MxN_by_Nx1(sycl::queue q, size_t grid_size, double* C_t
     size_t grid_size_reduce = (grid_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
     q.submit([&](sycl::handler& cgh) {
         cgh.depends_on(event_reduce_to_C_tmp);
-        cgh.parallel_for_wGroup(sycl::range<1>{grid_size_reduce}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{grid_size_reduce}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             double _c[GPU_BLOCK_SIZE];
             // Set shared local memory _c
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -478,7 +478,7 @@ void gpu_matrix_multiply_LxM_by_MxN(sycl::queue q, size_t grid_size, double* C_t
 
 void gpu_normalize_population(sycl::queue q, size_t grid_size, double * population, double * normalization, double zeroth_moment, size_t population_size, size_t genome_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_wGroup(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                 size_t global_idx = index.get_global_id(0);
                 if (global_idx < population_size*genome_size) {
@@ -491,7 +491,7 @@ void gpu_normalize_population(sycl::queue q, size_t grid_size, double * populati
 
 void gpu_set_fitness(sycl::queue q, size_t grid_size, double* fitness_tmp, double* fitness, double* isf, double* isf_model, double* isf_error, size_t number_of_timeslices) {
     auto event_reduce_to_fitness_tmp = q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_wGroup(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             // Set shared local memory _f
             double _f[GPU_BLOCK_SIZE];
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -613,7 +613,7 @@ void gpu_set_fitness(sycl::queue q, size_t grid_size, double* fitness_tmp, doubl
     size_t grid_size_reduce = (grid_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
     q.submit([&](sycl::handler& cgh) {
         cgh.depends_on(event_reduce_to_fitness_tmp);
-        cgh.parallel_for_wGroup(sycl::range<1>{grid_size_reduce}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{grid_size_reduce}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             double _f[GPU_BLOCK_SIZE];
             // Set shared local memory _f
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -734,7 +734,7 @@ void gpu_set_fitness(sycl::queue q, size_t grid_size, double* fitness_tmp, doubl
 
 void gpu_set_fitness_moments_reduced_chi_squared(sycl::queue q, size_t grid_size, double* fitness, double* moments, double moment, double moment_error, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_wGroup(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                 size_t global_idx = index.get_global_id(0);
                 if (global_idx < population_size) {
@@ -747,7 +747,7 @@ void gpu_set_fitness_moments_reduced_chi_squared(sycl::queue q, size_t grid_size
 
 void gpu_set_fitness_moments_chi_squared(sycl::queue q, size_t grid_size, double* fitness, double* moments, double moment, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_wGroup(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                 size_t global_idx = index.get_global_id(0);
                 if (global_idx < population_size) {
@@ -760,7 +760,7 @@ void gpu_set_fitness_moments_chi_squared(sycl::queue q, size_t grid_size, double
 
 void gpu_get_minimum_fitness(sycl::queue q, double* fitness, double* minimum_fitness, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_wGroup(sycl::range<1>{1}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{1}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             // Set shared local memory _mf
             double _mf[GPU_BLOCK_SIZE];
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -888,7 +888,7 @@ void gpu_get_minimum_fitness(sycl::queue q, double* fitness, double* minimum_fit
 
 void gpu_set_fitness_mean(sycl::queue q, size_t grid_size, double* fitness_mean_tmp, double* fitness_mean, double* fitness, size_t population_size) {
     auto event_reduce_to_fitness_mean_tmp = q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_wGroup(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             // Set shared local memory _fm
             double _fm[GPU_BLOCK_SIZE];
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -1010,7 +1010,7 @@ void gpu_set_fitness_mean(sycl::queue q, size_t grid_size, double* fitness_mean_
     size_t grid_size_reduce = (grid_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
     q.submit([&](sycl::handler& cgh) {
         cgh.depends_on(event_reduce_to_fitness_mean_tmp);
-        cgh.parallel_for_wGroup(sycl::range<1>{grid_size_reduce}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{grid_size_reduce}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             double _fm[GPU_BLOCK_SIZE];
             // Set shared local memory _fm
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -1131,7 +1131,7 @@ void gpu_set_fitness_mean(sycl::queue q, size_t grid_size, double* fitness_mean_
 
 void gpu_set_fitness_squared_mean(sycl::queue q, size_t grid_size, double* fitness_squared_mean_tmp, double* fitness_squared_mean, double* fitness, size_t population_size) {
     auto event_reduce_to_fitness_squared_mean_tmp = q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_wGroup(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             // Set shared local memory _fsm
             double _fsm[GPU_BLOCK_SIZE];
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -1253,7 +1253,7 @@ void gpu_set_fitness_squared_mean(sycl::queue q, size_t grid_size, double* fitne
     size_t grid_size_reduce = (grid_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
     q.submit([&](sycl::handler& cgh) {
         cgh.depends_on(event_reduce_to_fitness_squared_mean_tmp);
-        cgh.parallel_for_wGroup(sycl::range<1>{grid_size_reduce}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{grid_size_reduce}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             double _fsm[GPU_BLOCK_SIZE];
             // Set shared local memory _fsm
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
@@ -1374,7 +1374,7 @@ void gpu_set_fitness_squared_mean(sycl::queue q, size_t grid_size, double* fitne
 
 void gpu_set_population_new(sycl::queue q, size_t grid_size, double* population_new, double* population_old, size_t* mutant_indices, double* differential_weights_new, bool* mutate_indices, size_t population_size, size_t genome_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_wGroup(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                 size_t global_idx = index.get_global_id(0);
                 if (global_idx < population_size*genome_size) {
@@ -1402,7 +1402,7 @@ void gpu_set_population_new(sycl::queue q, size_t grid_size, double* population_
 
 void gpu_match_population_zero(sycl::queue q, size_t grid_size, double* population_negative_frequency, double* population_positive_frequency, size_t population_size, size_t genome_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_wGroup(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                 size_t global_idx = index.get_global_id(0);
                 if (global_idx < population_size) {
@@ -1415,7 +1415,7 @@ void gpu_match_population_zero(sycl::queue q, size_t grid_size, double* populati
 
 void gpu_set_rejection_indices(sycl::queue q, size_t grid_size, bool* rejection_indices, double* fitness_new, double* fitness_old, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_wGroup(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                 size_t global_idx = index.get_global_id(0);
                 if (global_idx < population_size) {
@@ -1432,7 +1432,7 @@ void gpu_set_rejection_indices(sycl::queue q, size_t grid_size, bool* rejection_
 
 void gpu_swap_control_parameters(sycl::queue q, size_t grid_size, double* control_parameter_old, double* control_parameter_new, bool* rejection_indices, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_wGroup(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                 size_t global_idx = index.get_global_id(0);
                 if (global_idx < population_size) {
@@ -1447,7 +1447,7 @@ void gpu_swap_control_parameters(sycl::queue q, size_t grid_size, double* contro
 
 void gpu_swap_populations(sycl::queue q, size_t grid_size, double* population_old, double* population_new, bool* rejection_indices, size_t population_size, size_t genome_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_wGroup(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                 size_t global_idx = index.get_global_id(0);
                 if (global_idx < population_size*genome_size) {
@@ -1463,7 +1463,7 @@ void gpu_swap_populations(sycl::queue q, size_t grid_size, double* population_ol
 
 void gpu_set_crossover_probabilities_new(sycl::queue q, size_t grid_size, uint64_t* rng_state, double* crossover_probabilities_new, double* crossover_probabilities_old, double self_adapting_crossover_probability, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_wGroup(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                 size_t global_idx = index.get_global_id(0);
                 if (global_idx < population_size) {
