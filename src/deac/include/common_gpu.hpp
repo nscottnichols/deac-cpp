@@ -38,7 +38,7 @@
             #error "SUB_GROUP_SIZE must be a power of two"
         #endif
         #if GPU_BLOCK_SIZE < 2*SUB_GROUP_SIZE
-            #error "GPU_BLOCK_SIZE must be >= SUB_GROUP_SIZE"
+            #error "GPU_BLOCK_SIZE must be >= 2*SUB_GROUP_SIZE"
         #endif 
     #endif
 #endif
