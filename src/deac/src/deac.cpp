@@ -1741,7 +1741,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMalloc(&d_rejection_indices, bytes_rejection_indices));
             #endif
             #ifdef USE_SYCL
-                d_mutate_indices    = sycl::malloc_device< bool >( population_size, q ); 
+                d_mutate_indices    = sycl::malloc_device< bool >( population_size*genome_size, q ); 
                 d_rejection_indices = sycl::malloc_device< bool >( population_size, q ); 
             #endif
         #endif
@@ -1769,8 +1769,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaMalloc(&d_rejection_indices, bytes_rejection_indices));
             #endif
             #ifdef USE_SYCL
-                d_mutate_indices_positive_frequency = sycl::malloc_device< bool >( population_size, q ); 
-                d_mutate_indices_negative_frequency = sycl::malloc_device< bool >( population_size, q ); 
+                d_mutate_indices_positive_frequency = sycl::malloc_device< bool >( population_size*genome_size, q ); 
+                d_mutate_indices_negative_frequency = sycl::malloc_device< bool >( population_size*genome_size, q ); 
                 d_rejection_indices                 = sycl::malloc_device< bool >( population_size, q ); 
             #endif
         #endif
@@ -1833,6 +1833,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             CUDA_ASSERT(cudaMemcpy( d_rng_state, rng_state, bytes_rng_state, cudaMemcpyHostToDevice ));
         #endif
         #ifdef USE_SYCL
+            // FIXME FIXME FIXME need bigger state for -infinity to infinity frequency (population positive population negative) to avoid race condition (probably just 2x)
             d_rng_state = sycl::malloc_device< uint64_t >( 4*population_size*(genome_size + 1), q ); 
             q.memcpy( d_rng_state, rng_state, bytes_rng_state ).wait();
         #endif
