@@ -20,6 +20,12 @@ if (USE_TCB_SPAN)
     add_definitions(-D USE_TCB_SPAN=${USE_TCB_SPAN})
 endif()
 
+# Check for workaround flag
+if(DEFINED USE_SYCL_MATMUL_WA)
+    add_definitions(-D SYCL_MATMUL_WA=${USE_SYCL_MATMUL_WA})
+endif()
+
+
 # Enable GPU support
 set(GPU_BACKEND "none" CACHE STRING "Enable gpu accleration: cuda, hip, sycl, none (default: none)")
 if (NOT ${GPU_BACKEND} STREQUAL "none")
