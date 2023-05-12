@@ -439,7 +439,7 @@ void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __rest
                     wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                         size_t local_idx = index.get_local_id(0);
                         if (local_idx < 512) {
-                            _c[local_idx] += _c[local_idx + 512];
+                            _c[local_idx] = _c[local_idx + 512] < _c[local_idx] ? _c[local_idx + 512] : _c[local_idx];
                         }
                     });
                 #endif
@@ -448,7 +448,7 @@ void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __rest
                     wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                         size_t local_idx = index.get_local_id(0);
                         if (local_idx < 256) {
-                            _c[local_idx] += _c[local_idx + 256];
+                            _c[local_idx] = _c[local_idx + 256] < _c[local_idx] ? _c[local_idx + 256] : _c[local_idx];
                         }
                     });
                 #endif
@@ -457,7 +457,7 @@ void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __rest
                     wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                         size_t local_idx = index.get_local_id(0);
                         if (local_idx < 128) {
-                            _c[local_idx] += _c[local_idx + 128];
+                            _c[local_idx] = _c[local_idx + 128] < _c[local_idx] ? _c[local_idx + 128] : _c[local_idx];
                         }
                     });
                 #endif
@@ -466,7 +466,7 @@ void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __rest
                     wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                         size_t local_idx = index.get_local_id(0);
                         if (local_idx < 64) {
-                            _c[local_idx] += _c[local_idx + 64];
+                            _c[local_idx] = _c[local_idx + 64] < _c[local_idx] ? _c[local_idx + 64] : _c[local_idx];
                         }
                     });
                 #endif
@@ -475,7 +475,7 @@ void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __rest
                     wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                         size_t local_idx = index.get_local_id(0);
                         if (local_idx < 32) {
-                            _c[local_idx] += _c[local_idx + 32];
+                            _c[local_idx] = _c[local_idx + 32] < _c[local_idx] ? _c[local_idx + 32] : _c[local_idx];
                         }
                     });
                 #endif
@@ -484,7 +484,7 @@ void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __rest
                     wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                         size_t local_idx = index.get_local_id(0);
                         if (local_idx < 16) {
-                            _c[local_idx] += _c[local_idx + 16];
+                            _c[local_idx] = _c[local_idx + 16] < _c[local_idx] ? _c[local_idx + 16] : _c[local_idx];
                         }
                     });
                 #endif
@@ -493,7 +493,7 @@ void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __rest
                     wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                         size_t local_idx = index.get_local_id(0);
                         if (local_idx < 8) {
-                            _c[local_idx] += _c[local_idx + 8];
+                            _c[local_idx] = _c[local_idx + 8] < _c[local_idx] ? _c[local_idx + 8] : _c[local_idx];
                         }
                     });
                 #endif
@@ -502,7 +502,7 @@ void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __rest
                     wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                         size_t local_idx = index.get_local_id(0);
                         if (local_idx < 4) {
-                            _c[local_idx] += _c[local_idx + 4];
+                            _c[local_idx] = _c[local_idx + 4] < _c[local_idx] ? _c[local_idx + 4] : _c[local_idx];
                         }
                     });
                 #endif
@@ -511,7 +511,7 @@ void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __rest
                     wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                         size_t local_idx = index.get_local_id(0);
                         if (local_idx < 2) {
-                            _c[local_idx] += _c[local_idx + 2];
+                            _c[local_idx] = _c[local_idx + 2] < _c[local_idx] ? _c[local_idx + 2] : _c[local_idx];
                         }
                     });
                 #endif
@@ -520,7 +520,7 @@ void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __rest
                 wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
                     size_t local_idx = index.get_local_id(0);
                     if (local_idx < SUB_GROUP_SIZE) {
-                        sub_group_reduce_add(_c, local_idx);
+                        sub_group_reduce_min(_c, local_idx);
                     }
                 });
             #else
