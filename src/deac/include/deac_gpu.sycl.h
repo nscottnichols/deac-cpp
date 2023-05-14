@@ -671,7 +671,7 @@ void gpu_matrix_multiply_MxN_by_Nx1(sycl::queue q, size_t grid_size, double* __r
                 size_t global_idx = index.get_global_id(0);
                 size_t local_idx = index.get_local_id(0);
                 if (global_idx < grid_size) {
-                    _c[local_idx] = C[global_idx];
+                    _c[local_idx] = C_tmp[global_idx];
                 } else {
                     _c[local_idx] = 0.0;
                 }
