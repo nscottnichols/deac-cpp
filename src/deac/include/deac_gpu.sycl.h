@@ -786,7 +786,7 @@ void gpu_matrix_multiply_MxN_by_Nx1(sycl::queue q, size_t grid_size, double* __r
 
 void gpu_matrix_multiply_LxM_by_MxN(sycl::queue q, size_t grid_size, double* __restrict__ C_tmp, double* __restrict__ C, double* __restrict__ A, double* __restrict__ B, size_t L, size_t M) {
     // C = B*A where [B] = LxM and [A] = MxN ???? FIXME this doesn't make sense
-    gpu_matrix_multiply_MxN_by_Nx1(q, grid_size, C_tmp, C, B, A, M, L);
+    gpu_matrix_multiply_MxN_by_Nx1(q, grid_size, C_tmp, C, B, A, L, M);
 }
 
 void gpu_normalize_population(sycl::queue q, size_t grid_size, double* __restrict__ population, double* __restrict__ normalization, double zeroth_moment, size_t population_size, size_t genome_size) {
