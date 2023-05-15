@@ -404,7 +404,6 @@ void gpu_matmul(sycl::queue q, double* __restrict__ C, double* __restrict__ B, d
 
             //Set C
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t group_idx = wGroup.get_group_id(0);
                 size_t local_idx = index.get_local_id(0);
                 if (local_idx == 0) {
                      C[0] += _c[0];
@@ -850,7 +849,7 @@ void gpu_set_fitness_mean(sycl::queue q, double* __restrict__ fitness_mean, doub
                 for (size_t i = 1; i < (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
                     size_t j = GPU_BLOCK_SIZE*i + local_idx;
                     if (j < population_size) {
-                        _f[local_idx] += fitness[j];
+                        _fm[local_idx] += fitness[j];
                     }
                 }
             });
@@ -952,7 +951,6 @@ void gpu_set_fitness_mean(sycl::queue q, double* __restrict__ fitness_mean, doub
 
             //Set fitness_mean
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t group_idx = wGroup.get_group_id(0);
                 size_t local_idx = index.get_local_id(0);
                 if (local_idx == 0) {
                      fitness_mean[0] = _fm[0]/population_size;
@@ -978,7 +976,7 @@ void gpu_set_fitness_squared_mean(sycl::queue q, double* __restrict__ fitness_sq
                 for (size_t i = 1; i < (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
                     size_t j = GPU_BLOCK_SIZE*i + local_idx;
                     if (j < population_size) {
-                        _f[local_idx] += fitness[j]*fitness[j];
+                        _fsm[local_idx] += fitness[j]*fitness[j];
                     }
                 }
             });
@@ -1080,7 +1078,6 @@ void gpu_set_fitness_squared_mean(sycl::queue q, double* __restrict__ fitness_sq
 
             //Set fitness_squared_mean
             wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t group_idx = wGroup.get_group_id(0);
                 size_t local_idx = index.get_local_id(0);
                 if (local_idx == 0) {
                      fitness_squared_mean[0] = _fsm[0]/population_size;
