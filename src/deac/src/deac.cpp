@@ -1272,24 +1272,24 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 q.memset(d_isf_model, 0, bytes_isf_model);
                 q.wait();
                 for (size_t i=0; i<population_size*number_of_timeslices; i++) {
-                    size_t _i = i/population_size;
-                    size_t _j = i - _i*population_size;
-                    gpu_matmul(q, d_isf_model + i, d_population_old + genome_size*_j, d_isf_term + genome_size*_i, genome_size);
+                    size_t _i = i/number_of_timeslices;
+                    size_t _j = i - _i*number_of_timeslices;
+                    gpu_matmul(q, d_isf_model + i, d_population_old + genome_size*_i, d_isf_term + genome_size*_j, genome_size);
                 }
                 q.wait();
             #else
                 q.memset(d_isf_model, 0, bytes_isf_model);
                 q.wait();
                 for (size_t i=0; i<population_size*number_of_timeslices; i++) {
-                    size_t _i = i/population_size;
-                    size_t _j = i - _i*population_size;
-                    gpu_matmul(q, d_isf_model + i, d_population_old_positive_frequency + genome_size*_j, d_isf_term_positive_frequency + genome_size*_i, genome_size);
+                    size_t _i = i/number_of_timeslices;
+                    size_t _j = i - _i*number_of_timeslices;
+                    gpu_matmul(q, d_isf_model + i, d_population_old_positive_frequency + genome_size*_i, d_isf_term_positive_frequency + genome_size*_j, genome_size);
                 }
                 q.wait();
                 for (size_t i=0; i<population_size*number_of_timeslices; i++) {
-                    size_t _i = i/population_size;
-                    size_t _j = i - _i*population_size;
-                    gpu_matmul(q, d_isf_model + i, d_population_old_negative_frequency + genome_size*_j, d_isf_term_negative_frequency + genome_size*_i, genome_size);
+                    size_t _i = i/number_of_timeslices;
+                    size_t _j = i - _i*number_of_timeslices;
+                    gpu_matmul(q, d_isf_model + i, d_population_old_negative_frequency + genome_size*_i, d_isf_term_negative_frequency + genome_size*_j, genome_size);
                 }
                 q.wait();
             #endif
@@ -2468,24 +2468,24 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     q.memset(d_isf_model, 0, bytes_isf_model);
                     q.wait();
                     for (size_t i=0; i<population_size*number_of_timeslices; i++) {
-                        size_t _i = i/population_size;
-                        size_t _j = i - _i*population_size;
-                        gpu_matmul(q, d_isf_model + i, d_population_new + genome_size*_j, d_isf_term + genome_size*_i, genome_size);
+                        size_t _i = i/number_of_timeslices;
+                        size_t _j = i - _i*number_of_timeslices;
+                        gpu_matmul(q, d_isf_model + i, d_population_new + genome_size*_i, d_isf_term + genome_size*_j, genome_size);
                     }
                     q.wait();
                 #else
                     q.memset(d_isf_model, 0, bytes_isf_model);
                     q.wait();
                     for (size_t i=0; i<population_size*number_of_timeslices; i++) {
-                        size_t _i = i/population_size;
-                        size_t _j = i - _i*population_size;
-                        gpu_matmul(q, d_isf_model + i, d_population_new_positive_frequency + genome_size*_j, d_isf_term_positive_frequency + genome_size*_i, genome_size);
+                        size_t _i = i/number_of_timeslices;
+                        size_t _j = i - _i*number_of_timeslices;
+                        gpu_matmul(q, d_isf_model + i, d_population_new_positive_frequency + genome_size*_i, d_isf_term_positive_frequency + genome_size*_j, genome_size);
                     }
                     q.wait();
                     for (size_t i=0; i<population_size*number_of_timeslices; i++) {
-                        size_t _i = i/population_size;
-                        size_t _j = i - _i*population_size;
-                        gpu_matmul(q, d_isf_model + i, d_population_new_negative_frequency + genome_size*_j, d_isf_term_negative_frequency + genome_size*_i, genome_size);
+                        size_t _i = i/number_of_timeslices;
+                        size_t _j = i - _i*number_of_timeslices;
+                        gpu_matmul(q, d_isf_model + i, d_population_new_negative_frequency + genome_size*_i, d_isf_term_negative_frequency + genome_size*_j, genome_size);
                     }
                     q.wait();
                 #endif
