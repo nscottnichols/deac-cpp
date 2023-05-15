@@ -524,7 +524,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             double* d_normalization_term_negative_frequency;
         #endif
         double* d_normalization;
-        double* d_normalization_tmp;
     #endif
     if (normalize) {
         #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
@@ -706,7 +705,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
             #ifdef USE_SYCL
                 q.memset(d_normalization, 0, bytes_normalization).wait();
-                d_normalization_tmp = sycl::malloc_device< double >( grid_size_set_normalization*population_size, q ); 
                 #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                     for (size_t i=0; i<population_size; i++) {
                         gpu_matmul(q, d_normalization + i, d_normalization_term, d_population_old + genome_size*i, genome_size);
@@ -772,7 +770,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #ifdef USE_GPU
             double* d_first_moments_term;
             double* d_first_moments;
-            double* d_first_moments_tmp;
         #endif
     #else
         double * first_moments_term_positive_frequency;
@@ -781,7 +778,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             double* d_first_moments_term_positive_frequency;
             double* d_first_moments_term_negative_frequency;
             double* d_first_moments;
-            double* d_first_moments_tmp;
         #endif
     #endif
 
@@ -942,7 +938,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
             #ifdef USE_SYCL
                 q.memset(d_first_moments, 0, bytes_first_moments).wait();
-                d_first_moments_tmp = sycl::malloc_device< double >( grid_size_set_first_moments*population_size, q ); 
                 #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                     for (size_t i=0; i<population_size; i++) {
                         gpu_matmul(q, d_first_moments + i, d_first_moments_term, d_population_old + genome_size*i, genome_size);
@@ -984,7 +979,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double * third_moments_term;
         #ifdef USE_GPU
             double* d_third_moments;
-            double* d_third_moments_tmp;
             double* d_third_moments_term;
         #endif
     #else
@@ -992,7 +986,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double* third_moments_term_negative_frequency;
         #ifdef USE_GPU
             double* d_third_moments;
-            double* d_third_moments_tmp;
             double* d_third_moments_term_positive_frequency;
             double* d_third_moments_term_negative_frequency;
         #endif
@@ -1153,7 +1146,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
             #ifdef USE_SYCL
                 q.memset(d_third_moments, 0, bytes_third_moments).wait();
-                d_third_moments_tmp = sycl::malloc_device< double >( grid_size_set_third_moments*population_size, q ); 
                 #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                     for (size_t i=0; i<population_size; i++) {
                         gpu_matmul(q, d_third_moments + i, d_third_moments_term, d_population_old + genome_size*i, genome_size);
@@ -1191,7 +1183,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     double * isf_model;
     #ifdef USE_GPU
         double* d_isf_model;
-        double* d_isf_model_tmp;
     #endif
     size_t bytes_isf_model = sizeof(double)*number_of_timeslices*population_size;
     isf_model = (double*) malloc(bytes_isf_model);
@@ -1263,7 +1254,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
         #endif
         #ifdef USE_SYCL
-            d_isf_model_tmp = sycl::malloc_device< double >( grid_size_set_isf_model*population_size*number_of_timeslices, q ); 
             #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                 q.memset(d_isf_model, 0, bytes_isf_model).wait();
                 for (size_t i=0; i<population_size*number_of_timeslices; i++) {
@@ -1309,7 +1299,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #ifdef USE_GPU
             double* d_inverse_first_moments_term;
             double* d_inverse_first_moments;
-            double* d_inverse_first_moments_tmp;
         #endif
         size_t bytes_inverse_first_moments_term = sizeof(double)*number_of_timeslices;
         size_t bytes_inverse_first_moments = sizeof(double)*population_size;
@@ -1374,7 +1363,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 #endif
                 #ifdef USE_SYCL
                     q.memset(d_inverse_first_moments, 0, bytes_inverse_first_moments).wait();
-                    d_inverse_first_moments_tmp = sycl::malloc_device< double >( grid_size_set_inverse_first_moments*population_size, q ); 
                     for (size_t i=0; i<population_size; i++) {
                         gpu_matmul(q, d_inverse_first_moments + i, d_inverse_first_moments_term, d_isf_model + number_of_timeslices*i, number_of_timeslices);
                     }
@@ -1396,7 +1384,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #ifdef USE_GPU
         double* d_fitness_old;
         double* d_fitness_new;
-        double* d_fitness_tmp;
         size_t bytes_fitness_new = sizeof(double)*population_size;
     #endif
     size_t bytes_fitness_old = sizeof(double)*population_size;
@@ -1485,9 +1472,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #endif
         #ifdef USE_SYCL
             q.memset(d_fitness_old, 0, bytes_fitness_old).wait();
-            d_fitness_tmp = sycl::malloc_device< double >( grid_size_set_fitness*population_size, q ); 
             for (size_t i=0; i<population_size; i++) {
-                gpu_set_fitness(q, grid_size_set_fitness, d_fitness_tmp + grid_size_set_fitness*i, d_fitness_old + i, d_isf, d_isf_model + number_of_timeslices*i, d_isf_error, number_of_timeslices);
+                gpu_set_fitness(q, d_fitness_old + i, d_isf, d_isf_model + number_of_timeslices*i, d_isf_error, number_of_timeslices);
             }
             q.wait();
             #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
@@ -1681,10 +1667,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     double* fitness_squared_mean;
     #ifdef USE_GPU
         double* d_fitness_mean;
-        double* d_fitness_mean_tmp;
         double* d_fitness_minimum;
         double* d_fitness_squared_mean;
-        double* d_fitness_squared_mean_tmp;
     #endif
     size_t bytes_fitness_mean = sizeof(double)*number_of_generations;
     size_t bytes_fitness_minimum = sizeof(double)*number_of_generations;
@@ -1713,9 +1697,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
             #ifdef USE_SYCL
                 d_fitness_mean             = sycl::malloc_device< double >( number_of_generations, q ); 
-                d_fitness_mean_tmp         = sycl::malloc_device< double >( grid_size_set_stats,   q ); 
                 d_fitness_squared_mean     = sycl::malloc_device< double >( number_of_generations, q ); 
-                d_fitness_squared_mean_tmp = sycl::malloc_device< double >( grid_size_set_stats,   q ); 
                 q.memset(d_fitness_mean,         0, bytes_normalization);
                 q.memset(d_fitness_squared_mean, 0, bytes_normalization).wait();
             #endif
@@ -1919,9 +1901,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     CUDA_ASSERT(cudaDeviceSynchronize());
                 #endif
                 #ifdef USE_SYCL
-                    gpu_set_fitness_mean( q, grid_size_set_stats, d_fitness_mean_tmp, d_fitness_mean + ii, d_fitness_old, population_size );
+                    gpu_set_fitness_mean(q, d_fitness_mean + ii, d_fitness_old, population_size);
                     fitness_minimum[ii] = h_minimum_fitness[0];
-                    gpu_set_fitness_squared_mean( q, grid_size_set_stats, d_fitness_squared_mean_tmp, d_fitness_squared_mean + ii, d_fitness_old, population_size );
+                    gpu_set_fitness_squared_mean(q, d_fitness_squared_mean + ii, d_fitness_old, population_size);
                     q.wait();
                 #endif
             #endif
@@ -2790,7 +2772,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #ifdef USE_SYCL
                 q.memset(d_fitness_new, 0, bytes_fitness_new).wait();
                 for (size_t i=0; i<population_size; i++) {
-                    gpu_set_fitness(q, grid_size_set_fitness, d_fitness_tmp + grid_size_set_fitness*i, d_fitness_new + i, d_isf, d_isf_model + number_of_timeslices*i, d_isf_error, number_of_timeslices);
+                    gpu_set_fitness(q, d_fitness_new + i, d_isf, d_isf_model + number_of_timeslices*i, d_isf_error, number_of_timeslices);
                 }
                 q.wait();
                 #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
@@ -3349,20 +3331,16 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 if (normalize) {
                     sycl::free(d_normalization_term, q);
                     sycl::free(d_normalization, q);
-                    sycl::free(d_normalization_tmp, q);
                 }
                 if (use_first_moment) {
                     sycl::free(d_first_moments_term, q);
                     sycl::free(d_first_moments, q);
-                    sycl::free(d_first_moments_tmp, q);
                 }
                 if (use_third_moment) {
                     sycl::free(d_third_moments_term, q);
                     sycl::free(d_third_moments, q);
-                    sycl::free(d_third_moments_tmp, q);
                 }
                 sycl::free(d_isf_model, q);
-                sycl::free(d_isf_model_tmp, q);
                 if (use_inverse_first_moment) {
                     sycl::free(d_inverse_first_moments_term, q);
                     sycl::free(d_inverse_first_moments, q);
@@ -3373,9 +3351,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 sycl::free(d_differential_weights_new, q);
                 if (track_stats) {
                     sycl::free(d_fitness_mean, q);
-                    sycl::free(d_fitness_mean_tmp, q);
                     sycl::free(d_fitness_squared_mean, q);
-                    sycl::free(d_fitness_squared_mean_tmp, q);
                 }
                 sycl::free(d_mutate_indices, q);
                 sycl::free(d_rejection_indices, q);
@@ -3518,22 +3494,18 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     sycl::free(d_normalization_term_positive_frequency, q);
                     sycl::free(d_normalization_term_negative_frequency, q);
                     sycl::free(d_normalization, q);
-                    sycl::free(d_normalization_tmp, q);
                 }
                 if (use_first_moment) {
                     sycl::free(d_first_moments_term_positive_frequency, q);
                     sycl::free(d_first_moments_term_negative_frequency, q);
                     sycl::free(d_first_moments, q);
-                    sycl::free(d_first_moments_tmp, q);
                 }
                 if (use_third_moment) {
                     sycl::free(d_third_moments_term_positive_frequency, q);
                     sycl::free(d_third_moments_term_negative_frequency, q);
                     sycl::free(d_third_moments, q);
-                    sycl::free(d_third_moments_tmp, q);
                 }
                 sycl::free(d_isf_model, q);
-                sycl::free(d_isf_model_tmp, q);
                 //FIXME need to add inverse first moment functionality
                 //if (use_inverse_first_moment) {
                 //    sycl::free(d_inverse_first_moments_term_positive_frequency, q);
@@ -3550,9 +3522,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 sycl::free(d_differential_weights_new_negative_frequency, q);
                 if (track_stats) {
                     sycl::free(d_fitness_mean, q);
-                    sycl::free(d_fitness_mean_tmp, q);
                     sycl::free(d_fitness_squared_mean, q);
-                    sycl::free(d_fitness_squared_mean_tmp, q);
                 }
                 sycl::free(d_mutate_indices_positive_frequency, q);
                 sycl::free(d_mutate_indices_negative_frequency, q);
