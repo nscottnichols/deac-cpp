@@ -2225,10 +2225,17 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     for (size_t j=0; j<genome_size; j++) {
                         bool mutate = mutate_indices[i*genome_size + j];
                         if (mutate) {
-                            population_new[i*genome_size + j] = fabs( 
-                                population_old[mutant_index1*genome_size + j] + F*(
-                                        population_old[mutant_index2*genome_size + j] -
-                                        population_old[mutant_index3*genome_size + j]));
+                            #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
+                                population_new[i*genome_size + j] =  
+                                    population_old[mutant_index1*genome_size + j] + F*(
+                                            population_old[mutant_index2*genome_size + j] -
+                                            population_old[mutant_index3*genome_size + j]);
+                            #else
+                                population_new[i*genome_size + j] = fabs( 
+                                    population_old[mutant_index1*genome_size + j] + F*(
+                                            population_old[mutant_index2*genome_size + j] -
+                                            population_old[mutant_index3*genome_size + j]));
+                            #endif
                         } else {
                             population_new[i*genome_size + j] = population_old[i*genome_size + j];
                         }

@@ -25,6 +25,12 @@ if(DEFINED USE_SYCL_MATMUL_WA)
     add_definitions(-D SYCL_MATMUL_WA=${USE_SYCL_MATMUL_WA})
 endif()
 
+# Allow negative spectral weight
+if(DEFINED USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT)
+    add_definitions(-D ALLOW_NEGATIVE_SPECTRAL_WEIGHT=${USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT})
+endif()
+
+
 
 # Enable GPU support
 set(GPU_BACKEND "none" CACHE STRING "Enable gpu accleration: cuda, hip, sycl, none (default: none)")
