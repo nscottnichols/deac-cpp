@@ -338,47 +338,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     
     #ifdef USE_GPU
         //Load isf term onto GPU
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            double* d_isf_term; // pointer to isf_term on gpu
-        #else
-            double* d_isf_term_positive_frequency;
+        double* d_isf_term_positive_frequency;
+        GPU_ASSERT(deac_malloc_device(double, d_isf_term_positive_frequency, genome_size*number_of_timeslices, default_stream));
+        GPU_ASSERT(deac_memcopy_host_to_device(d__isf_term_positive_frequency, isf_term_positive_frequency, bytes_isf_term_positive_frequency, default_stream));
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
             double* d_isf_term_negative_frequency;
+            GPU_ASSERT(deac_malloc_device(double, d_isf_term_negative_frequency, genome_size*number_of_timeslices, default_stream));
+            GPU_ASSERT(deac_memcopy_host_to_device(d__isf_term_negative_frequency, isf_term_negative_frequency, bytes_isf_term_negative_frequency, default_stream));
         #endif
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            #ifdef USE_HIP
-                HIP_ASSERT(hipMalloc(&d_isf_term, bytes_isf_term)); // Allocate memory for isf_term on GPU
-                HIP_ASSERT(hipMemcpy( d_isf_term, isf_term, bytes_isf_term, hipMemcpyHostToDevice )); // Copy isf_term data to gpu
-            #endif
-            #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMalloc(&d_isf_term, bytes_isf_term)); // Allocate memory for isf_term on GPU
-                CUDA_ASSERT(cudaMemcpy( d_isf_term, isf_term, bytes_isf_term, cudaMemcpyHostToDevice )); // Copy isf_term data to gpu
-            #endif
-            #ifdef USE_SYCL
-                d_isf_term = sycl::malloc_device< double >( genome_size*number_of_timeslices, default_stream ); 
-                default_stream.memcpy( d_isf_term, isf_term, bytes_isf_term );
-                default_stream.wait();
-            #endif
-        #else
-            #ifdef USE_HIP
-                HIP_ASSERT(hipMalloc(&d_isf_term_positive_frequency, bytes_isf_term)); // Allocate memory for isf_term on GPU
-                HIP_ASSERT(hipMemcpy( d_isf_term_positive_frequency, isf_term_positive_frequency, bytes_isf_term, hipMemcpyHostToDevice )); // Copy isf_term data to gpu
-                HIP_ASSERT(hipMalloc(&d_isf_term_negative_frequency, bytes_isf_term)); // Allocate memory for isf_term on GPU
-                HIP_ASSERT(hipMemcpy( d_isf_term_negative_frequency, isf_term_negative_frequency, bytes_isf_term, hipMemcpyHostToDevice )); // Copy isf_term data to gpu
-            #endif
-            #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMalloc(&d_isf_term_positive_frequency, bytes_isf_term)); // Allocate memory for isf_term on GPU
-                CUDA_ASSERT(cudaMemcpy( d_isf_term_positive_frequency, isf_term_positive_frequency, bytes_isf_term, cudaMemcpyHostToDevice )); // Copy isf_term data to gpu
-                CUDA_ASSERT(cudaMalloc(&d_isf_term_negative_frequency, bytes_isf_term)); // Allocate memory for isf_term on GPU
-                CUDA_ASSERT(cudaMemcpy( d_isf_term_negative_frequency, isf_term_negative_frequency, bytes_isf_term, cudaMemcpyHostToDevice )); // Copy isf_term data to gpu
-            #endif
-            #ifdef USE_SYCL
-                d_isf_term_positive_frequency = sycl::malloc_device< double >( genome_size*number_of_timeslices, default_stream ); 
-                d_isf_term_negative_frequency = sycl::malloc_device< double >( genome_size*number_of_timeslices, default_stream ); 
-                q.memcpy( d_isf_term_positive_frequency, isf_term_positive_frequency, bytes_isf_term );
-                q.memcpy( d_isf_term_negative_frequency, isf_term_negative_frequency, bytes_isf_term );
-                q.wait();
-            #endif
-        #endif
+        deac_wait( default_stream );
     #endif
 
     //Generate population and set initial fitness
