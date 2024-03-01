@@ -264,7 +264,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         GPU_ASSERT(deac_malloc_device(double, d_isf_error, number_of_timeslices, default_stream));
         GPU_ASSERT(deac_memcopy_host_to_device(d_isf, isf, bytes_isf, default_stream));
         GPU_ASSERT(deac_memcopy_host_to_device(d_isf_error, isf_error, bytes_isf_error, default_stream));
-        deac_wait( default_stream );
+        GPU_ASSERT(deac_wait(default_stream));
     #endif
 
     #ifndef ZEROT
@@ -340,13 +340,13 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         //Load isf term onto GPU
         double* d_isf_term_positive_frequency;
         GPU_ASSERT(deac_malloc_device(double, d_isf_term_positive_frequency, genome_size*number_of_timeslices, default_stream));
-        GPU_ASSERT(deac_memcopy_host_to_device(d__isf_term_positive_frequency, isf_term_positive_frequency, bytes_isf_term_positive_frequency, default_stream));
+        GPU_ASSERT(deac_memcopy_host_to_device(d_isf_term_positive_frequency, isf_term_positive_frequency, bytes_isf_term_positive_frequency, default_stream));
         #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
             double* d_isf_term_negative_frequency;
             GPU_ASSERT(deac_malloc_device(double, d_isf_term_negative_frequency, genome_size*number_of_timeslices, default_stream));
-            GPU_ASSERT(deac_memcopy_host_to_device(d__isf_term_negative_frequency, isf_term_negative_frequency, bytes_isf_term_negative_frequency, default_stream));
+            GPU_ASSERT(deac_memcopy_host_to_device(d_isf_term_negative_frequency, isf_term_negative_frequency, bytes_isf_term_negative_frequency, default_stream));
         #endif
-        deac_wait( default_stream );
+        GPU_ASSERT(deac_wait(default_stream));
     #endif
 
     //Generate population and set initial fitness
@@ -378,31 +378,13 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double* d_population_old_negative_frequency;
         double* d_population_new_positive_frequency;
         double* d_population_new_negative_frequency;
-        #ifdef USE_HIP
-            HIP_ASSERT(hipMalloc(&d_population_old_positive_frequency, bytes_population));
-            HIP_ASSERT(hipMalloc(&d_population_new_positive_frequency, bytes_population));
-            HIP_ASSERT(hipMalloc(&d_population_old_negative_frequency, bytes_population));
-            HIP_ASSERT(hipMalloc(&d_population_new_negative_frequency, bytes_population));
-            HIP_ASSERT(hipMemcpy( d_population_old_positive_frequency, population_old_positive_frequency, bytes_population, hipMemcpyHostToDevice ));
-            HIP_ASSERT(hipMemcpy( d_population_old_negative_frequency, population_old_negative_frequency, bytes_population, hipMemcpyHostToDevice ));
-        #endif
-        #ifdef USE_CUDA
-            CUDA_ASSERT(cudaMalloc(&d_population_old_positive_frequency, bytes_population));
-            CUDA_ASSERT(cudaMalloc(&d_population_new_positive_frequency, bytes_population));
-            CUDA_ASSERT(cudaMalloc(&d_population_old_negative_frequency, bytes_population));
-            CUDA_ASSERT(cudaMalloc(&d_population_new_negative_frequency, bytes_population));
-            CUDA_ASSERT(cudaMemcpy( d_population_old_positive_frequency, population_old_positive_frequency, bytes_population, cudaMemcpyHostToDevice )); 
-            CUDA_ASSERT(cudaMemcpy( d_population_old_negative_frequency, population_old_negative_frequency, bytes_population, cudaMemcpyHostToDevice )); 
-        #endif
-        #ifdef USE_SYCL
-            d_population_old_positive_frequency = sycl::malloc_device< double >( genome_size*population_size, default_stream ); 
-            d_population_new_positive_frequency = sycl::malloc_device< double >( genome_size*population_size, default_stream ); 
-            d_population_old_negative_frequency = sycl::malloc_device< double >( genome_size*population_size, default_stream ); 
-            d_population_new_negative_frequency = sycl::malloc_device< double >( genome_size*population_size, default_stream ); 
-            q.memcpy( d_population_old_positive_frequency, population_old_positive_frequency, bytes_population );
-            q.memcpy( d_population_old_negative_frequency, population_old_negative_frequency, bytes_population );
-            q.wait();
-        #endif
+        GPU_ASSERT(deac_malloc_device(double, d_population_old_positive_frequency, genome_size*population_size, default_stream));
+        GPU_ASSERT(deac_malloc_device(double, d_population_new_positive_frequency, genome_size*population_size, default_stream));
+        GPU_ASSERT(deac_malloc_device(double, d_population_old_negative_frequency, genome_size*population_size, default_stream));
+        GPU_ASSERT(deac_malloc_device(double, d_population_new_negative_frequency, genome_size*population_size, default_stream));
+        GPU_ASSERT(deac_memcopy_host_to_device(d_population_old_positive_frequency, population_old_positive_frequency, bytes_population, default_stream));
+        GPU_ASSERT(deac_memcopy_host_to_device(d_population_old_negative_frequency, population_old_negative_frequency, bytes_population, default_stream));
+        GPU_ASSERT(deac_wait(default_stream));
     #endif
 
     // Normalize population
