@@ -374,55 +374,34 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #endif
 
     #ifdef USE_GPU
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            double* d_population_old;
-            double* d_population_new;
-            #ifdef USE_HIP
-                HIP_ASSERT(hipMalloc(&d_population_old, bytes_population));
-                HIP_ASSERT(hipMalloc(&d_population_new, bytes_population));
-                HIP_ASSERT(hipMemcpy( d_population_old, population_old, bytes_population, hipMemcpyHostToDevice ));
-            #endif
-            #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMalloc(&d_population_old, bytes_population));
-                CUDA_ASSERT(cudaMalloc(&d_population_new, bytes_population));
-                CUDA_ASSERT(cudaMemcpy( d_population_old, population_old, bytes_population, cudaMemcpyHostToDevice )); 
-            #endif
-            #ifdef USE_SYCL
-                d_population_old = sycl::malloc_device< double >( genome_size*population_size, default_stream ); 
-                d_population_new = sycl::malloc_device< double >( genome_size*population_size, default_stream ); 
-                q.memcpy( d_population_old, population_old, bytes_population );
-                q.wait();
-            #endif
-        #else
-            double* d_population_old_positive_frequency;
-            double* d_population_old_negative_frequency;
-            double* d_population_new_positive_frequency;
-            double* d_population_new_negative_frequency;
-            #ifdef USE_HIP
-                HIP_ASSERT(hipMalloc(&d_population_old_positive_frequency, bytes_population));
-                HIP_ASSERT(hipMalloc(&d_population_new_positive_frequency, bytes_population));
-                HIP_ASSERT(hipMalloc(&d_population_old_negative_frequency, bytes_population));
-                HIP_ASSERT(hipMalloc(&d_population_new_negative_frequency, bytes_population));
-                HIP_ASSERT(hipMemcpy( d_population_old_positive_frequency, population_old_positive_frequency, bytes_population, hipMemcpyHostToDevice ));
-                HIP_ASSERT(hipMemcpy( d_population_old_negative_frequency, population_old_negative_frequency, bytes_population, hipMemcpyHostToDevice ));
-            #endif
-            #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMalloc(&d_population_old_positive_frequency, bytes_population));
-                CUDA_ASSERT(cudaMalloc(&d_population_new_positive_frequency, bytes_population));
-                CUDA_ASSERT(cudaMalloc(&d_population_old_negative_frequency, bytes_population));
-                CUDA_ASSERT(cudaMalloc(&d_population_new_negative_frequency, bytes_population));
-                CUDA_ASSERT(cudaMemcpy( d_population_old_positive_frequency, population_old_positive_frequency, bytes_population, cudaMemcpyHostToDevice )); 
-                CUDA_ASSERT(cudaMemcpy( d_population_old_negative_frequency, population_old_negative_frequency, bytes_population, cudaMemcpyHostToDevice )); 
-            #endif
-            #ifdef USE_SYCL
-                d_population_old_positive_frequency = sycl::malloc_device< double >( genome_size*population_size, default_stream ); 
-                d_population_new_positive_frequency = sycl::malloc_device< double >( genome_size*population_size, default_stream ); 
-                d_population_old_negative_frequency = sycl::malloc_device< double >( genome_size*population_size, default_stream ); 
-                d_population_new_negative_frequency = sycl::malloc_device< double >( genome_size*population_size, default_stream ); 
-                q.memcpy( d_population_old_positive_frequency, population_old_positive_frequency, bytes_population );
-                q.memcpy( d_population_old_negative_frequency, population_old_negative_frequency, bytes_population );
-                q.wait();
-            #endif
+        double* d_population_old_positive_frequency;
+        double* d_population_old_negative_frequency;
+        double* d_population_new_positive_frequency;
+        double* d_population_new_negative_frequency;
+        #ifdef USE_HIP
+            HIP_ASSERT(hipMalloc(&d_population_old_positive_frequency, bytes_population));
+            HIP_ASSERT(hipMalloc(&d_population_new_positive_frequency, bytes_population));
+            HIP_ASSERT(hipMalloc(&d_population_old_negative_frequency, bytes_population));
+            HIP_ASSERT(hipMalloc(&d_population_new_negative_frequency, bytes_population));
+            HIP_ASSERT(hipMemcpy( d_population_old_positive_frequency, population_old_positive_frequency, bytes_population, hipMemcpyHostToDevice ));
+            HIP_ASSERT(hipMemcpy( d_population_old_negative_frequency, population_old_negative_frequency, bytes_population, hipMemcpyHostToDevice ));
+        #endif
+        #ifdef USE_CUDA
+            CUDA_ASSERT(cudaMalloc(&d_population_old_positive_frequency, bytes_population));
+            CUDA_ASSERT(cudaMalloc(&d_population_new_positive_frequency, bytes_population));
+            CUDA_ASSERT(cudaMalloc(&d_population_old_negative_frequency, bytes_population));
+            CUDA_ASSERT(cudaMalloc(&d_population_new_negative_frequency, bytes_population));
+            CUDA_ASSERT(cudaMemcpy( d_population_old_positive_frequency, population_old_positive_frequency, bytes_population, cudaMemcpyHostToDevice )); 
+            CUDA_ASSERT(cudaMemcpy( d_population_old_negative_frequency, population_old_negative_frequency, bytes_population, cudaMemcpyHostToDevice )); 
+        #endif
+        #ifdef USE_SYCL
+            d_population_old_positive_frequency = sycl::malloc_device< double >( genome_size*population_size, default_stream ); 
+            d_population_new_positive_frequency = sycl::malloc_device< double >( genome_size*population_size, default_stream ); 
+            d_population_old_negative_frequency = sycl::malloc_device< double >( genome_size*population_size, default_stream ); 
+            d_population_new_negative_frequency = sycl::malloc_device< double >( genome_size*population_size, default_stream ); 
+            q.memcpy( d_population_old_positive_frequency, population_old_positive_frequency, bytes_population );
+            q.memcpy( d_population_old_negative_frequency, population_old_negative_frequency, bytes_population );
+            q.wait();
         #endif
     #endif
 
