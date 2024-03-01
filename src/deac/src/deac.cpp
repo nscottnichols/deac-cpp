@@ -249,7 +249,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     }
                     ss << *it;
                 }
-                throw std::runtime_error( ss.str() );
+                throw std::runtime_error(ss.str());
             }
         #endif
     #endif
@@ -260,25 +260,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double* d_isf_error;
         size_t bytes_isf = sizeof(double)*number_of_timeslices;
         size_t bytes_isf_error = sizeof(double)*number_of_timeslices;
-        #ifdef USE_HIP
-            HIP_ASSERT(hipMalloc(&d_isf, bytes_isf));
-            HIP_ASSERT(hipMalloc(&d_isf_error, bytes_isf_error));
-            HIP_ASSERT(hipMemcpy( d_isf, isf, bytes_isf, hipMemcpyHostToDevice ));
-            HIP_ASSERT(hipMemcpy( d_isf_error, isf_error, bytes_isf_error, hipMemcpyHostToDevice ));
-        #endif
-        #ifdef USE_CUDA
-            CUDA_ASSERT(cudaMalloc(&d_isf, bytes_isf));
-            CUDA_ASSERT(cudaMalloc(&d_isf_error, bytes_isf_error));
-            CUDA_ASSERT(cudaMemcpy( d_isf, isf, bytes_isf, cudaMemcpyHostToDevice ));
-            CUDA_ASSERT(cudaMemcpy( d_isf_error, isf_error, bytes_isf_error, cudaMemcpyHostToDevice ));
-        #endif
-        #ifdef USE_SYCL
-            d_isf       = sycl::malloc_device< double >( number_of_timeslices, default_stream ); 
-            d_isf_error = sycl::malloc_device< double >( number_of_timeslices, default_stream ); 
-            default_stream.memcpy( d_isf,       isf,       bytes_isf );
-            default_stream.memcpy( d_isf_error, isf_error, bytes_isf_error );
-            default_stream.wait();
-        #endif
+        GPU_ASSERT(deac_malloc_device(double, d_isf,       number_of_timeslices, default_stream));
+        GPU_ASSERT(deac_malloc_device(double, d_isf_error, number_of_timeslices, default_stream));
+        GPU_ASSERT(deac_memcopy_host_to_device(d_isf, isf, bytes_isf, default_stream));
+        GPU_ASSERT(deac_memcopy_host_to_device(d_isf_error, isf_error, bytes_isf_error, default_stream));
+        deac_wait( default_stream );
     #endif
 
     #ifndef ZEROT
