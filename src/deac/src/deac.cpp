@@ -308,13 +308,13 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             size_t isf_term_idx = i*genome_size + j;
             #ifndef ZEROT
                 #ifdef USE_HYPERBOLIC_MODEL
-                    isf_term_positive_frequency[isf_term_idx] = df*cosh(bo2mt*f);
+                    isf_term_positive_frequency[isf_term_idx] = df*cosh(bo2mt*f); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
                     #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                         isf_term_negative_frequency[isf_term_idx] = df*cosh(bo2mt*f); //FIXME need to calculate new value
                     #endif
                 #endif
                 #ifdef USE_STANDARD_MODEL
-                    isf_term_positive_frequency[isf_term_idx] = df*(exp(-bmt*f) + exp(-t*f));
+                    isf_term_positive_frequency[isf_term_idx] = df*(exp(-bmt*f) + exp(-t*f)); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
                     #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                         isf_term_negative_frequency[isf_term_idx] = df*(exp(-bmt*f) + exp(-t*f)); //FIXME need to calculate new value
                     #endif
@@ -322,13 +322,13 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 #ifdef USE_NORMALIZATION_MODEL
                     double _num = exp(-bmt*f) + exp(-t*f);
                     double _denom = 1.0 + exp(-beta*f);
-                    isf_term_positive_frequency[isf_term_idx] = df*(_num/_denom);
+                    isf_term_positive_frequency[isf_term_idx] = df*(_num/_denom); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
                     #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                         isf_term_negative_frequency[isf_term_idx] = df*(_num/_denom); //FIXME need to calculate new value
                     #endif
                 #endif
             #else
-                isf_term_positive_frequency[isf_term_idx] = df*exp(-t*f);
+                isf_term_positive_frequency[isf_term_idx] = df*exp(-t*f); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
                 #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                     isf_term_negative_frequency[isf_term_idx] = df*exp(-t*f); //FIXME need to calculate new value
                 #endif
@@ -352,20 +352,26 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     //Generate population and set initial fitness
     size_t bytes_population = sizeof(double)*genome_size*population_size;
     double * population_old_positive_frequency;
-    double * population_old_negative_frequency;
     double * population_new_positive_frequency;
-    double * population_new_negative_frequency;
-    population_old_positive_frequency = (double*) malloc(bytes_population);
-    population_old_negative_frequency = (double*) malloc(bytes_population);
     population_new_positive_frequency = (double*) malloc(bytes_population);
-    population_new_negative_frequency = (double*) malloc(bytes_population);
+    population_old_positive_frequency = (double*) malloc(bytes_population);
+    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+        double * population_old_negative_frequency;
+        double * population_new_negative_frequency;
+        population_old_negative_frequency = (double*) malloc(bytes_population);
+        population_new_negative_frequency = (double*) malloc(bytes_population);
+    #endif
     for (size_t i=0; i<genome_size*population_size; i++) {
         population_old_positive_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
-        population_old_negative_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            population_old_negative_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
+        #endif
     }
-    for (size_t i=0; i<population_size; i++) {
-        population_new_negative_frequency[i*genome_size] = population_new_positive_frequency[i*genome_size]; // Match up zero (always take value from positive result)
-    }
+    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+        for (size_t i=0; i<population_size; i++) {
+            population_new_negative_frequency[i*genome_size] = population_new_positive_frequency[i*genome_size]; // Match up zero (always take value from positive result)
+        }
+    #endif
 
     #ifdef USE_GPU
         #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
