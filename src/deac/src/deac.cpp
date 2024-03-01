@@ -276,40 +276,23 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
     //Set isf term for trapezoidal rule integration with dsf (population members)
     size_t bytes_isf_term = sizeof(double)*genome_size*number_of_timeslices;
-    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-        double * isf_term;
-        isf_term = (double*) malloc(bytes_isf_term);
-    #else
-        double * isf_term_positive_frequency;
+    double * isf_term_positive_frequency;
+    isf_term_positive_frequency = (double*) malloc(bytes_isf_term);
+    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
         double * isf_term_negative_frequency;
-        isf_term_positive_frequency = (double*) malloc(bytes_isf_term);
         isf_term_negative_frequency = (double*) malloc(bytes_isf_term);
     #endif
     for (size_t i=0; i<number_of_timeslices; i++) {
         double t = imaginary_time[i];
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            #ifndef ZEROT
-                #ifdef USE_HYPERBOLIC_MODEL
-                    double bo2mt = 0.5*beta - t;
-                #endif
-                #ifdef USE_STANDARD_MODEL
-                    double bmt = beta - t;
-                #endif
-                #ifdef USE_NORMALIZATION_MODEL
-                    double bmt = beta - t;
-                #endif
+        #ifndef ZEROT
+            #ifdef USE_HYPERBOLIC_MODEL
+                double bo2mt = 0.5*beta - t;
             #endif
-        #else
-            #ifndef ZEROT
-                #ifdef USE_HYPERBOLIC_MODEL
-                    double bmt = beta - t; // FIXME not implemented
-                #endif
-                #ifdef USE_STANDARD_MODEL
-                    double bmt = beta - t;
-                #endif
-                #ifdef USE_NORMALIZATION_MODEL
-                    double bmt = beta - t; // FIXME not implemented
-                #endif
+            #ifdef USE_STANDARD_MODEL
+                double bmt = beta - t;
+            #endif
+            #ifdef USE_NORMALIZATION_MODEL
+                double bmt = beta - t;
             #endif
         #endif
         for (size_t j=0; j<genome_size; j++) {
@@ -323,40 +306,31 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 df = 0.5*(frequency[j+1] - frequency[j-1]);
             }
             size_t isf_term_idx = i*genome_size + j;
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                #ifndef ZEROT
-                    #ifdef USE_HYPERBOLIC_MODEL
-                        isf_term[isf_term_idx] = df*cosh(bo2mt*f);
-                    #endif
-                    #ifdef USE_STANDARD_MODEL
-                        isf_term[isf_term_idx] = df*(exp(-bmt*f) + exp(-t*f));
-                    #endif
-                    #ifdef USE_NORMALIZATION_MODEL
-                        double _num = exp(-bmt*f) + exp(-t*f);
-                        double _denom = 1.0 + exp(-beta*f);
-                        isf_term[isf_term_idx] = df*(_num/_denom);
+            #ifndef ZEROT
+                #ifdef USE_HYPERBOLIC_MODEL
+                    isf_term_positive_frequency[isf_term_idx] = df*cosh(bo2mt*f);
+                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        isf_term_negative_frequency[isf_term_idx] = df*cosh(bo2mt*f); //FIXME need to calculate new value
                     #endif
                 #endif
-                #ifdef ZEROT
-                    isf_term[isf_term_idx] = df*exp(-t*f);
+                #ifdef USE_STANDARD_MODEL
+                    isf_term_positive_frequency[isf_term_idx] = df*(exp(-bmt*f) + exp(-t*f));
+                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        isf_term_negative_frequency[isf_term_idx] = df*(exp(-bmt*f) + exp(-t*f)); //FIXME need to calculate new value
+                    #endif
+                #endif
+                #ifdef USE_NORMALIZATION_MODEL
+                    double _num = exp(-bmt*f) + exp(-t*f);
+                    double _denom = 1.0 + exp(-beta*f);
+                    isf_term_positive_frequency[isf_term_idx] = df*(_num/_denom);
+                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        isf_term_negative_frequency[isf_term_idx] = df*(_num/_denom); //FIXME need to calculate new value
+                    #endif
                 #endif
             #else
-                #ifndef ZEROT
-                    #ifdef USE_HYPERBOLIC_MODEL
-                        isf_term_positive_frequency[isf_term_idx] = df*exp(-t*f)/(1.0 + exp(-beta*f));
-                        isf_term_negative_frequency[isf_term_idx] = df*exp(-bmt*f)/(1.0 + exp(-beta*f));
-                    #endif
-                    #ifdef USE_STANDARD_MODEL
-                        isf_term_positive_frequency[isf_term_idx] = df*exp(-t*f)/(1.0 + exp(-beta*f));
-                        isf_term_negative_frequency[isf_term_idx] = df*exp(-bmt*f)/(1.0 + exp(-beta*f));
-                    #endif
-                    #ifdef USE_NORMALIZATION_MODEL
-                        isf_term_positive_frequency[isf_term_idx] = df*exp(-t*f)/(1.0 + exp(-beta*f));
-                        isf_term_negative_frequency[isf_term_idx] = df*exp(-bmt*f)/(1.0 + exp(-beta*f));
-                    #endif
-                #endif
-                #ifdef ZEROT
-                    isf_term[isf_term_idx] = df*exp(-t*f);
+                isf_term_positive_frequency[isf_term_idx] = df*exp(-t*f);
+                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    isf_term_negative_frequency[isf_term_idx] = df*exp(-t*f); //FIXME need to calculate new value
                 #endif
             #endif
         }
