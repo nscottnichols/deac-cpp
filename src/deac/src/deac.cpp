@@ -448,9 +448,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             //Load normalization terms onto GPU
             GPU_ASSERT(deac_malloc_device(double, d_normalization,                         population_size, default_stream));
             GPU_ASSERT(deac_malloc_device(double, d_normalization_term_positive_frequency, genome_size,     default_stream));
-            GPU_ASSERT(deac_malloc_device(double, d_normalization_term_negative_frequency, genome_size,     default_stream));
             GPU_ASSERT(deac_memcopy_host_to_device(d_normalization_term_positive_frequency, normalization_term_positive_frequency, bytes_normalization_term, default_stream));
-            GPU_ASSERT(deac_memcopy_host_to_device(d_normalization_term_negative_frequency, normalization_term_negative_frequency, bytes_normalization_term, default_stream));
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                GPU_ASSERT(deac_malloc_device(double, d_normalization_term_negative_frequency, genome_size,     default_stream));
+                GPU_ASSERT(deac_memcopy_host_to_device(d_normalization_term_negative_frequency, normalization_term_negative_frequency, bytes_normalization_term, default_stream));
+            #endif
             GPU_ASSERT(deac_wait(default_stream));
         #endif
 
