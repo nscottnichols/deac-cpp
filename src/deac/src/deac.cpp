@@ -375,15 +375,17 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
     #ifdef USE_GPU
         double* d_population_old_positive_frequency;
-        double* d_population_old_negative_frequency;
         double* d_population_new_positive_frequency;
-        double* d_population_new_negative_frequency;
         GPU_ASSERT(deac_malloc_device(double, d_population_old_positive_frequency, genome_size*population_size, default_stream));
         GPU_ASSERT(deac_malloc_device(double, d_population_new_positive_frequency, genome_size*population_size, default_stream));
-        GPU_ASSERT(deac_malloc_device(double, d_population_old_negative_frequency, genome_size*population_size, default_stream));
-        GPU_ASSERT(deac_malloc_device(double, d_population_new_negative_frequency, genome_size*population_size, default_stream));
         GPU_ASSERT(deac_memcopy_host_to_device(d_population_old_positive_frequency, population_old_positive_frequency, bytes_population, default_stream));
-        GPU_ASSERT(deac_memcopy_host_to_device(d_population_old_negative_frequency, population_old_negative_frequency, bytes_population, default_stream));
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            double* d_population_old_negative_frequency;
+            double* d_population_new_negative_frequency;
+            GPU_ASSERT(deac_malloc_device(double, d_population_old_negative_frequency, genome_size*population_size, default_stream));
+            GPU_ASSERT(deac_malloc_device(double, d_population_new_negative_frequency, genome_size*population_size, default_stream));
+            GPU_ASSERT(deac_memcopy_host_to_device(d_population_old_negative_frequency, population_old_negative_frequency, bytes_population, default_stream));
+        #endif
         GPU_ASSERT(deac_wait(default_stream));
     #endif
 
