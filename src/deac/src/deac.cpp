@@ -229,25 +229,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
     #ifdef USE_GPU
         //Create GPU device streams
-        #ifdef USE_HIP
-            hipStream_t stream_array[MAX_GPU_STREAMS];
-        #endif
-        #ifdef USE_CUDA
-            cudaStream_t stream_array[MAX_GPU_STREAMS];
-        #endif
+        deac_stream_t stream_array[MAX_GPU_STREAMS];
         for (size_t i = 0; i < MAX_GPU_STREAMS; i++) {
-            #ifdef USE_HIP
-                HIP_ASSERT(hipStreamCreate(&stream_array[i]));
-            #endif
-            #ifdef USE_CUDA
-                CUDA_ASSERT(cudaStreamCreate(&stream_array[i]));
-            #endif
+            GPU_ASSERT(deac_stream_create(stream_array[i]));
         }
-        #ifdef USE_SYCL
-            auto devices = sycl::device::get_devices();
-            sycl::queue q = sycl::queue(devices[0]);
 
-            //Test for vaild subgroup size
+        #ifdef USE_SYCL
+            // Set up default "stream"
+            auto q = stream_array[0];
+            //Test for valid subgroup size
             auto sg_sizes = q.get_device().get_info<sycl::info::device::sub_group_sizes>();
             if (std::none_of(sg_sizes.cbegin(), sg_sizes.cend(), [](auto i) { return i  == SUB_GROUP_SIZE; })) {
                 std::stringstream ss;
@@ -3400,12 +3390,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
             // Destroy Streams
             for (size_t i = 0; i < MAX_GPU_STREAMS; i++) {
-                #ifdef USE_HIP
-                    HIP_ASSERT(hipStreamDestroy(stream_array[i]));
-                #endif
-                #ifdef USE_CUDA
-                    CUDA_ASSERT(cudaStreamDestroy(stream_array[i]));
-                #endif
+                GPU_ASSERT(deac_stream_destroy(stream_array[i]));
             }
         #endif
     #else
@@ -3572,12 +3557,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
             // Destroy Streams
             for (size_t i = 0; i < MAX_GPU_STREAMS; i++) {
-                #ifdef USE_HIP
-                    HIP_ASSERT(hipStreamDestroy(stream_array[i]));
-                #endif
-                #ifdef USE_CUDA
-                    CUDA_ASSERT(cudaStreamDestroy(stream_array[i]));
-                #endif
+                GPU_ASSERT(deac_stream_destroy(stream_array[i]));
             }
         #endif
     #endif

@@ -23,14 +23,21 @@
     #endif
     #ifdef USE_HIP
         #include "hip/hip_runtime.h"
-        #define HIP_ASSERT(x) (assert((x)==hipSuccess))
+        #define GPU_ASSERT(x) (assert((x)==hipSuccess))
+        typedef hipStream_t deac_stream_t;
+        #define deac_stream_create(x) hipStreamCreate(&x)
+        #define deac_stream_destroy(x) hipStreamDestroy(x)
     #endif
     #ifdef USE_CUDA
         #include <cuda_runtime.h>
-        #define CUDA_ASSERT(x) (assert((x)==cudaSuccess))
+        #define GPU_ASSERT(x) (assert((x)==cudaSuccess))
+        typedef cudaStream_t deac_stream_t;
+        #define deac_stream_create(x) cudaStreamCreate(&x)
+        #define deac_stream_destroy(x) cudaStreamDestroy(x)
     #endif
     #ifdef USE_SYCL
         #include <CL/sycl.hpp>
+        #define GPU_ASSERT(x) x
         #ifndef SUB_GROUP_SIZE
             #define SUB_GROUP_SIZE 8 ///< number of threads per subgroup
         #endif
@@ -40,6 +47,9 @@
         #if GPU_BLOCK_SIZE < 2*SUB_GROUP_SIZE
             #error "GPU_BLOCK_SIZE must be >= 2*SUB_GROUP_SIZE"
         #endif 
+        typedef sycl::queue deac_stream_t;
+        #define deac_stream_create(x) x = sycl::queue()
+        #define deac_stream_destroy(x) do {} while(0)
     #endif
 #endif
 #endif
