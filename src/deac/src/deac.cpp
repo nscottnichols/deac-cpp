@@ -340,11 +340,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         //Load isf term onto GPU
         double* d_isf_term_positive_frequency;
         GPU_ASSERT(deac_malloc_device(double, d_isf_term_positive_frequency, genome_size*number_of_timeslices, default_stream));
-        GPU_ASSERT(deac_memcopy_host_to_device(d_isf_term_positive_frequency, isf_term_positive_frequency, bytes_isf_term_positive_frequency, default_stream));
+        GPU_ASSERT(deac_memcopy_host_to_device(d_isf_term_positive_frequency, isf_term_positive_frequency, bytes_isf_term, default_stream));
         #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
             double* d_isf_term_negative_frequency;
             GPU_ASSERT(deac_malloc_device(double, d_isf_term_negative_frequency, genome_size*number_of_timeslices, default_stream));
-            GPU_ASSERT(deac_memcopy_host_to_device(d_isf_term_negative_frequency, isf_term_negative_frequency, bytes_isf_term_negative_frequency, default_stream));
+            GPU_ASSERT(deac_memcopy_host_to_device(d_isf_term_negative_frequency, isf_term_negative_frequency, bytes_isf_term, default_stream));
         #endif
         GPU_ASSERT(deac_wait(default_stream));
     #endif
@@ -390,31 +390,20 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #endif
 
     // Normalize population
-    size_t bytes_normalization_term = sizeof(double)*genome_size;
     size_t bytes_normalization = sizeof(double)*population_size;
-    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-        double * normalization_term;
-    #else
-        double * normalization_term_positive_frequency;
-        double * normalization_term_negative_frequency;
-    #endif
+    size_t bytes_normalization_term = sizeof(double)*genome_size;
     double * normalization;
+    double * normalization_term_positive_frequency;
+    double * normalization_term_negative_frequency;
     #ifdef USE_GPU
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            double* d_normalization_term;
-        #else
-            double* d_normalization_term_positive_frequency;
-            double* d_normalization_term_negative_frequency;
-        #endif
         double* d_normalization;
+        double* d_normalization_term_positive_frequency;
+        double* d_normalization_term_negative_frequency;
     #endif
     if (normalize) {
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            normalization_term = (double*) malloc(bytes_normalization_term);
-        #else
-            normalization_term_positive_frequency = (double*) malloc(bytes_normalization_term);
-            normalization_term_negative_frequency = (double*) malloc(bytes_normalization_term);
-        #endif
+        normalization = (double*) malloc(bytes_normalization);
+        normalization_term_positive_frequency = (double*) malloc(bytes_normalization_term);
+        normalization_term_negative_frequency = (double*) malloc(bytes_normalization_term);
         for (size_t j=0; j<genome_size; j++) {
             double f = frequency[j];
             double df;
@@ -425,44 +414,26 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             } else {
                 df = 0.5*(frequency[j+1] - frequency[j-1]);
             }
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                #ifndef ZEROT
-                    #ifdef USE_HYPERBOLIC_MODEL
-                        normalization_term[j] = df*cosh(0.5*beta*f);
-                    #endif
-                    #ifdef USE_STANDARD_MODEL
-                        normalization_term[j] = df*(1.0 + exp(-beta*f));
-                    #endif
-                    #ifdef USE_NORMALIZATION_MODEL
-                        normalization_term[j] = df;
-                    #endif
+            #ifndef ZEROT
+                #ifdef USE_HYPERBOLIC_MODEL
+                    normalization_term_positive_frequency[j] = df*cosh(0.5*beta*f); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                    normalization_term_negative_frequency[j] = df; //FIXME need to calculate new value
                 #endif
-                #ifdef ZEROT
-                    normalization_term[j] = df;
+                #ifdef USE_STANDARD_MODEL
+                    normalization_term_positive_frequency[j] = df*(1.0 + exp(-beta*f)); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                    normalization_term_negative_frequency[j] = df; //FIXME need to calculate new value
                 #endif
-            #else
-                #ifndef ZEROT
-                    #ifdef USE_HYPERBOLIC_MODEL
-                        normalization_term_positive_frequency[j] = df; //FIXME not implemented
-                        normalization_term_negative_frequency[j] = df; //FIXME not implemented
-                    #endif
-                    #ifdef USE_STANDARD_MODEL
-                        normalization_term_positive_frequency[j] = df;
-                        normalization_term_negative_frequency[j] = df;
-                    #endif
-                    #ifdef USE_NORMALIZATION_MODEL
-                        normalization_term_positive_frequency[j] = df; //FIXME not implemented
-                        normalization_term_negative_frequency[j] = df; //FIXME not implemented
-                    #endif
+                #ifdef USE_NORMALIZATION_MODEL
+                    normalization_term_positive_frequency[j] = df; //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                    normalization_term_negative_frequency[j] = df; //FIXME need to calculate new value
                 #endif
-                #ifdef ZEROT
-                    normalization_term_positive_frequency[j] = df;
-                    normalization_term_negative_frequency[j] = df;
-                #endif
+            #endif
+            #ifdef ZEROT
+                normalization_term_positive_frequency[j] = df; //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                normalization_term_negative_frequency[j] = df; //FIXME need to calculate new value
             #endif
         }
 
-        normalization = (double*) malloc(bytes_normalization);
         #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
             #ifdef USE_GPU
                 //Load normalization terms onto GPU
