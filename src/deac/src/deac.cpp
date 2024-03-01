@@ -351,31 +351,21 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
     //Generate population and set initial fitness
     size_t bytes_population = sizeof(double)*genome_size*population_size;
-    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-        double * population_old;
-        double * population_new;
-        population_old = (double*) malloc(bytes_population);
-        population_new = (double*) malloc(bytes_population);
-        for (size_t i=0; i<genome_size*population_size; i++) {
-            population_old[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
-        }
-    #else
-        double * population_old_positive_frequency;
-        double * population_old_negative_frequency;
-        double * population_new_positive_frequency;
-        double * population_new_negative_frequency;
-        population_old_positive_frequency = (double*) malloc(bytes_population);
-        population_old_negative_frequency = (double*) malloc(bytes_population);
-        population_new_positive_frequency = (double*) malloc(bytes_population);
-        population_new_negative_frequency = (double*) malloc(bytes_population);
-        for (size_t i=0; i<genome_size*population_size; i++) {
-            population_old_positive_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
-            population_old_negative_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
-        }
-        for (size_t i=0; i<population_size; i++) {
-            population_new_negative_frequency[i*genome_size] = population_new_positive_frequency[i*genome_size]; // Match up zero (always take value from positive result)
-        }
-    #endif
+    double * population_old_positive_frequency;
+    double * population_old_negative_frequency;
+    double * population_new_positive_frequency;
+    double * population_new_negative_frequency;
+    population_old_positive_frequency = (double*) malloc(bytes_population);
+    population_old_negative_frequency = (double*) malloc(bytes_population);
+    population_new_positive_frequency = (double*) malloc(bytes_population);
+    population_new_negative_frequency = (double*) malloc(bytes_population);
+    for (size_t i=0; i<genome_size*population_size; i++) {
+        population_old_positive_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
+        population_old_negative_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
+    }
+    for (size_t i=0; i<population_size; i++) {
+        population_new_negative_frequency[i*genome_size] = population_new_positive_frequency[i*genome_size]; // Match up zero (always take value from positive result)
+    }
 
     #ifdef USE_GPU
         #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
