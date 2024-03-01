@@ -444,51 +444,29 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
         }
 
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            #ifdef USE_GPU
-                //Load normalization terms onto GPU
-                #ifdef USE_HIP
-                    HIP_ASSERT(hipMalloc(&d_normalization, bytes_normalization));
-                    HIP_ASSERT(hipMalloc(&d_normalization_term, bytes_normalization_term));
-                    HIP_ASSERT(hipMemcpy( d_normalization_term, normalization_term, bytes_normalization_term, hipMemcpyHostToDevice ));
-                #endif
-                #ifdef USE_CUDA
-                    CUDA_ASSERT(cudaMalloc(&d_normalization, bytes_normalization));
-                    CUDA_ASSERT(cudaMalloc(&d_normalization_term, bytes_normalization_term));
-                    CUDA_ASSERT(cudaMemcpy( d_normalization_term, normalization_term, bytes_normalization_term, cudaMemcpyHostToDevice )); 
-                #endif
-                #ifdef USE_SYCL
-                    d_normalization = sycl::malloc_device< double >( population_size, default_stream ); 
-                    d_normalization_term = sycl::malloc_device< double >( genome_size, default_stream ); 
-                    q.memcpy( d_normalization_term, normalization_term, bytes_normalization_term );
-                    q.wait();
-                #endif
+        #ifdef USE_GPU
+            //Load normalization terms onto GPU
+            #ifdef USE_HIP
+                HIP_ASSERT(hipMalloc(&d_normalization, bytes_normalization));
+                HIP_ASSERT(hipMalloc(&d_normalization_term_positive_frequency, bytes_normalization_term));
+                HIP_ASSERT(hipMalloc(&d_normalization_term_negative_frequency, bytes_normalization_term));
+                HIP_ASSERT(hipMemcpy( d_normalization_term_positive_frequency, normalization_term_positive_frequency, bytes_normalization_term, hipMemcpyHostToDevice ));
+                HIP_ASSERT(hipMemcpy( d_normalization_term_negative_frequency, normalization_term_negative_frequency, bytes_normalization_term, hipMemcpyHostToDevice ));
             #endif
-        #else
-            #ifdef USE_GPU
-                //Load normalization terms onto GPU
-                #ifdef USE_HIP
-                    HIP_ASSERT(hipMalloc(&d_normalization, bytes_normalization));
-                    HIP_ASSERT(hipMalloc(&d_normalization_term_positive_frequency, bytes_normalization_term));
-                    HIP_ASSERT(hipMalloc(&d_normalization_term_negative_frequency, bytes_normalization_term));
-                    HIP_ASSERT(hipMemcpy( d_normalization_term_positive_frequency, normalization_term_positive_frequency, bytes_normalization_term, hipMemcpyHostToDevice ));
-                    HIP_ASSERT(hipMemcpy( d_normalization_term_negative_frequency, normalization_term_negative_frequency, bytes_normalization_term, hipMemcpyHostToDevice ));
-                #endif
-                #ifdef USE_CUDA
-                    CUDA_ASSERT(cudaMalloc(&d_normalization, bytes_normalization));
-                    CUDA_ASSERT(cudaMalloc(&d_normalization_term_positive_frequency, bytes_normalization_term));
-                    CUDA_ASSERT(cudaMalloc(&d_normalization_term_negative_frequency, bytes_normalization_term));
-                    CUDA_ASSERT(cudaMemcpy( d_normalization_term_positive_frequency, normalization_term_positive_frequency, bytes_normalization_term, cudaMemcpyHostToDevice )); 
-                    CUDA_ASSERT(cudaMemcpy( d_normalization_term_negative_frequency, normalization_term_negative_frequency, bytes_normalization_term, cudaMemcpyHostToDevice )); 
-                #endif
-                #ifdef USE_SYCL
-                    d_normalization = sycl::malloc_device< double >( population_size, default_stream ); 
-                    d_normalization_term_positive_frequency = sycl::malloc_device< double >( genome_size, default_stream ); 
-                    d_normalization_term_negative_frequency = sycl::malloc_device< double >( genome_size, default_stream ); 
-                    q.memcpy( d_normalization_term_positive_frequency, normalization_term_positive_frequency, bytes_normalization_term );
-                    q.memcpy( d_normalization_term_negative_frequency, normalization_term_negative_frequency, bytes_normalization_term );
-                    q.wait();
-                #endif
+            #ifdef USE_CUDA
+                CUDA_ASSERT(cudaMalloc(&d_normalization, bytes_normalization));
+                CUDA_ASSERT(cudaMalloc(&d_normalization_term_positive_frequency, bytes_normalization_term));
+                CUDA_ASSERT(cudaMalloc(&d_normalization_term_negative_frequency, bytes_normalization_term));
+                CUDA_ASSERT(cudaMemcpy( d_normalization_term_positive_frequency, normalization_term_positive_frequency, bytes_normalization_term, cudaMemcpyHostToDevice )); 
+                CUDA_ASSERT(cudaMemcpy( d_normalization_term_negative_frequency, normalization_term_negative_frequency, bytes_normalization_term, cudaMemcpyHostToDevice )); 
+            #endif
+            #ifdef USE_SYCL
+                d_normalization = sycl::malloc_device< double >( population_size, default_stream ); 
+                d_normalization_term_positive_frequency = sycl::malloc_device< double >( genome_size, default_stream ); 
+                d_normalization_term_negative_frequency = sycl::malloc_device< double >( genome_size, default_stream ); 
+                q.memcpy( d_normalization_term_positive_frequency, normalization_term_positive_frequency, bytes_normalization_term );
+                q.memcpy( d_normalization_term_negative_frequency, normalization_term_negative_frequency, bytes_normalization_term );
+                q.wait();
             #endif
         #endif
 
