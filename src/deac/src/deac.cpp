@@ -458,109 +458,32 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
         //Set normalization
         #ifdef USE_GPU
+            //FIXME need gpu_matmul and gpu_normalize_population kernel launchers (and possibly implementations) for CUDA and HIP (also should take a look at SYCL version)
             size_t grid_size_set_normalization = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-            #ifdef USE_HIP
-                HIP_ASSERT(hipMemset(d_normalization, 0, bytes_normalization));
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    for (size_t i=0; i<population_size; i++) {
-                        size_t stream_idx = i % MAX_GPU_STREAMS;
-                        hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
-                                dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
-                                d_normalization, d_population_old, d_normalization_term, genome_size, i);
-                    }
-                    HIP_ASSERT(hipDeviceSynchronize());
-                    size_t grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
-                    hipLaunchKernelGGL(gpu_normalize_population, dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE), 0, 0,
-                            d_population_old, d_normalization, zeroth_moment, population_size, genome_size); 
-                    HIP_ASSERT(hipDeviceSynchronize());
-                #else
-                    for (size_t i=0; i<population_size; i++) {
-                        size_t stream_idx = i % MAX_GPU_STREAMS;
-                        hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
-                                dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
-                                d_normalization, d_population_old_positive_frequency, d_normalization_term_positive_frequency, genome_size, i);
-                    }
-                    for (size_t i=0; i<population_size; i++) {
-                        size_t stream_idx = i % MAX_GPU_STREAMS;
-                        hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
-                                dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
-                                d_normalization, d_population_old_negative_frequency, d_normalization_term_negative_frequency, genome_size, i);
-                    }
-                    HIP_ASSERT(hipDeviceSynchronize());
-                    size_t grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
-                    hipLaunchKernelGGL(gpu_normalize_population, dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE), 0, 0,
-                            d_population_old_positive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
-                    hipLaunchKernelGGL(gpu_normalize_population, dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE), 0, 0,
-                            d_population_old_negative_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
-                    HIP_ASSERT(hipDeviceSynchronize());
-                #endif
+            deac_memset(d_normalization, 0, bytes_normalization, default_stream);
+            deac_wait(default_stream);
+            for (size_t i=0; i<population_size; i++) {
+                size_t stream_idx = i % MAX_GPU_STREAMS;
+                gpu_matmul(stream_array[i], d_normalization + i, d_normalization_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
+            }
+            for (auto& s : stream_array) {
+                deac_wait(s);
+            }
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                for (size_t i=0; i<population_size; i++) {
+                    size_t stream_idx = i % MAX_GPU_STREAMS;
+                    gpu_matmul(stream_array[i], d_normalization + i, d_normalization_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
+                }
+                for (auto& s : stream_array) {
+                    deac_wait(s);
+                }
             #endif
-            #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMemset(d_normalization, 0, bytes_normalization));
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    for (size_t i=0; i<population_size; i++) {
-                        size_t stream_idx = i % MAX_GPU_STREAMS;
-                        cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
-                                dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                d_normalization, d_population_old, d_normalization_term, genome_size, i);
-                    }
-                    CUDA_ASSERT(cudaDeviceSynchronize());
 
-                    size_t grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
-                    cuda_wrapper::gpu_normalize_population_wrapper( dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE),
-                            d_population_old, d_normalization, zeroth_moment, population_size, genome_size); 
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #else
-                    for (size_t i=0; i<population_size; i++) {
-                        size_t stream_idx = i % MAX_GPU_STREAMS;
-                        cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
-                                dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                d_normalization, d_population_old_positive_frequency, d_normalization_term_positive_frequency, genome_size, i);
-                    }
-                    for (size_t i=0; i<population_size; i++) {
-                        size_t stream_idx = i % MAX_GPU_STREAMS;
-                        cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
-                                dim3(grid_size_set_normalization), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                d_normalization, d_population_old_negative_frequency, d_normalization_term_negative_frequency, genome_size, i);
-                    }
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-
-                    size_t grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
-                    cuda_wrapper::gpu_normalize_population_wrapper( dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE),
-                            d_population_old_positive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
-                    cuda_wrapper::gpu_normalize_population_wrapper( dim3(grid_size_normalize_population), dim3(GPU_BLOCK_SIZE),
-                            d_population_old_negative_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #endif
-            #endif
-            #ifdef USE_SYCL
-                q.memset(d_normalization, 0, bytes_normalization);
-                q.wait();
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    for (size_t i=0; i<population_size; i++) {
-                        gpu_matmul(q, d_normalization + i, d_normalization_term, d_population_old + genome_size*i, genome_size);
-                    }
-                    q.wait();
-
-                    size_t grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
-                    gpu_normalize_population(q, grid_size_normalize_population, d_population_old, d_normalization, zeroth_moment, population_size, genome_size); 
-                    q.wait();
-                #else
-                    for (size_t i=0; i<population_size; i++) {
-                        gpu_matmul(q, d_normalization + i, d_normalization_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
-                    }
-                    q.wait();
-                    for (size_t i=0; i<population_size; i++) {
-                        gpu_matmul(q, d_normalization + i, d_normalization_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
-                    }
-                    q.wait();
-
-                    size_t grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
-                    gpu_normalize_population(q, grid_size_normalize_population, d_population_old_positive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
-                    gpu_normalize_population(q, grid_size_normalize_population, d_population_old_negative_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
-                    q.wait();
-                #endif
-            #endif
+            size_t grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+            gpu_normalize_population(stream_array[0], grid_size_normalize_population, d_population_old_positive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
+            gpu_normalize_population(stream_array[1 % MAX_GPU_STREAMS], grid_size_normalize_population, d_population_old_negative_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
+            deac_wait(stream_array[0]);
+            deac_wait(stream_array[1 % MAX_GPU_STREAMS]);
         #else
             for (size_t i=0; i<population_size; i++) {
                 normalization[i] = 0.0;
