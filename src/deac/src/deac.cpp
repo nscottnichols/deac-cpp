@@ -488,30 +488,22 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             for (size_t i=0; i<population_size; i++) {
                 normalization[i] = 0.0;
             }
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                matrix_multiply_MxN_by_Nx1(normalization, population_old,
-                        normalization_term, population_size, genome_size);
-                for (size_t i=0; i<population_size; i++) {
-                    double _norm = normalization[i];
-                    for (size_t j=0; j<genome_size; j++) {
-                        population_old[i*genome_size + j] *= zeroth_moment/_norm;
-                    }
-                }
-            #else
-                matrix_multiply_MxN_by_Nx1(normalization, population_old_positive_frequency,
-                        normalization_term_positive_frequency, population_size, genome_size);
+            matrix_multiply_MxN_by_Nx1(normalization, population_old_positive_frequency,
+                    normalization_term_positive_frequency, population_size, genome_size);
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                 matrix_multiply_MxN_by_Nx1(normalization, population_old_negative_frequency,
                         normalization_term_negative_frequency, population_size, genome_size);
-                for (size_t i=0; i<population_size; i++) {
-                    double _norm = normalization[i];
-                    for (size_t j=0; j<genome_size; j++) {
-                        population_old_positive_frequency[i*genome_size + j] *= zeroth_moment/_norm;
-                        population_old_negative_frequency[i*genome_size + j] *= zeroth_moment/_norm;
-                    }
-                }
             #endif
+            for (size_t i=0; i<population_size; i++) {
+                double _norm = normalization[i];
+                for (size_t j=0; j<genome_size; j++) {
+                    population_old_positive_frequency[i*genome_size + j] *= zeroth_moment/_norm;
+                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        population_old_negative_frequency[i*genome_size + j] *= zeroth_moment/_norm;
+                    #endif
+                }
+            }
         #endif
-
     }
 
     //Set first moment term
