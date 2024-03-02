@@ -608,31 +608,26 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #endif
     }
 
-    //Set third moment term
-    size_t bytes_third_moments = sizeof(double)*population_size;
+    // Set third moment term
     size_t bytes_third_moments_term = sizeof(double)*genome_size;
+    size_t bytes_third_moments = sizeof(double)*population_size;
 
     double * third_moments;
-    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-        double * third_moments_term;
-        #ifdef USE_GPU
-            double* d_third_moments;
-            double* d_third_moments_term;
-        #endif
-    #else
-        double* third_moments_term_positive_frequency;
-        double* third_moments_term_negative_frequency;
-        #ifdef USE_GPU
-            double* d_third_moments;
-            double* d_third_moments_term_positive_frequency;
+    double * third_moments_term_positive_frequency;
+    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+        double * third_moments_term_negative_frequency;
+    #endif
+    #ifdef USE_GPU
+        double* d_third_moments;
+        double* d_third_moments_term_positive_frequency;
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
             double* d_third_moments_term_negative_frequency;
         #endif
     #endif
+
     if (use_third_moment) {
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            third_moments_term = (double*) malloc(bytes_third_moments_term);
-        #else
-            third_moments_term_positive_frequency = (double*) malloc(bytes_third_moments_term);
+        third_moments_term_positive_frequency = (double*) malloc(bytes_third_moments_term);
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
             third_moments_term_negative_frequency = (double*) malloc(bytes_third_moments_term);
         #endif
         for (size_t j=0; j<genome_size; j++) {
@@ -645,175 +640,70 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             } else {
                 df = 0.5*(frequency[j+1] - frequency[j-1]);
             }
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                #ifndef ZEROT
-                    #ifdef USE_HYPERBOLIC_MODEL
-                        third_moments_term[j] = df*pow(f,3)*sinh(0.5*beta*f);
-                    #endif
-                    #ifdef USE_STANDARD_MODEL
-                        third_moments_term[j] = df*pow(f,3)*(1.0 - exp(-beta*f));
-                    #endif
-                    #ifdef USE_NORMALIZATION_MODEL
-                        third_moments_term[j] = df*pow(f,3)*tanh(0.5*beta*f);
+            #ifndef ZEROT
+                #ifdef USE_HYPERBOLIC_MODEL
+                    third_moments_term_positive_frequency[j] = df*pow(f,3)*sinh(0.5*beta*f); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        third_moments_term_negative_frequency[j] = df*pow(f,3); //FIXME need to calculate new value
                     #endif
                 #endif
-                #ifdef ZEROT
-                    third_moments_term[j] = df*pow(f,3);
+                #ifdef USE_STANDARD_MODEL
+                    third_moments_term_positive_frequency[j] = df*pow(f,3)*(1.0 - exp(-beta*f)); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        third_moments_term_negative_frequency[j] = df*pow(f,3); //FIXME need to calculate new value
+                    #endif
+                #endif
+                #ifdef USE_NORMALIZATION_MODEL
+                    third_moments_term_positive_frequency[j] = df*pow(f,3)*tanh(0.5*beta*f); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        third_moments_term_negative_frequency[j] = df*pow(f,3); //FIXME need to calculate new value
+                    #endif
                 #endif
             #else
-                #ifndef ZEROT
-                    #ifdef USE_HYPERBOLIC_MODEL
-                        third_moments_term_positive_frequency[j] = df*pow(f,3);
-                        third_moments_term_negative_frequency[j] = df*pow(f,3);
-                    #endif
-                    #ifdef USE_STANDARD_MODEL
-                        third_moments_term_positive_frequency[j] = df*pow(f,3);
-                        third_moments_term_negative_frequency[j] = df*pow(f,3);
-                    #endif
-                    #ifdef USE_NORMALIZATION_MODEL
-                        third_moments_term_positive_frequency[j] = df*pow(f,3);
-                        third_moments_term_negative_frequency[j] = df*pow(f,3);
-                    #endif
-                #endif
-                #ifdef ZEROT
-                    third_moments_term_positive_frequency[j] = df*pow(f,3);
-                    third_moments_term_negative_frequency[j] = df*pow(f,3);
+                third_moments_term_positive_frequency[j] = df*pow(f,3); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    third_moments_term_negative_frequency[j] = df*pow(f,3); //FIXME need to calculate new value
                 #endif
             #endif
         }
 
         third_moments = (double*) malloc(bytes_third_moments);
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            #ifdef USE_GPU
-                #ifdef USE_HIP
-                    HIP_ASSERT(hipMalloc(&d_third_moments, bytes_third_moments));
-                    HIP_ASSERT(hipMalloc(&d_third_moments_term, bytes_third_moments_term));
-                    HIP_ASSERT(hipMemcpy( d_third_moments_term, third_moments_term, bytes_third_moments_term, hipMemcpyHostToDevice ));
-                #endif
-                #ifdef USE_CUDA
-                    CUDA_ASSERT(cudaMalloc(&d_third_moments, bytes_third_moments));
-                    CUDA_ASSERT(cudaMalloc(&d_third_moments_term, bytes_third_moments_term));
-                    CUDA_ASSERT(cudaMemcpy( d_third_moments_term, third_moments_term, bytes_third_moments_term, cudaMemcpyHostToDevice )); 
-                #endif
-                #ifdef USE_SYCL
-                    d_third_moments =      sycl::malloc_device< double >( population_size, default_stream );
-                    d_third_moments_term = sycl::malloc_device< double >( genome_size,     default_stream );
-                    q.memcpy( d_third_moments_term, third_moments_term, bytes_third_moments_term );
-                    q.wait();
-                #endif
+        #ifdef USE_GPU
+            GPU_ASSERT((deac_malloc_device(double, d_third_moments,                         population_size, default_stream));
+            GPU_ASSERT((deac_malloc_device(double, d_third_moments_term_positive_frequency, genome_size,     default_stream));
+            GPU_ASSERT(deac_memcopy_host_to_device(d_third_moments_term_positive_frequency, third_moments_term_positive_frequency, bytes_third_moments_term, default_stream));
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                GPU_ASSERT((deac_malloc_device(double, d_third_moments_term_negative_frequency, genome_size,     default_stream));
+                GPU_ASSERT(deac_memcopy_host_to_device(d_third_moments_term_negative_frequency, third_moments_term_negative_frequency, bytes_third_moments_term, default_stream));
+            #endif
+            GPU_ASSERT(deac_wait(default_stream));
+
+            size_t grid_size_set_third_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+            deac_memset(d_third_moments, 0, bytes_third_moments, default_stream);
+            GPU_ASSERT(deac_wait(default_stream));
+            for (size_t i=0; i<population_size; i++) {
+                size_t stream_idx = i % MAX_GPU_STREAMS;
+                gpu_matmul(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
+            }
+            for (auto& s : stream_array) {
+                GPU_ASSERT(deac_wait(s));
+            }
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                for (size_t i=0; i<population_size; i++) {
+                    size_t stream_idx = i % MAX_GPU_STREAMS;
+                    gpu_matmul(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
+                }
+                for (auto& s : stream_array) {
+                    GPU_ASSERT(deac_wait(s));
+                }
             #endif
         #else
-            #ifdef USE_GPU
-                #ifdef USE_HIP
-                    HIP_ASSERT(hipMalloc(&d_third_moments, bytes_third_moments));
-                    HIP_ASSERT(hipMalloc(&d_third_moments_term_positive_frequency, bytes_third_moments_term));
-                    HIP_ASSERT(hipMemcpy( d_third_moments_term_positive_frequency, third_moments_term_positive_frequency, bytes_third_moments_term, hipMemcpyHostToDevice ));
-                    HIP_ASSERT(hipMalloc(&d_third_moments_term_negative_frequency, bytes_third_moments_term));
-                    HIP_ASSERT(hipMemcpy( d_third_moments_term_negative_frequency, third_moments_term_negative_frequency, bytes_third_moments_term, hipMemcpyHostToDevice ));
-                #endif
-                #ifdef USE_CUDA
-                    CUDA_ASSERT(cudaMalloc(&d_third_moments, bytes_third_moments));
-                    CUDA_ASSERT(cudaMalloc(&d_third_moments_term_positive_frequency, bytes_third_moments_term));
-                    CUDA_ASSERT(cudaMemcpy( d_third_moments_term_positive_frequency, third_moments_term_positive_frequency, bytes_third_moments_term, cudaMemcpyHostToDevice )); 
-                    CUDA_ASSERT(cudaMalloc(&d_third_moments_term_negative_frequency, bytes_third_moments_term));
-                    CUDA_ASSERT(cudaMemcpy( d_third_moments_term_negative_frequency, third_moments_term_negative_frequency, bytes_third_moments_term, cudaMemcpyHostToDevice )); 
-                #endif
-                #ifdef USE_SYCL
-                    d_third_moments =      sycl::malloc_device< double >( population_size, default_stream );
-                    d_third_moments_term_positive_frequency = sycl::malloc_device< double >( genome_size,     default_stream );
-                    d_third_moments_term_negative_frequency = sycl::malloc_device< double >( genome_size,     default_stream );
-                    q.memcpy( d_third_moments_term_positive_frequency, third_moments_term_positive_frequency, bytes_third_moments_term );
-                    q.memcpy( d_third_moments_term_negative_frequency, third_moments_term_negative_frequency, bytes_third_moments_term );
-                    q.wait();
-                #endif
-            #endif
-        #endif
-        #ifdef USE_GPU
-            size_t grid_size_set_third_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-            #ifdef USE_HIP
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    HIP_ASSERT(hipMemset(d_third_moments,0, bytes_third_moments));
-                    for (size_t i=0; i<population_size; i++) {
-                        size_t stream_idx = i % MAX_GPU_STREAMS;
-                        hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
-                                dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
-                                d_third_moments, d_population_old, d_third_moments_term, genome_size, i);
-                    }
-                    HIP_ASSERT(hipDeviceSynchronize());
-                #else
-                    HIP_ASSERT(hipMemset(d_third_moments,0, bytes_third_moments));
-                    for (size_t i=0; i<population_size; i++) {
-                        size_t stream_idx = i % MAX_GPU_STREAMS;
-                        hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
-                                dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
-                                d_third_moments, d_population_old_positive_frequency, d_third_moments_term_positive_frequency, genome_size, i);
-                    }
-                    for (size_t i=0; i<population_size; i++) {
-                        size_t stream_idx = i % MAX_GPU_STREAMS;
-                        hipLaunchKernelGGL(gpu_matrix_multiply_MxN_by_Nx1,
-                                dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
-                                d_third_moments, d_population_old_negative_frequency, d_third_moments_term_negative_frequency, genome_size, i);
-                    }
-                    HIP_ASSERT(hipDeviceSynchronize());
-                #endif
-            #endif
-            #ifdef USE_CUDA
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    CUDA_ASSERT(cudaMemset(d_third_moments,0, bytes_third_moments));
-                    for (size_t i=0; i<population_size; i++) {
-                        size_t stream_idx = i % MAX_GPU_STREAMS;
-                        cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
-                                dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                d_third_moments, d_population_old, d_third_moments_term, genome_size, i);
-                    }
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #else
-                    CUDA_ASSERT(cudaMemset(d_third_moments,0, bytes_third_moments));
-                    for (size_t i=0; i<population_size; i++) {
-                        size_t stream_idx = i % MAX_GPU_STREAMS;
-                        cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
-                                dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                d_third_moments, d_population_old_positive_frequency, d_third_moments_term_positive_frequency, genome_size, i);
-                    }
-                    for (size_t i=0; i<population_size; i++) {
-                        size_t stream_idx = i % MAX_GPU_STREAMS;
-                        cuda_wrapper::gpu_matrix_multiply_MxN_by_Nx1_wrapper(
-                                dim3(grid_size_set_third_moments), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                                d_third_moments, d_population_old_negative_frequency, d_third_moments_term_negative_frequency, genome_size, i);
-                    }
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #endif
-            #endif
-            #ifdef USE_SYCL
-                q.memset(d_third_moments, 0, bytes_third_moments);
-                q.wait();
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    for (size_t i=0; i<population_size; i++) {
-                        gpu_matmul(q, d_third_moments + i, d_third_moments_term, d_population_old + genome_size*i, genome_size);
-                    }
-                    q.wait();
-                #else
-                    for (size_t i=0; i<population_size; i++) {
-                        gpu_matmul(q, d_third_moments + i, d_third_moments_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
-                    }
-                    q.wait();
-                    for (size_t i=0; i<population_size; i++) {
-                        gpu_matmul(q, d_third_moments + i, d_third_moments_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
-                    }
-                    q.wait();
-                #endif
-            #endif
-        #endif
-        #ifndef USE_GPU
             for (size_t i=0; i<population_size; i++) {
                 third_moments[i] = 0.0;
             }
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                matrix_multiply_MxN_by_Nx1(third_moments, population_old,
-                        third_moments_term, population_size, genome_size);
-            #else
-                matrix_multiply_MxN_by_Nx1(third_moments, population_old_positive_frequency,
-                        third_moments_term_positive_frequency, population_size, genome_size);
+            matrix_multiply_MxN_by_Nx1(third_moments, population_old_positive_frequency,
+                    third_moments_term_positive_frequency, population_size, genome_size);
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                 matrix_multiply_MxN_by_Nx1(third_moments, population_old_negative_frequency,
                         third_moments_term_negative_frequency, population_size, genome_size);
             #endif
