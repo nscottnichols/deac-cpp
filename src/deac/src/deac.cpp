@@ -599,12 +599,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             for (size_t i=0; i<population_size; i++) {
                 first_moments[i] = 0.0;
             }
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                matrix_multiply_MxN_by_Nx1(first_moments, population_old,
-                        first_moments_term, population_size, genome_size);
-            #else
-                matrix_multiply_MxN_by_Nx1(first_moments, population_old_positive_frequency,
-                        first_moments_term_positive_frequency, population_size, genome_size);
+            matrix_multiply_MxN_by_Nx1(first_moments, population_old_positive_frequency,
+                    first_moments_term_positive_frequency, population_size, genome_size);
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                 matrix_multiply_MxN_by_Nx1(first_moments, population_old_negative_frequency,
                         first_moments_term_negative_frequency, population_size, genome_size);
             #endif
