@@ -566,51 +566,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         }
 
         first_moments = (double*) malloc(bytes_first_moments);
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            #ifdef USE_GPU
-                #ifdef USE_HIP
-                    HIP_ASSERT(hipMalloc(&d_first_moments, bytes_first_moments));
-                    HIP_ASSERT(hipMalloc(&d_first_moments_term, bytes_first_moments_term));
-                    HIP_ASSERT(hipMemcpy( d_first_moments_term, first_moments_term, bytes_first_moments_term, hipMemcpyHostToDevice ));
-                #endif
-                #ifdef USE_CUDA
-                    CUDA_ASSERT(cudaMalloc(&d_first_moments, bytes_first_moments));
-                    CUDA_ASSERT(cudaMalloc(&d_first_moments_term, bytes_first_moments_term));
-                    CUDA_ASSERT(cudaMemcpy( d_first_moments_term, first_moments_term, bytes_first_moments_term, cudaMemcpyHostToDevice )); 
-                #endif
-                #ifdef USE_SYCL
-                    d_first_moments =      sycl::malloc_device< double >( population_size, default_stream );
-                    d_first_moments_term = sycl::malloc_device< double >( genome_size,     default_stream );
-                    q.memcpy( d_first_moments_term, first_moments_term, bytes_first_moments_term );
-                    q.wait();
-                #endif
-            #endif
-        #else
-            #ifdef USE_GPU
-                #ifdef USE_HIP
-                    HIP_ASSERT(hipMalloc(&d_first_moments, bytes_first_moments));
-                    HIP_ASSERT(hipMalloc(&d_first_moments_term_positive_frequency, bytes_first_moments_term));
-                    HIP_ASSERT(hipMemcpy( d_first_moments_term_positive_frequency, first_moments_term_positive_frequency, bytes_first_moments_term, hipMemcpyHostToDevice ));
-                    HIP_ASSERT(hipMalloc(&d_first_moments_term_negative_frequency, bytes_first_moments_term));
-                    HIP_ASSERT(hipMemcpy( d_first_moments_term_negative_frequency, first_moments_term_negative_frequency, bytes_first_moments_term, hipMemcpyHostToDevice ));
-                #endif
-                #ifdef USE_CUDA
-                    CUDA_ASSERT(cudaMalloc(&d_first_moments, bytes_first_moments));
-                    CUDA_ASSERT(cudaMalloc(&d_first_moments_term_positive_frequency, bytes_first_moments_term));
-                    CUDA_ASSERT(cudaMemcpy( d_first_moments_term_positive_frequency, first_moments_term_positive_frequency, bytes_first_moments_term, cudaMemcpyHostToDevice )); 
-                    CUDA_ASSERT(cudaMalloc(&d_first_moments_term_negative_frequency, bytes_first_moments_term));
-                    CUDA_ASSERT(cudaMemcpy( d_first_moments_term_negative_frequency, first_moments_term_negative_frequency, bytes_first_moments_term, cudaMemcpyHostToDevice )); 
-                #endif
-                #ifdef USE_SYCL
-                    d_first_moments =      sycl::malloc_device< double >( population_size, default_stream );
-                    d_first_moments_term_positive_frequency = sycl::malloc_device< double >( genome_size,     default_stream );
-                    d_first_moments_term_negative_frequency = sycl::malloc_device< double >( genome_size,     default_stream );
-                    q.memcpy( d_first_moments_term_positive_frequency, first_moments_term_positive_frequency, bytes_first_moments_term );
-                    q.memcpy( d_first_moments_term_negative_frequency, first_moments_term_negative_frequency, bytes_first_moments_term );
-                    q.wait();
-                #endif
-            #endif
+        #ifdef USE_GPU
+            GPU_ASSERT((deac_malloc_device(double, d_first_moments,                         population_size, default_stream));
+            GPU_ASSERT((deac_malloc_device(double, d_first_moments_term_positive_frequency, genome_size,     default_stream));
+            GPU_ASSERT((deac_malloc_device(double, d_first_moments_term_negative_frequency, genome_size,     default_stream));
+            GPU_ASSERT(deac_memcopy_host_to_device(d_first_moments_term_positive_frequency, first_moments_term_positive_frequency, bytes_first_moments_term, default_stream));
+            GPU_ASSERT(deac_memcopy_host_to_device(d_first_moments_term_negative_frequency, first_moments_term_negative_frequency, bytes_first_moments_term, default_stream));
+            GPU_ASSERT(deac_wait(default_stream));
         #endif
+
         #ifdef USE_GPU
             size_t grid_size_set_first_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
             #ifdef USE_HIP
