@@ -569,9 +569,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #ifdef USE_GPU
             GPU_ASSERT((deac_malloc_device(double, d_first_moments,                         population_size, default_stream));
             GPU_ASSERT((deac_malloc_device(double, d_first_moments_term_positive_frequency, genome_size,     default_stream));
-            GPU_ASSERT((deac_malloc_device(double, d_first_moments_term_negative_frequency, genome_size,     default_stream));
             GPU_ASSERT(deac_memcopy_host_to_device(d_first_moments_term_positive_frequency, first_moments_term_positive_frequency, bytes_first_moments_term, default_stream));
-            GPU_ASSERT(deac_memcopy_host_to_device(d_first_moments_term_negative_frequency, first_moments_term_negative_frequency, bytes_first_moments_term, default_stream));
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                GPU_ASSERT((deac_malloc_device(double, d_first_moments_term_negative_frequency, genome_size,     default_stream));
+                GPU_ASSERT(deac_memcopy_host_to_device(d_first_moments_term_negative_frequency, first_moments_term_negative_frequency, bytes_first_moments_term, default_stream));
+            #endif
             GPU_ASSERT(deac_wait(default_stream));
 
             size_t grid_size_set_first_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
@@ -584,13 +586,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             for (auto& s : stream_array) {
                 GPU_ASSERT(deac_wait(s));
             }
-            for (size_t i=0; i<population_size; i++) {
-                size_t stream_idx = i % MAX_GPU_STREAMS;
-                gpu_matmul(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
-            }
-            for (auto& s : stream_array) {
-                GPU_ASSERT(deac_wait(s));
-            }
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                for (size_t i=0; i<population_size; i++) {
+                    size_t stream_idx = i % MAX_GPU_STREAMS;
+                    gpu_matmul(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
+                }
+                for (auto& s : stream_array) {
+                    GPU_ASSERT(deac_wait(s));
+                }
+            #endif
         #else
             for (size_t i=0; i<population_size; i++) {
                 first_moments[i] = 0.0;
