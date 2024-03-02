@@ -467,7 +467,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 gpu_matmul(stream_array[i], d_normalization + i, d_normalization_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
             }
             for (auto& s : stream_array) {
-                deac_wait(s);
+                GPU_ASSERT(deac_wait(s));
             }
             #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                 for (size_t i=0; i<population_size; i++) {
@@ -475,15 +475,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     gpu_matmul(stream_array[i], d_normalization + i, d_normalization_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
                 }
                 for (auto& s : stream_array) {
-                    deac_wait(s);
+                    GPU_ASSERT(deac_wait(s));
                 }
             #endif
 
             size_t grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
             gpu_normalize_population(stream_array[0], grid_size_normalize_population, d_population_old_positive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
             gpu_normalize_population(stream_array[1 % MAX_GPU_STREAMS], grid_size_normalize_population, d_population_old_negative_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
-            deac_wait(stream_array[0]);
-            deac_wait(stream_array[1 % MAX_GPU_STREAMS]);
+            GPU_ASSERT(deac_wait(stream_array[0]));
+            GPU_ASSERT(deac_wait(stream_array[1 % MAX_GPU_STREAMS]));
         #else
             for (size_t i=0; i<population_size; i++) {
                 normalization[i] = 0.0;
@@ -511,29 +511,17 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     size_t bytes_first_moments = sizeof(double)*population_size;
 
     double * first_moments;
-    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-        double * first_moments_term;
-        #ifdef USE_GPU
-            double* d_first_moments_term;
-            double* d_first_moments;
-        #endif
-    #else
-        double * first_moments_term_positive_frequency;
-        double * first_moments_term_negative_frequency;
-        #ifdef USE_GPU
-            double* d_first_moments_term_positive_frequency;
-            double* d_first_moments_term_negative_frequency;
-            double* d_first_moments;
-        #endif
+    double * first_moments_term_positive_frequency;
+    double * first_moments_term_negative_frequency;
+    #ifdef USE_GPU
+        double* d_first_moments_term_positive_frequency;
+        double* d_first_moments_term_negative_frequency;
+        double* d_first_moments;
     #endif
 
     if (use_first_moment) {
-        #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            first_moments_term = (double*) malloc(bytes_first_moments_term);
-        #else
-            first_moments_term_positive_frequency = (double*) malloc(bytes_first_moments_term);
-            first_moments_term_negative_frequency = (double*) malloc(bytes_first_moments_term);
-        #endif
+        first_moments_term_positive_frequency = (double*) malloc(bytes_first_moments_term);
+        first_moments_term_negative_frequency = (double*) malloc(bytes_first_moments_term);
         for (size_t j=0; j<genome_size; j++) {
             double f = frequency[j];
             double df;
@@ -544,41 +532,22 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             } else {
                 df = 0.5*(frequency[j+1] - frequency[j-1]);
             }
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                #ifndef ZEROT
-                    #ifdef USE_HYPERBOLIC_MODEL
-                        first_moments_term[j] = df*f*sinh(0.5*beta*f);
-                    #endif
-                    #ifdef USE_STANDARD_MODEL
-                        first_moments_term[j] = df*f*(1.0 - exp(-beta*f));
-                    #endif
-                    #ifdef USE_NORMALIZATION_MODEL
-                        first_moments_term[j] = df*f*tanh(0.5*beta*f);
-                    #endif
+            #ifndef ZEROT
+                #ifdef USE_HYPERBOLIC_MODEL
+                    first_moments_term_positive_frequency[j] = df*f*sinh(0.5*beta*f); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                    first_moments_term_negative_frequency[j] = df*f; //FIXME need to calculate new value
                 #endif
-                #ifdef ZEROT
-                    first_moments_term[j] = df*f;
+                #ifdef USE_STANDARD_MODEL
+                    first_moments_term_positive_frequency[j] = df*f*(1.0 - exp(-beta*f)); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                    first_moments_term_negative_frequency[j] = df*f; //FIXME need to calculate new value
+                #endif
+                #ifdef USE_NORMALIZATION_MODEL
+                    first_moments_term_positive_frequency[j] = df*f*tanh(0.5*beta*f); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                    first_moments_term_negative_frequency[j] = df*f; //FIXME need to calculate new value
                 #endif
             #else
-                //FIXME unclear if this is the right equation to get moments (might need to divide by 1 + e^(-b t)
-                #ifndef ZEROT
-                    #ifdef USE_HYPERBOLIC_MODEL
-                        first_moments_term_positive_frequency[j] = df*f; //FIXME not implemented
-                        first_moments_term_negative_frequency[j] = df*f; //FIXME not implemented
-                    #endif
-                    #ifdef USE_STANDARD_MODEL
-                        first_moments_term_positive_frequency[j] = df*f;
-                        first_moments_term_negative_frequency[j] = df*f;
-                    #endif
-                    #ifdef USE_NORMALIZATION_MODEL
-                        first_moments_term_positive_frequency[j] = df*f; //FIXME not implemented
-                        first_moments_term_negative_frequency[j] = df*f; //FIXME not implemented
-                    #endif
-                #endif
-                #ifdef ZEROT
-                    first_moments_term_positive_frequency[j] = df*f;
-                    first_moments_term_negative_frequency[j] = df*f;
-                #endif
+                first_moments_term_positive_frequency[j] = df*f; //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                first_moments_term_negative_frequency[j] = df*f; //FIXME need to calculate new value
             #endif
         }
 
