@@ -460,8 +460,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #ifdef USE_GPU
             //FIXME need gpu_matmul and gpu_normalize_population kernel launchers (and possibly implementations) for CUDA and HIP (also should take a look at SYCL version)
             size_t grid_size_set_normalization = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-            deac_memset(d_normalization, 0, bytes_normalization, default_stream);
-            deac_wait(default_stream);
+            GPU_ASSERT(deac_memset(d_normalization, 0, bytes_normalization, default_stream));
+            GPU_ASSERT(deac_wait(default_stream));
             for (size_t i=0; i<population_size; i++) {
                 size_t stream_idx = i % MAX_GPU_STREAMS;
                 gpu_matmul(stream_array[stream_idx], d_normalization + i, d_normalization_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
@@ -577,7 +577,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             GPU_ASSERT(deac_wait(default_stream));
 
             size_t grid_size_set_first_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-            deac_memset(d_first_moments, 0, bytes_first_moments, default_stream);
+            GPU_ASSERT(deac_memset(d_first_moments, 0, bytes_first_moments, default_stream));
             GPU_ASSERT(deac_wait(default_stream));
             for (size_t i=0; i<population_size; i++) {
                 size_t stream_idx = i % MAX_GPU_STREAMS;
@@ -679,7 +679,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             GPU_ASSERT(deac_wait(default_stream));
 
             size_t grid_size_set_third_moments = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-            deac_memset(d_third_moments, 0, bytes_third_moments, default_stream);
+            GPU_ASSERT(deac_memset(d_third_moments, 0, bytes_third_moments, default_stream));
             GPU_ASSERT(deac_wait(default_stream));
             for (size_t i=0; i<population_size; i++) {
                 size_t stream_idx = i % MAX_GPU_STREAMS;
@@ -720,7 +720,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #ifdef USE_GPU
         GPU_ASSERT((deac_malloc_device(double, d_isf_model, number_of_timeslices*population_size, default_stream));
         size_t grid_size_set_isf_model = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-        deac_memset(d_isf_model, 0, bytes_isf_model, default_stream);
+        GPU_ASSERT(deac_memset(d_isf_model, 0, bytes_isf_model, default_stream));
         GPU_ASSERT(deac_wait(default_stream));
         for (size_t i=0; i<population_size*number_of_timeslices; i++) {
             size_t stream_idx = i % MAX_GPU_STREAMS;
@@ -790,7 +790,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 GPU_ASSERT(deac_wait(default_stream));
 
                 size_t grid_size_set_negative_first_moments = (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                deac_memset(d_negative_first_moments, 0, bytes_inverse_first_moments, default_stream);
+                GPU_ASSERT(deac_memset(d_negative_first_moments, 0, bytes_inverse_first_moments, default_stream));
                 GPU_ASSERT(deac_wait(default_stream));
                 for (size_t i=0; i<population_size; i++) {
                     size_t stream_idx = i % MAX_GPU_STREAMS;
@@ -823,7 +823,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
         size_t grid_size_set_fitness = (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
         size_t grid_size_set_fitness_moments = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-        deac_memset(d_fitness_old, 0, bytes_fitness, default_stream);
+        GPU_ASSERT(deac_memset(d_fitness_old, 0, bytes_fitness, default_stream));
         GPU_ASSERT(deac_wait(default_stream));
         for (size_t i=0; i<population_size; i++) {
             size_t stream_idx = i % MAX_GPU_STREAMS;
@@ -958,29 +958,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         fitness_squared_mean = (double*) malloc(bytes_fitness_squared_mean);
         #ifdef USE_GPU
             size_t grid_size_set_stats = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-            #ifdef USE_HIP
-                HIP_ASSERT(hipMalloc(&d_fitness_mean, bytes_fitness_mean));
-                HIP_ASSERT(hipMalloc(&d_fitness_minimum, bytes_fitness_minimum));
-                HIP_ASSERT(hipMalloc(&d_fitness_squared_mean, bytes_fitness_squared_mean));
-                HIP_ASSERT(hipMemset(d_fitness_mean,0, bytes_fitness_mean));
-                HIP_ASSERT(hipMemset(d_fitness_minimum,0, bytes_fitness_minimum));
-                HIP_ASSERT(hipMemset(d_fitness_squared_mean,0, bytes_fitness_squared_mean));
-            #endif
-            #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMalloc(&d_fitness_mean, bytes_fitness_mean));
-                CUDA_ASSERT(cudaMalloc(&d_fitness_minimum, bytes_fitness_minimum));
-                CUDA_ASSERT(cudaMalloc(&d_fitness_squared_mean, bytes_fitness_squared_mean));
-                CUDA_ASSERT(cudaMemset(d_fitness_mean,0, bytes_fitness_mean));
-                CUDA_ASSERT(cudaMemset(d_fitness_minimum,0, bytes_fitness_minimum));
-                CUDA_ASSERT(cudaMemset(d_fitness_squared_mean,0, bytes_fitness_squared_mean));
-            #endif
-            #ifdef USE_SYCL
-                d_fitness_mean             = sycl::malloc_device< double >( number_of_generations, default_stream ); 
-                d_fitness_squared_mean     = sycl::malloc_device< double >( number_of_generations, default_stream ); 
-                q.memset(d_fitness_mean,         0, bytes_normalization);
-                q.memset(d_fitness_squared_mean, 0, bytes_normalization);
-                q.wait();
-            #endif
+            GPU_ASSERT((deac_malloc_device(double, d_fitness_mean        , number_of_generations, default_stream));
+            GPU_ASSERT((deac_malloc_device(double, d_fitness_squared_mean, number_of_generations, default_stream));
+            GPU_ASSERT(deac_memset(d_fitness_mean,         0, bytes_normalization default_stream));
+            GPU_ASSERT(deac_memset(d_fitness_squared_mean, 0, bytes_normalization default_stream));
+            GPU_ASSERT(deac_wait(default_stream));
         #endif
     }
     
