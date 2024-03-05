@@ -1527,6 +1527,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         }
     }
 
+    // FIXME FIXME FIXME continue here
     //Save data
     #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
         #ifndef ZEROT
