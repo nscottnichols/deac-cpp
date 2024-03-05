@@ -1470,54 +1470,52 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
     double * best_dsf;
     double * best_frequency;
-    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-        best_dsf = (double*) malloc(sizeof(double)*genome_size);
-        best_frequency = (double*) malloc(sizeof(double)*genome_size);
-        for (size_t i=0; i<genome_size; i++) {
-            double f = frequency[i];
-            best_frequency[i] = f;
-            #ifndef ZEROT
-                #ifdef USE_HYPERBOLIC_MODEL
-                    best_dsf[i] = 0.5*population_old[genome_size*minimum_fitness_idx + i]*exp(0.5*beta*f);
-                #endif
-                #ifdef USE_STANDARD_MODEL
-                    best_dsf[i] = population_old[genome_size*minimum_fitness_idx + i];
-                #endif
-                #ifdef USE_NORMALIZATION_MODEL
-                    best_dsf[i] = population_old[genome_size*minimum_fitness_idx + i]/(1.0 + exp(-beta*f));
-                #endif
-            #endif
-            #ifdef ZEROT
-                best_dsf[i] = population_old[genome_size*minimum_fitness_idx + i];
-            #endif
-        }
-    #else
+    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
         best_dsf = (double*) malloc(sizeof(double)*(2*genome_size - 1));
         best_frequency = (double*) malloc(sizeof(double)*(2*genome_size - 1));
-        for (size_t i=0; i<genome_size; i++) {
-            double f = frequency[i];
-            best_frequency[genome_size + i - 1] = f;
-            best_frequency[genome_size - i - 1] = -f;
-            #ifndef ZEROT
-                #ifdef USE_HYPERBOLIC_MODEL
-                    best_dsf[genome_size + i - 1] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i]; // FIXME not implemented
-                    best_dsf[genome_size - i - 1] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i]; // FIXME not implemented
-                #endif
-                #ifdef USE_STANDARD_MODEL
-                    best_dsf[genome_size + i - 1] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i];
-                    best_dsf[genome_size - i - 1] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i];
-                #endif
-                #ifdef USE_NORMALIZATION_MODEL
-                    best_dsf[genome_size + i - 1] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i]; // FIXME not implemented
-                    best_dsf[genome_size - i - 1] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i]; // FIXME not implemented
-                #endif
-            #endif
-            #ifdef ZEROT
-                best_dsf[genome_size + i - 1] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i]; // FIXME not implemented
-                best_dsf[genome_size - i - 1] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i]; // FIXME not implemented
-            #endif
-        }
+    #else
+        best_dsf = (double*) malloc(sizeof(double)*genome_size);
+        best_frequency = (double*) malloc(sizeof(double)*genome_size);
     #endif
+    for (size_t i=0; i<genome_size; i++) {
+        double f = frequency[i];
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            size_t idx_p = genome_size + i - 1;
+            size_t idx_n = genome_size - i - 1;
+        #else
+            size_t idx_p = i;
+        #endif
+        best_frequency[idx_p] = f;
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            best_frequency[idx_n] = -f;
+        #endif
+        #ifndef ZEROT
+            #ifdef USE_HYPERBOLIC_MODEL
+                best_dsf[idx_p] = 0.5*population_old_positive_frequency[genome_size*minimum_fitness_idx + i]*exp(0.5*beta*f); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                     best_dsf[idx_n] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i]; //FIXME need to calculate new value
+                #endif
+            #endif
+            #ifdef USE_STANDARD_MODEL
+                best_dsf[idx_p] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i]; //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    best_dsf[idx_n] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i]; //FIXME need to calculate new value
+                #endif
+            #endif
+            #ifdef USE_NORMALIZATION_MODEL
+                best_dsf[idx_p] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i]/(1.0 + exp(-beta*f)); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    best_dsf[idx_n] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i]; //FIXME need to calculate new value
+                #endif
+            #endif
+        #endif
+        #ifdef ZEROT
+            best_dsf[idx_p] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i]; //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                best_dsf[idx_n] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i]; //FIXME need to calculate new value
+            #endif
+        #endif
+    }
 
     //Get Statistics
     if (generation == number_of_generations - 2) {
