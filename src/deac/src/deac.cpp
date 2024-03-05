@@ -946,7 +946,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     double* fitness_squared_mean;
     #ifdef USE_GPU
         double* d_fitness_mean;
-        double* d_fitness_minimum;
         double* d_fitness_squared_mean;
     #endif
     size_t bytes_fitness_mean = sizeof(double)*number_of_generations;
@@ -1453,51 +1452,18 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
     //Transfer data from gpu to host
     #ifdef USE_GPU
-        #ifdef USE_HIP
-            HIP_ASSERT(hipDeviceSynchronize());
-            HIP_ASSERT(hipMemcpy(fitness_old, d_fitness_old, bytes_fitness, hipMemcpyDeviceToHost));
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                HIP_ASSERT(hipMemcpy(population_old, d_population_old, bytes_population, hipMemcpyDeviceToHost));
-            #else
-                HIP_ASSERT(hipMemcpy(population_old_positive_frequency, d_population_old_positive_frequency, bytes_population, hipMemcpyDeviceToHost));
-                HIP_ASSERT(hipMemcpy(population_old_negative_frequency, d_population_old_negative_frequency, bytes_population, hipMemcpyDeviceToHost));
-            #endif
-            if (track_stats) {
-                HIP_ASSERT(hipMemcpy(fitness_mean, d_fitness_mean, bytes_fitness_mean, hipMemcpyDeviceToHost));
-                HIP_ASSERT(hipMemcpy(fitness_minimum, d_fitness_minimum, bytes_fitness_minimum, hipMemcpyDeviceToHost));
-                HIP_ASSERT(hipMemcpy(fitness_squared_mean, d_fitness_squared_mean, bytes_fitness_squared_mean, hipMemcpyDeviceToHost));
-            }
+        GPU_ASSERT(deac_memcpy_device_to_host(fitness_old, d_fitness_old, bytes_fitness, stream_array[0]));
+        GPU_ASSERT(deac_memcpy_device_to_host(population_old_positive_frequency, d_population_old_positive_frequency, bytes_population, stream_array[1 % MAX_GPU_STREAMS]));
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            GPU_ASSERT(deac_memcpy_device_to_host(population_old_negative_frequency, d_population_old_negative_frequency, bytes_population, stream_array[1 % MAX_GPU_STREAMS]));
         #endif
-        #ifdef USE_CUDA
-            CUDA_ASSERT(cudaDeviceSynchronize());
-            CUDA_ASSERT(cudaMemcpy(fitness_old, d_fitness_old, bytes_fitness, cudaMemcpyDeviceToHost));
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                CUDA_ASSERT(cudaMemcpy(population_old, d_population_old, bytes_population, cudaMemcpyDeviceToHost));
-            #else
-                CUDA_ASSERT(cudaMemcpy(population_old_positive_frequency, d_population_old_positive_frequency, bytes_population, cudaMemcpyDeviceToHost));
-                CUDA_ASSERT(cudaMemcpy(population_old_negative_frequency, d_population_old_negative_frequency, bytes_population, cudaMemcpyDeviceToHost));
-            #endif
-            if (track_stats) {
-                CUDA_ASSERT(cudaMemcpy(fitness_mean, d_fitness_mean, bytes_fitness_mean, cudaMemcpyDeviceToHost));
-                CUDA_ASSERT(cudaMemcpy(fitness_minimum, d_fitness_minimum, bytes_fitness_minimum, cudaMemcpyDeviceToHost));
-                CUDA_ASSERT(cudaMemcpy(fitness_squared_mean, d_fitness_squared_mean, bytes_fitness_squared_mean, cudaMemcpyDeviceToHost));
-            }
-        #endif
-        #ifdef USE_SYCL
-            q.memcpy(fitness_old, d_fitness_old, bytes_fitness);
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                q.memcpy(population_old, d_population_old, bytes_population);
-            #else
-                q.memcpy(population_old_positive_frequency, d_population_old_positive_frequency, bytes_population);
-                q.memcpy(population_old_negative_frequency, d_population_old_negative_frequency, bytes_population);
-            #endif
-            if (track_stats) {
-                q.memcpy(fitness_mean, d_fitness_mean, bytes_fitness_mean);
-                q.memcpy(fitness_minimum, d_fitness_minimum, bytes_fitness_minimum);
-                q.memcpy(fitness_squared_mean, d_fitness_squared_mean, bytes_fitness_squared_mean);
-            }
-            q.wait();
-        #endif
+        if (track_stats) {
+            GPU_ASSERT(deac_memcpy_device_to_host(fitness_mean, d_fitness_mean, bytes_fitness_mean, stream_array[3 % MAX_GPU_STREAMS]));
+            GPU_ASSERT(deac_memcpy_device_to_host(fitness_squared_mean, d_fitness_squared_mean, bytes_fitness_squared_mean, stream_array[4 % MAX_GPU_STREAMS]));
+        }
+        for (auto& s : stream_array) {
+            GPU_ASSERT(deac_wait(s));
+        }
     #endif
 
     std::tie(minimum_fitness_idx, minimum_fitness) = argmin_and_min(fitness_old, population_size);
@@ -1782,7 +1748,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 HIP_ASSERT(hipFree(d_differential_weights_new));
                 if (track_stats) {
                     HIP_ASSERT(hipFree(d_fitness_mean));
-                    HIP_ASSERT(hipFree(d_fitness_minimum));
                     HIP_ASSERT(hipFree(d_fitness_squared_mean));
                 }
                 HIP_ASSERT(hipFree(d_mutate_indices));
@@ -1822,7 +1787,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaFree(d_differential_weights_new));
                 if (track_stats) {
                     CUDA_ASSERT(cudaFree(d_fitness_mean));
-                    CUDA_ASSERT(cudaFree(d_fitness_minimum));
                     CUDA_ASSERT(cudaFree(d_fitness_squared_mean));
                 }
                 CUDA_ASSERT(cudaFree(d_mutate_indices));
@@ -1922,7 +1886,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 HIP_ASSERT(hipFree(d_differential_weights_new_negative_frequency));
                 if (track_stats) {
                     HIP_ASSERT(hipFree(d_fitness_mean));
-                    HIP_ASSERT(hipFree(d_fitness_minimum));
                     HIP_ASSERT(hipFree(d_fitness_squared_mean));
                 }
                 HIP_ASSERT(hipFree(d_mutate_indices_positive_frequency));
@@ -1975,7 +1938,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 CUDA_ASSERT(cudaFree(d_differential_weights_new_negative_frequency));
                 if (track_stats) {
                     CUDA_ASSERT(cudaFree(d_fitness_mean));
-                    CUDA_ASSERT(cudaFree(d_fitness_minimum));
                     CUDA_ASSERT(cudaFree(d_fitness_squared_mean));
                 }
                 CUDA_ASSERT(cudaFree(d_mutate_indices_positive_frequency));
