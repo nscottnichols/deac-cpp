@@ -1398,112 +1398,29 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             size_t grid_size_set_rejection_indices = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
             size_t grid_size_swap_control_parameters = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
             size_t grid_size_swap_populations = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-            #ifdef USE_HIP
-                hipLaunchKernelGGL(gpu_set_rejection_indices,
-                        dim3(grid_size_set_rejection_indices), dim3(GPU_BLOCK_SIZE), 0, 0,
-                        d_rejection_indices, d_fitness_new, d_fitness_old, population_size);
-                HIP_ASSERT(hipDeviceSynchronize());
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    hipLaunchKernelGGL(gpu_swap_control_parameters,
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
-                            d_crossover_probabilities_old, d_crossover_probabilities_new, d_rejection_indices, population_size);
-                    hipLaunchKernelGGL(gpu_swap_control_parameters,
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
-                            d_differential_weights_old, d_differential_weights_new, d_rejection_indices, population_size);
-                    hipLaunchKernelGGL(gpu_swap_populations,
-                            dim3(grid_size_swap_populations), dim3(GPU_BLOCK_SIZE), 0, stream_array[2 % MAX_GPU_STREAMS],
-                            d_population_old, d_population_new, d_rejection_indices, population_size, genome_size);
-                    HIP_ASSERT(hipDeviceSynchronize());
-                #else
-                    hipLaunchKernelGGL(gpu_swap_control_parameters,
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
-                            d_crossover_probabilities_old_positive_frequency, d_crossover_probabilities_new_positive_frequency, d_rejection_indices, population_size);
-                    hipLaunchKernelGGL(gpu_swap_control_parameters,
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
-                            d_differential_weights_old_positive_frequency, d_differential_weights_new_positive_frequency, d_rejection_indices, population_size);
-                    hipLaunchKernelGGL(gpu_swap_populations,
-                            dim3(grid_size_swap_populations), dim3(GPU_BLOCK_SIZE), 0, stream_array[2 % MAX_GPU_STREAMS],
-                            d_population_old_positive_frequency, d_population_new_positive_frequency, d_rejection_indices, population_size, genome_size);
 
-                    hipLaunchKernelGGL(gpu_swap_control_parameters,
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[3 % MAX_GPU_STREAMS],
-                            d_crossover_probabilities_old_negative_frequency, d_crossover_probabilities_new_negative_frequency, d_rejection_indices, population_size);
-                    hipLaunchKernelGGL(gpu_swap_control_parameters,
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[4 % MAX_GPU_STREAMS],
-                            d_differential_weights_old_negative_frequency, d_differential_weights_new_negative_frequency, d_rejection_indices, population_size);
-                    hipLaunchKernelGGL(gpu_swap_populations,
-                            dim3(grid_size_swap_populations), dim3(GPU_BLOCK_SIZE), 0, stream_array[5 % MAX_GPU_STREAMS],
-                            d_population_old_negative_frequency, d_population_new_negative_frequency, d_rejection_indices, population_size, genome_size);
-                    HIP_ASSERT(hipDeviceSynchronize());
-                #endif
-            #endif
-            #ifdef USE_CUDA
-                cuda_wrapper::gpu_set_rejection_indices_wrapper(
-                        dim3(grid_size_set_rejection_indices), dim3(GPU_BLOCK_SIZE),
-                        d_rejection_indices, d_fitness_new, d_fitness_old, population_size);
-                CUDA_ASSERT(cudaDeviceSynchronize());
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    cuda_wrapper::gpu_swap_control_parameters_wrapper(
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), stream_array[0],
-                            d_crossover_probabilities_old, d_crossover_probabilities_new, d_rejection_indices, population_size);
-                    cuda_wrapper::gpu_swap_control_parameters_wrapper(
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
-                            d_differential_weights_old, d_differential_weights_new, d_rejection_indices, population_size);
-                    cuda_wrapper::gpu_swap_populations_wrapper(
-                            dim3(grid_size_swap_populations), dim3(GPU_BLOCK_SIZE), stream_array[2 % MAX_GPU_STREAMS],
-                            d_population_old, d_population_new, d_rejection_indices, population_size, genome_size);
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #else
-                    cuda_wrapper::gpu_swap_control_parameters_wrapper(
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), stream_array[0],
-                            d_crossover_probabilities_old_positive_frequency, d_crossover_probabilities_new_positive_frequency, d_rejection_indices, population_size);
-                    cuda_wrapper::gpu_swap_control_parameters_wrapper(
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
-                            d_differential_weights_old_positive_frequency, d_differential_weights_new_positive_frequency, d_rejection_indices, population_size);
-                    cuda_wrapper::gpu_swap_populations_wrapper(
-                            dim3(grid_size_swap_populations), dim3(GPU_BLOCK_SIZE), stream_array[2 % MAX_GPU_STREAMS],
-                            d_population_old_positive_frequency, d_population_new_positive_frequency, d_rejection_indices, population_size, genome_size);
+            gpu_set_rejection_indices(default_stream, grid_size_set_rejection_indices, d_rejection_indices, d_fitness_new, d_fitness_old, population_size);
+            GPU_ASSERT(deac_wait(default_stream));
 
-                    cuda_wrapper::gpu_swap_control_parameters_wrapper(
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), stream_array[3 % MAX_GPU_STREAMS],
-                            d_crossover_probabilities_old_negative_frequency, d_crossover_probabilities_new_negative_frequency, d_rejection_indices, population_size);
-                    cuda_wrapper::gpu_swap_control_parameters_wrapper(
-                            dim3(grid_size_swap_control_parameters), dim3(GPU_BLOCK_SIZE), stream_array[4 % MAX_GPU_STREAMS],
-                            d_differential_weights_old_negative_frequency, d_differential_weights_new_negative_frequency, d_rejection_indices, population_size);
-                    cuda_wrapper::gpu_swap_populations_wrapper(
-                            dim3(grid_size_swap_populations), dim3(GPU_BLOCK_SIZE), stream_array[5 % MAX_GPU_STREAMS],
-                            d_population_old_negative_frequency, d_population_new_negative_frequency, d_rejection_indices, population_size, genome_size);
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #endif
-            #endif
-            #ifdef USE_SYCL
-                gpu_set_rejection_indices( q, grid_size_set_rejection_indices, d_rejection_indices, d_fitness_new, d_fitness_old, population_size );
-                q.wait();
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    gpu_swap_control_parameters( q, grid_size_swap_control_parameters, d_crossover_probabilities_old, d_crossover_probabilities_new, d_rejection_indices, population_size );
-                    gpu_swap_control_parameters( q, grid_size_swap_control_parameters, d_differential_weights_old, d_differential_weights_new, d_rejection_indices, population_size );
-                    gpu_swap_populations( q, grid_size_swap_populations, d_population_old, d_population_new, d_rejection_indices, population_size, genome_size );
-                    q.wait();
-                #else
-                    gpu_swap_control_parameters( q, grid_size_swap_control_parameters, d_crossover_probabilities_old_positive_frequency, d_crossover_probabilities_new_positive_frequency, d_rejection_indices, population_size );
-                    gpu_swap_control_parameters( q, grid_size_swap_control_parameters, d_differential_weights_old_positive_frequency, d_differential_weights_new_positive_frequency, d_rejection_indices, population_size );
-                    gpu_swap_populations( q, grid_size_swap_populations, d_population_old_positive_frequency, d_population_new_positive_frequency, d_rejection_indices, population_size, genome_size );
+            gpu_swap_control_parameters(default_stream, grid_size_swap_control_parameters, d_crossover_probabilities_old_positive_frequency, d_crossover_probabilities_new_positive_frequency, d_rejection_indices, population_size);
+            gpu_swap_control_parameters(default_stream, grid_size_swap_control_parameters, d_differential_weights_old_positive_frequency, d_differential_weights_new_positive_frequency, d_rejection_indices, population_size);
+            gpu_swap_populations(default_stream, grid_size_swap_populations, d_population_old_positive_frequency, d_population_new_positive_frequency, d_rejection_indices, population_size, genome_size);
 
-                    gpu_swap_control_parameters( q, grid_size_swap_control_parameters, d_crossover_probabilities_old_negative_frequency, d_crossover_probabilities_new_negative_frequency, d_rejection_indices, population_size );
-                    gpu_swap_control_parameters( q, grid_size_swap_control_parameters, d_differential_weights_old_negative_frequency, d_differential_weights_new_negative_frequency, d_rejection_indices, population_size );
-                    gpu_swap_populations( q, grid_size_swap_populations, d_population_old_negative_frequency, d_population_new_negative_frequency, d_rejection_indices, population_size, genome_size );
-                    q.wait();
-                #endif
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                gpu_swap_control_parameters(default_stream, grid_size_swap_control_parameters, d_crossover_probabilities_old_negative_frequency, d_crossover_probabilities_new_negative_frequency, d_rejection_indices, population_size);
+                gpu_swap_control_parameters(default_stream, grid_size_swap_control_parameters, d_differential_weights_old_negative_frequency, d_differential_weights_new_negative_frequency, d_rejection_indices, population_size);
+                gpu_swap_populations(default_stream, grid_size_swap_populations, d_population_old_negative_frequency, d_population_new_negative_frequency, d_rejection_indices, population_size, genome_size);
             #endif
+            GPU_ASSERT(deac_wait(default_stream));
         #else
             for (size_t i=0; i<population_size; i++) {
                 double _fitness = reduced_chi_square_statistic(isf,
                         isf_model + i*number_of_timeslices, isf_error,
                         number_of_timeslices)/number_of_timeslices;
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                if (use_negative_first_moment) {
-                    _fitness += pow((negative_first_moment - negative_first_moments[i])/negative_first_moment_error,2);
-                }
+                #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    if (use_negative_first_moment) {
+                        _fitness += pow((negative_first_moment - negative_first_moments[i])/negative_first_moment_error,2);
+                    }
                 #else
                     //FIXME inverse first moment not implemented for single particle fermionic spectral function
                 #endif
@@ -1516,21 +1433,18 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 // Rejection step
                 if (_fitness <= fitness_old[i]) {
                     fitness_old[i] = _fitness;
-                    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                        crossover_probabilities_old[i] = crossover_probabilities_new[i];
-                        differential_weights_old[i] = differential_weights_new[i];
-                        for (size_t j=0; j<genome_size; j++) {
-                            population_old[i*genome_size + j] = population_new[i*genome_size + j];
-                        }
-                    #else
-                        crossover_probabilities_old_positive_frequency[i] = crossover_probabilities_new_positive_frequency[i];
+                    crossover_probabilities_old_positive_frequency[i] = crossover_probabilities_new_positive_frequency[i];
+                    differential_weights_old_positive_frequency[i] = differential_weights_new_positive_frequency[i];
+                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                         crossover_probabilities_old_negative_frequency[i] = crossover_probabilities_new_negative_frequency[i];
-                        differential_weights_old_positive_frequency[i] = differential_weights_new_positive_frequency[i];
                         differential_weights_old_negative_frequency[i] = differential_weights_new_negative_frequency[i];
-                        for (size_t j=0; j<genome_size; j++) {
-                            population_old_positive_frequency[i*genome_size + j] = population_new_positive_frequency[i*genome_size + j];
+                    #endif
+                    for (size_t j=0; j<genome_size; j++) {
+                        population_old_positive_frequency[i*genome_size + j] = population_new_positive_frequency[i*genome_size + j];
+                        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                             population_old_negative_frequency[i*genome_size + j] = population_new_negative_frequency[i*genome_size + j];
-                        }
+                        #endif
+                    }
                     #endif
                 }
             }
