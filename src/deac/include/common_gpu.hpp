@@ -32,6 +32,7 @@
         #define deac_memcpy_device_to_host(w, x, y, z) hipMemcpyAsync(w, x, y, hipMemcpyDeviceToHost, z)
         #define deac_wait(x) hipStreamSynchronize(x)
         #define deac_memset(w, x, y, z) hipMemsetAsync(w, x, y, z)
+        #define deac_free(x, y) hipFreeAsync(x, y)
     #endif
     #ifdef USE_CUDA
         #include <cuda_runtime.h>
@@ -44,6 +45,8 @@
         #define deac_memcpy_device_to_host(w, x, y, z) cudaMemcpyAsync(w, x, y, cudaMemcpyDeviceToHost, z)
         #define deac_wait(x) cudaStreamSynchronize(x)
         #define deac_memset(w, x, y, z) cudaMemsetAsync(w, x, y, z)
+        #define deac_free(x, y) cudaFreeAsync(x, y)
+
     #endif
     #ifdef USE_SYCL
         #include <CL/sycl.hpp>
@@ -65,6 +68,7 @@
         #define deac_memcpy_device_to_host(w, x, y, z) z.memcpy(w, x, y)
         #define deac_wait(x) x.wait()
         #define deac_memset(w, x, y, z) z.memset(w, x, y)
+        #define deac_free(x, y) sycl::free(x, y)
     #endif
 #endif
 #endif

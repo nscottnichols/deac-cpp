@@ -1537,7 +1537,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     fs::path best_dsf_filename = save_directory / best_dsf_filename_str;
     std::string frequency_filename_str = string_format("%s_frequency_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
     fs::path frequency_filename = save_directory / frequency_filename_str;
-    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
         write_array(best_dsf_filename, best_dsf, genome_size);
         write_array(frequency_filename, best_frequency, genome_size);
     #else
@@ -1574,11 +1574,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #ifdef USE_NORMALIZATION_MODEL
         log_ofs << "build: USE_NORMALIZATION_MODEL" << std::endl;
     #endif
-    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-        log_ofs << "kernel: BOSONIC" << std::endl;
-    #else
-        log_ofs << "kernel: SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION" << std::endl;
-    #endif
+    log_ofs << "kernel: " << spectra_type << std::endl;
 
     //Input parameters
     log_ofs << "temperature: " << temperature << std::endl;
@@ -1616,382 +1612,149 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     log_ofs.close();
 
     //Free memory
-    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-        free(isf_term);
-        free(population_old);
-        free(population_new);
-        free(fitness_old);
-        if (normalize) {
-            free(normalization_term);
-            free(normalization);
-        }
-        if (use_first_moment) {
-            free(first_moments_term);
-            free(first_moments);
-        }
-        if (use_third_moment) {
-            free(third_moments_term);
-            free(third_moments);
-        }
-        free(isf_model);
+    if (track_stats) {
+        free(fitness_mean);
+        free(fitness_minimum);
+        free(fitness_squared_mean);
+    }
+
+    free(fitness_old);
+    free(mutant_indices);
+    free(best_dsf);
+    free(best_frequency);
+
+    free(isf_term_positive_frequency);
+    free(population_old_positive_frequency);
+    free(population_new_positive_frequency);
+    if (normalize) {
+        free(normalization);
+        free(normalization_term_positive_frequency);
+    }
+    if (use_first_moment) {
+        free(first_moments);
+        free(first_moments_term_positive_frequency);
+    }
+    if (use_third_moment) {
+        free(third_moments);
+        free(third_moments_term_positive_frequency);
+    }
+    free(isf_model);
+    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+        //FIXME need to add inverse first moment functionality for negative frequency, then can remove this ifdef
         if (use_negative_first_moment) {
-            free(negative_first_moments_term);
+            free(negative_first_moments_term_positive_frequency);
             free(negative_first_moments);
         }
-        free(crossover_probabilities_old);
-        free(crossover_probabilities_new);
-        free(differential_weights_old);
-        free(differential_weights_new);
-        if (track_stats) {
-            free(fitness_mean);
-            free(fitness_minimum);
-            free(fitness_squared_mean);
-        }
-        free(mutate_indices);
-        free(mutant_indices);
-        free(best_dsf);
-        free(best_frequency);
-    #else
-        free(isf_term_positive_frequency);
+    #endif
+    free(crossover_probabilities_old_positive_frequency);
+    free(crossover_probabilities_new_positive_frequency);
+    free(differential_weights_old_positive_frequency);
+    free(differential_weights_new_positive_frequency);
+    free(mutate_indices_positive_frequency);
+
+    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
         free(isf_term_negative_frequency);
-        free(population_old_positive_frequency);
         free(population_old_negative_frequency);
-        free(population_new_positive_frequency);
         free(population_new_negative_frequency);
-        free(fitness_old);
         if (normalize) {
-            free(normalization_term_positive_frequency);
             free(normalization_term_negative_frequency);
-            free(normalization);
         }
         if (use_first_moment) {
-            free(first_moments_term_positive_frequency);
             free(first_moments_term_negative_frequency);
-            free(first_moments);
         }
         if (use_third_moment) {
-            free(third_moments_term_positive_frequency);
             free(third_moments_term_negative_frequency);
-            free(third_moments);
         }
-        free(isf_model);
         //FIXME need to add inverse first moment functionality
         //if (use_negative_first_moment) {
-        //    free(negative_first_moments_term_positive_frequency);
         //    free(negative_first_moments_term_negative_frequency);
-        //    free(negative_first_moments);
         //}
-        free(crossover_probabilities_old_positive_frequency);
         free(crossover_probabilities_old_negative_frequency);
-        free(crossover_probabilities_new_positive_frequency);
         free(crossover_probabilities_new_negative_frequency);
-        free(differential_weights_old_positive_frequency);
         free(differential_weights_old_negative_frequency);
-        free(differential_weights_new_positive_frequency);
         free(differential_weights_new_negative_frequency);
-        if (track_stats) {
-            free(fitness_mean);
-            free(fitness_minimum);
-            free(fitness_squared_mean);
-        }
-        free(mutate_indices_positive_frequency);
         free(mutate_indices_negative_frequency);
-        free(mutant_indices);
-        free(best_dsf);
-        free(best_frequency);
     #endif
 
-    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-        #ifdef USE_GPU
-            free(rng_state);
-            // Release device memory
-            #ifdef USE_HIP
-                HIP_ASSERT(hipFree(d_isf));
-                HIP_ASSERT(hipFree(d_isf_error));
-                HIP_ASSERT(hipFree(d_isf_term));
-                HIP_ASSERT(hipFree(d_population_old));
-                HIP_ASSERT(hipFree(d_population_new));
-                HIP_ASSERT(hipFree(d_fitness_old));
-                HIP_ASSERT(hipFree(d_fitness_new));
-                if (normalize) {
-                    HIP_ASSERT(hipFree(d_normalization_term));
-                    HIP_ASSERT(hipFree(d_normalization));
-                }
-                if (use_first_moment) {
-                    HIP_ASSERT(hipFree(d_first_moments_term));
-                    HIP_ASSERT(hipFree(d_first_moments));
-                }
-                if (use_third_moment) {
-                    HIP_ASSERT(hipFree(d_third_moments_term));
-                    HIP_ASSERT(hipFree(d_third_moments));
-                }
-                HIP_ASSERT(hipFree(d_isf_model));
-                if (use_negative_first_moment) {
-                    HIP_ASSERT(hipFree(d_negative_first_moments_term));
-                    HIP_ASSERT(hipFree(d_negative_first_moments));
-                }
-                HIP_ASSERT(hipFree(d_crossover_probabilities_old));
-                HIP_ASSERT(hipFree(d_crossover_probabilities_new));
-                HIP_ASSERT(hipFree(d_differential_weights_old));
-                HIP_ASSERT(hipFree(d_differential_weights_new));
-                if (track_stats) {
-                    HIP_ASSERT(hipFree(d_fitness_mean));
-                    HIP_ASSERT(hipFree(d_fitness_squared_mean));
-                }
-                HIP_ASSERT(hipFree(d_mutate_indices));
-                HIP_ASSERT(hipFree(d_rejection_indices));
-                HIP_ASSERT(hipFree(d_mutant_indices));
-                HIP_ASSERT(hipFree(d_minimum_fitness));
-                HIP_ASSERT(hipFree(d_rng_state));
-            #endif
-            #ifdef USE_CUDA
-                CUDA_ASSERT(cudaFree(d_isf));
-                CUDA_ASSERT(cudaFree(d_isf_error));
-                CUDA_ASSERT(cudaFree(d_isf_term));
-                CUDA_ASSERT(cudaFree(d_population_old));
-                CUDA_ASSERT(cudaFree(d_population_new));
-                CUDA_ASSERT(cudaFree(d_fitness_old));
-                CUDA_ASSERT(cudaFree(d_fitness_new));
-                if (normalize) {
-                    CUDA_ASSERT(cudaFree(d_normalization_term));
-                    CUDA_ASSERT(cudaFree(d_normalization));
-                }
-                if (use_first_moment) {
-                    CUDA_ASSERT(cudaFree(d_first_moments_term));
-                    CUDA_ASSERT(cudaFree(d_first_moments));
-                }
-                if (use_third_moment) {
-                    CUDA_ASSERT(cudaFree(d_third_moments_term));
-                    CUDA_ASSERT(cudaFree(d_third_moments));
-                }
-                CUDA_ASSERT(cudaFree(d_isf_model));
-                if (use_negative_first_moment) {
-                    CUDA_ASSERT(cudaFree(d_negative_first_moments_term));
-                    CUDA_ASSERT(cudaFree(d_negative_first_moments));
-                }
-                CUDA_ASSERT(cudaFree(d_crossover_probabilities_old));
-                CUDA_ASSERT(cudaFree(d_crossover_probabilities_new));
-                CUDA_ASSERT(cudaFree(d_differential_weights_old));
-                CUDA_ASSERT(cudaFree(d_differential_weights_new));
-                if (track_stats) {
-                    CUDA_ASSERT(cudaFree(d_fitness_mean));
-                    CUDA_ASSERT(cudaFree(d_fitness_squared_mean));
-                }
-                CUDA_ASSERT(cudaFree(d_mutate_indices));
-                CUDA_ASSERT(cudaFree(d_rejection_indices));
-                CUDA_ASSERT(cudaFree(d_mutant_indices));
-                CUDA_ASSERT(cudaFree(d_minimum_fitness));
-                CUDA_ASSERT(cudaFree(d_rng_state));
-            #endif
-            #ifdef USE_SYCL
-                sycl::free(d_isf, q);
-                sycl::free(d_isf_error, q);
-                sycl::free(d_isf_term, q);
-                sycl::free(d_population_old, q);
-                sycl::free(d_population_new, q);
-                sycl::free(d_fitness_old, q);
-                sycl::free(d_fitness_new, q);
-                if (normalize) {
-                    sycl::free(d_normalization_term, q);
-                    sycl::free(d_normalization, q);
-                }
-                if (use_first_moment) {
-                    sycl::free(d_first_moments_term, q);
-                    sycl::free(d_first_moments, q);
-                }
-                if (use_third_moment) {
-                    sycl::free(d_third_moments_term, q);
-                    sycl::free(d_third_moments, q);
-                }
-                sycl::free(d_isf_model, q);
-                if (use_negative_first_moment) {
-                    sycl::free(d_negative_first_moments_term, q);
-                    sycl::free(d_negative_first_moments, q);
-                }
-                sycl::free(d_crossover_probabilities_old, q);
-                sycl::free(d_crossover_probabilities_new, q);
-                sycl::free(d_differential_weights_old, q);
-                sycl::free(d_differential_weights_new, q);
-                if (track_stats) {
-                    sycl::free(d_fitness_mean, q);
-                    sycl::free(d_fitness_squared_mean, q);
-                }
-                sycl::free(d_mutate_indices, q);
-                sycl::free(d_rejection_indices, q);
-                sycl::free(d_mutant_indices, q);
-                sycl::free(h_minimum_fitness, q);
-                sycl::free(d_rng_state, q);
-            #endif
-            // Destroy Streams
-            for (size_t i = 0; i < MAX_GPU_STREAMS; i++) {
-                GPU_ASSERT(deac_stream_destroy(stream_array[i]));
+    #ifdef USE_GPU
+        free(rng_state);
+
+        // Release device memory
+        if (track_stats) {
+            GPU_ASSERT(deac_free(d_fitness_mean,         stream_array[0 % MAX_GPU_STREAMS]));
+            GPU_ASSERT(deac_free(d_fitness_squared_mean, stream_array[1 % MAX_GPU_STREAMS]));
+        }
+
+        GPU_ASSERT(deac_free(d_isf,               stream_array[2 % MAX_GPU_STREAMS]));
+        GPU_ASSERT(deac_free(d_isf_error,         stream_array[3 % MAX_GPU_STREAMS]));
+        GPU_ASSERT(deac_free(d_rejection_indices, stream_array[4 % MAX_GPU_STREAMS]));
+        GPU_ASSERT(deac_free(d_mutant_indices,    stream_array[5 % MAX_GPU_STREAMS]));
+        GPU_ASSERT(deac_free(d_minimum_fitness,   stream_array[6 % MAX_GPU_STREAMS]));
+        GPU_ASSERT(deac_free(d_rng_state,         stream_array[7 % MAX_GPU_STREAMS]));
+
+        GPU_ASSERT(deac_free(d_isf_term_positive_frequency,       stream_array[ 8 % MAX_GPU_STREAMS]));
+        GPU_ASSERT(deac_free(d_population_old_positive_frequency, stream_array[ 9 % MAX_GPU_STREAMS]));
+        GPU_ASSERT(deac_free(d_population_new_positive_frequency, stream_array[10 % MAX_GPU_STREAMS]));
+        GPU_ASSERT(deac_free(d_fitness_old,                       stream_array[11 % MAX_GPU_STREAMS]));
+        GPU_ASSERT(deac_free(d_fitness_new,                       stream_array[12 % MAX_GPU_STREAMS]));
+        GPU_ASSERT(deac_free(d_isf_model,                         stream_array[13 % MAX_GPU_STREAMS]));
+        if (normalize) {
+            GPU_ASSERT(deac_free(d_normalization,                         stream_array[14 % MAX_GPU_STREAMS]));
+            GPU_ASSERT(deac_free(d_normalization_term_positive_frequency, stream_array[15 % MAX_GPU_STREAMS]));
+        }
+        if (use_first_moment) {
+            GPU_ASSERT(deac_free(d_first_moments,                         stream_array[16 % MAX_GPU_STREAMS]));
+            GPU_ASSERT(deac_free(d_first_moments_term_positive_frequency, stream_array[17 % MAX_GPU_STREAMS]));
+        }
+        if (use_third_moment) {
+            GPU_ASSERT(deac_free(d_third_moments,                         stream_array[18 % MAX_GPU_STREAMS]));
+            GPU_ASSERT(deac_free(d_third_moments_term_positive_frequency, stream_array[19 % MAX_GPU_STREAMS]));
+        }
+        #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            //FIXME need to add inverse first moment functionality for negative frequency, then can remove this ifdef
+            if (use_negative_first_moment) {
+                GPU_ASSERT(deac_free(d_negative_first_moments,                         stream_array[20 % MAX_GPU_STREAMS]));
+                GPU_ASSERT(deac_free(d_negative_first_moments_term_positive_frequency, stream_array[21 % MAX_GPU_STREAMS]));
             }
         #endif
-    #else
-        #ifdef USE_GPU
-            free(rng_state);
-            // Release device memory
-            #ifdef USE_HIP
-                HIP_ASSERT(hipFree(d_isf));
-                HIP_ASSERT(hipFree(d_isf_error));
-                HIP_ASSERT(hipFree(d_isf_term_positive_frequency));
-                HIP_ASSERT(hipFree(d_isf_term_negative_frequency));
-                HIP_ASSERT(hipFree(d_population_old_positive_frequency));
-                HIP_ASSERT(hipFree(d_population_old_negative_frequency));
-                HIP_ASSERT(hipFree(d_population_new_positive_frequency));
-                HIP_ASSERT(hipFree(d_population_new_negative_frequency));
-                HIP_ASSERT(hipFree(d_fitness_old));
-                HIP_ASSERT(hipFree(d_fitness_new));
-                if (normalize) {
-                    HIP_ASSERT(hipFree(d_normalization_term_positive_frequency));
-                    HIP_ASSERT(hipFree(d_normalization_term_negative_frequency));
-                    HIP_ASSERT(hipFree(d_normalization));
-                }
-                if (use_first_moment) {
-                    HIP_ASSERT(hipFree(d_first_moments_term_positive_frequency));
-                    HIP_ASSERT(hipFree(d_first_moments_term_negative_frequency));
-                    HIP_ASSERT(hipFree(d_first_moments));
-                }
-                if (use_third_moment) {
-                    HIP_ASSERT(hipFree(d_third_moments_term_positive_frequency));
-                    HIP_ASSERT(hipFree(d_third_moments_term_negative_frequency));
-                    HIP_ASSERT(hipFree(d_third_moments));
-                }
-                HIP_ASSERT(hipFree(d_isf_model));
-                //FIXME need to add inverse first moment functionality
-                //if (use_negative_first_moment) {
-                //    HIP_ASSERT(hipFree(d_negative_first_moments_term_positive_frequency));
-                //    HIP_ASSERT(hipFree(d_negative_first_moments_term_negative_frequency));
-                //    HIP_ASSERT(hipFree(d_negative_first_moments));
-                //}
-                HIP_ASSERT(hipFree(d_crossover_probabilities_old_positive_frequency));
-                HIP_ASSERT(hipFree(d_crossover_probabilities_old_negative_frequency));
-                HIP_ASSERT(hipFree(d_crossover_probabilities_new_positive_frequency));
-                HIP_ASSERT(hipFree(d_crossover_probabilities_new_negative_frequency));
-                HIP_ASSERT(hipFree(d_differential_weights_old_positive_frequency));
-                HIP_ASSERT(hipFree(d_differential_weights_old_negative_frequency));
-                HIP_ASSERT(hipFree(d_differential_weights_new_positive_frequency));
-                HIP_ASSERT(hipFree(d_differential_weights_new_negative_frequency));
-                if (track_stats) {
-                    HIP_ASSERT(hipFree(d_fitness_mean));
-                    HIP_ASSERT(hipFree(d_fitness_squared_mean));
-                }
-                HIP_ASSERT(hipFree(d_mutate_indices_positive_frequency));
-                HIP_ASSERT(hipFree(d_mutate_indices_negative_frequency));
-                HIP_ASSERT(hipFree(d_rejection_indices));
-                HIP_ASSERT(hipFree(d_mutant_indices));
-                HIP_ASSERT(hipFree(d_minimum_fitness));
-                HIP_ASSERT(hipFree(d_rng_state));
-            #endif
-            #ifdef USE_CUDA
-                CUDA_ASSERT(cudaFree(d_isf));
-                CUDA_ASSERT(cudaFree(d_isf_error));
-                CUDA_ASSERT(cudaFree(d_isf_term_positive_frequency));
-                CUDA_ASSERT(cudaFree(d_isf_term_negative_frequency));
-                CUDA_ASSERT(cudaFree(d_population_old_positive_frequency));
-                CUDA_ASSERT(cudaFree(d_population_old_negative_frequency));
-                CUDA_ASSERT(cudaFree(d_population_new_positive_frequency));
-                CUDA_ASSERT(cudaFree(d_population_new_negative_frequency));
-                CUDA_ASSERT(cudaFree(d_fitness_old));
-                CUDA_ASSERT(cudaFree(d_fitness_new));
-                if (normalize) {
-                    CUDA_ASSERT(cudaFree(d_normalization_term_positive_frequency));
-                    CUDA_ASSERT(cudaFree(d_normalization_term_negative_frequency));
-                    CUDA_ASSERT(cudaFree(d_normalization));
-                }
-                if (use_first_moment) {
-                    CUDA_ASSERT(cudaFree(d_first_moments_term_positive_frequency));
-                    CUDA_ASSERT(cudaFree(d_first_moments_term_negative_frequency));
-                    CUDA_ASSERT(cudaFree(d_first_moments));
-                }
-                if (use_third_moment) {
-                    CUDA_ASSERT(cudaFree(d_third_moments_term_positive_frequency));
-                    CUDA_ASSERT(cudaFree(d_third_moments_term_negative_frequency));
-                    CUDA_ASSERT(cudaFree(d_third_moments));
-                }
-                CUDA_ASSERT(cudaFree(d_isf_model));
-                //FIXME need to add inverse first moment functionality
-                //if (use_negative_first_moment) {
-                //    CUDA_ASSERT(cudaFree(d_negative_first_moments_term_positive_frequency));
-                //    CUDA_ASSERT(cudaFree(d_negative_first_moments_term_negative_frequency));
-                //    CUDA_ASSERT(cudaFree(d_negative_first_moments));
-                //}
-                CUDA_ASSERT(cudaFree(d_crossover_probabilities_old_positive_frequency));
-                CUDA_ASSERT(cudaFree(d_crossover_probabilities_old_negative_frequency));
-                CUDA_ASSERT(cudaFree(d_crossover_probabilities_new_positive_frequency));
-                CUDA_ASSERT(cudaFree(d_crossover_probabilities_new_negative_frequency));
-                CUDA_ASSERT(cudaFree(d_differential_weights_old_positive_frequency));
-                CUDA_ASSERT(cudaFree(d_differential_weights_old_negative_frequency));
-                CUDA_ASSERT(cudaFree(d_differential_weights_new_positive_frequency));
-                CUDA_ASSERT(cudaFree(d_differential_weights_new_negative_frequency));
-                if (track_stats) {
-                    CUDA_ASSERT(cudaFree(d_fitness_mean));
-                    CUDA_ASSERT(cudaFree(d_fitness_squared_mean));
-                }
-                CUDA_ASSERT(cudaFree(d_mutate_indices_positive_frequency));
-                CUDA_ASSERT(cudaFree(d_mutate_indices_negative_frequency));
-                CUDA_ASSERT(cudaFree(d_rejection_indices));
-                CUDA_ASSERT(cudaFree(d_mutant_indices));
-                CUDA_ASSERT(cudaFree(d_minimum_fitness));
-                CUDA_ASSERT(cudaFree(d_rng_state));
-            #endif
-            #ifdef USE_SYCL
-                sycl::free(d_isf, q);
-                sycl::free(d_isf_error, q);
-                sycl::free(d_isf_term_positive_frequency, q);
-                sycl::free(d_isf_term_negative_frequency, q);
-                sycl::free(d_population_old_positive_frequency, q);
-                sycl::free(d_population_old_negative_frequency, q);
-                sycl::free(d_population_new_positive_frequency, q);
-                sycl::free(d_population_new_negative_frequency, q);
-                sycl::free(d_fitness_old, q);
-                sycl::free(d_fitness_new, q);
-                if (normalize) {
-                    sycl::free(d_normalization_term_positive_frequency, q);
-                    sycl::free(d_normalization_term_negative_frequency, q);
-                    sycl::free(d_normalization, q);
-                }
-                if (use_first_moment) {
-                    sycl::free(d_first_moments_term_positive_frequency, q);
-                    sycl::free(d_first_moments_term_negative_frequency, q);
-                    sycl::free(d_first_moments, q);
-                }
-                if (use_third_moment) {
-                    sycl::free(d_third_moments_term_positive_frequency, q);
-                    sycl::free(d_third_moments_term_negative_frequency, q);
-                    sycl::free(d_third_moments, q);
-                }
-                sycl::free(d_isf_model, q);
-                //FIXME need to add inverse first moment functionality
-                //if (use_negative_first_moment) {
-                //    sycl::free(d_negative_first_moments_term_positive_frequency, q);
-                //    sycl::free(d_negative_first_moments_term_negative_frequency, q);
-                //    sycl::free(d_negative_first_moments, q);
-                //}
-                sycl::free(d_crossover_probabilities_old_positive_frequency, q);
-                sycl::free(d_crossover_probabilities_old_negative_frequency, q);
-                sycl::free(d_crossover_probabilities_new_positive_frequency, q);
-                sycl::free(d_crossover_probabilities_new_negative_frequency, q);
-                sycl::free(d_differential_weights_old_positive_frequency, q);
-                sycl::free(d_differential_weights_old_negative_frequency, q);
-                sycl::free(d_differential_weights_new_positive_frequency, q);
-                sycl::free(d_differential_weights_new_negative_frequency, q);
-                if (track_stats) {
-                    sycl::free(d_fitness_mean, q);
-                    sycl::free(d_fitness_squared_mean, q);
-                }
-                sycl::free(d_mutate_indices_positive_frequency, q);
-                sycl::free(d_mutate_indices_negative_frequency, q);
-                sycl::free(d_rejection_indices, q);
-                sycl::free(d_mutant_indices, q);
-                sycl::free(h_minimum_fitness, q);
-                sycl::free(d_rng_state, q);
-            #endif
-            // Destroy Streams
-            for (size_t i = 0; i < MAX_GPU_STREAMS; i++) {
-                GPU_ASSERT(deac_stream_destroy(stream_array[i]));
+        GPU_ASSERT(deac_free(d_crossover_probabilities_old_positive_frequency, stream_array[22 % MAX_GPU_STREAMS]));
+        GPU_ASSERT(deac_free(d_crossover_probabilities_new_positive_frequency, stream_array[23 % MAX_GPU_STREAMS]));
+        GPU_ASSERT(deac_free(d_differential_weights_old_positive_frequency,    stream_array[24 % MAX_GPU_STREAMS]));
+        GPU_ASSERT(deac_free(d_differential_weights_new_positive_frequency,    stream_array[25 % MAX_GPU_STREAMS]));
+        GPU_ASSERT(deac_free(d_mutate_indices_positive_frequency,              stream_array[26 % MAX_GPU_STREAMS]));
+
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            GPU_ASSERT(deac_free(d_isf_term_negative_frequency,       stream_array[27 % MAX_GPU_STREAMS]));
+            GPU_ASSERT(deac_free(d_population_old_negative_frequency, stream_array[28 % MAX_GPU_STREAMS]));
+            GPU_ASSERT(deac_free(d_population_new_negative_frequency, stream_array[29 % MAX_GPU_STREAMS]));
+            if (normalize) {
+                GPU_ASSERT(deac_free(d_normalization_term_negative_frequency, stream_array[30 % MAX_GPU_STREAMS]));
             }
+            if (use_first_moment) {
+                GPU_ASSERT(deac_free(d_first_moments_term_negative_frequency, stream_array[31 % MAX_GPU_STREAMS]));
+            }
+            if (use_third_moment) {
+                GPU_ASSERT(deac_free(d_third_moments_term_negative_frequency, stream_array[32 % MAX_GPU_STREAMS]));
+            }
+            //FIXME need to add inverse first moment functionality
+            //if (use_negative_first_moment) {
+            //    GPU_ASSERT(deac_free(d_negative_first_moments_term_negative_frequency, stream_array[33 % MAX_GPU_STREAMS]));
+            //}
+            GPU_ASSERT(deac_free(d_crossover_probabilities_old_negative_frequency, stream_array[34 % MAX_GPU_STREAMS]));
+            GPU_ASSERT(deac_free(d_crossover_probabilities_new_negative_frequency, stream_array[35 % MAX_GPU_STREAMS]));
+            GPU_ASSERT(deac_free(d_differential_weights_old_negative_frequency,    stream_array[36 % MAX_GPU_STREAMS]));
+            GPU_ASSERT(deac_free(d_differential_weights_new_negative_frequency,    stream_array[37 % MAX_GPU_STREAMS]));
+            GPU_ASSERT(deac_free(d_mutate_indices_negative_frequency,              stream_array[38 % MAX_GPU_STREAMS]));
         #endif
+
+        for (auto& s : stream_array) {
+            GPU_ASSERT(deac_wait(s));
+        }
+
+        // Destroy Streams
+        for (size_t i = 0; i < MAX_GPU_STREAMS; i++) {
+            GPU_ASSERT(deac_stream_destroy(stream_array[i]));
+        }
     #endif
 }
 
@@ -2082,7 +1845,10 @@ int main (int argc, char *argv[]) {
         .help("Track minimum fitness and other stats.")
         .default_value(false)
         .implicit_value(true);
-    program.add_argument("isf_file")
+    program.add_argument("--spectra_type")
+        .help("Choose spectral type for kernel factors [bdsf, spbsf, spfsf, full].")
+        .default_value("bdsf");
+    program.add_argument("isf_file") //FIXME make this more generic
         .help("binary file containing isf data (tau, isf, error)");
     try {
       program.parse_args(argc, argv);
