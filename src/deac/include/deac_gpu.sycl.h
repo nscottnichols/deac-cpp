@@ -317,428 +317,137 @@ void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __rest
 
 void gpu_normalize_population(sycl::queue q, size_t grid_size, double* __restrict__ population, double* __restrict__ normalization, double zeroth_moment, size_t population_size, size_t genome_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t global_idx = index.get_global_id(0);
-                if (global_idx < population_size*genome_size) {
-                    population[global_idx] *= zeroth_moment/normalization[global_idx/genome_size];
-                }
-            });
-        }));
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            size_t global_idx = item.get_global_id(0);
+            if (global_idx < population_size*genome_size) {
+                population[global_idx] *= zeroth_moment/normalization[global_idx/genome_size];
+            }
+        });
     });
 }
 
 void gpu_set_fitness(sycl::queue q, double* __restrict__ fitness, double* __restrict__ isf, double* __restrict__ isf_model, double* __restrict__ isf_error, size_t number_of_timeslices) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_work_group(sycl::range<1>{1}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        sycl::local_accessor<double, 1> _f(sycl::range<1>(GPU_BLOCK_SIZE), cgh);
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             // Set shared local memory _f
-            double _f[GPU_BLOCK_SIZE];
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t local_idx = index.get_local_id(0);
-                if (local_idx < number_of_timeslices) {
-                    _f[local_idx] = sycl::pown((isf[local_idx] - isf_model[local_idx])/isf_error[local_idx], 2);
-                } else {
-                    _f[local_idx] = 0.0;
-                }
+            size_t local_idx = item.get_local_id(0);
+            if (local_idx < number_of_timeslices) {
+                _f[local_idx] = sycl::pown((isf[local_idx] - isf_model[local_idx])/isf_error[local_idx], 2);
+            } else {
+                _f[local_idx] = 0.0;
+            }
 
-                for (size_t i = 1; i < (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
-                    size_t j = GPU_BLOCK_SIZE*i + local_idx;
-                    if (j < number_of_timeslices) {
-                        _f[local_idx] += sycl::pown((isf[j] - isf_model[j])/isf_error[j], 2);
-                    }
+            for (size_t i = 1; i < (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
+                size_t j = GPU_BLOCK_SIZE*i + local_idx;
+                if (j < number_of_timeslices) {
+                    _f[local_idx] += sycl::pown((isf[j] - isf_model[j])/isf_error[j], 2);
                 }
-            });
+            }
+            sycl::group_barrier(item.get_group());
 
             // Reduce _f (using shared local memory)
-            #ifdef SYCL_MATMUL_WA
-                // copy/paste code directly from gpu_reduce_add
-                #if (GPU_BLOCK_SIZE >= 1024) && (SUB_GROUP_SIZE < 512)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 512) {
-                            _f[local_idx] += _f[local_idx + 512];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 512) && (SUB_GROUP_SIZE < 256)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 256) {
-                            _f[local_idx] += _f[local_idx + 256];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 256) && (SUB_GROUP_SIZE < 128)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 128) {
-                            _f[local_idx] += _f[local_idx + 128];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 128) && (SUB_GROUP_SIZE < 64)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 64) {
-                            _f[local_idx] += _f[local_idx + 64];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 64) && (SUB_GROUP_SIZE < 32)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 32) {
-                            _f[local_idx] += _f[local_idx + 32];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 32) && (SUB_GROUP_SIZE < 16)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 16) {
-                            _f[local_idx] += _f[local_idx + 16];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 16) && (SUB_GROUP_SIZE < 8)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 8) {
-                            _f[local_idx] += _f[local_idx + 8];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 8) && (SUB_GROUP_SIZE < 4)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 4) {
-                            _f[local_idx] += _f[local_idx + 4];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 4) && (SUB_GROUP_SIZE < 2)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 2) {
-                            _f[local_idx] += _f[local_idx + 2];
-                        }
-                    });
-                #endif
-
-                //Sub-group reduce
-                wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                    size_t local_idx = index.get_local_id(0);
-                    if (local_idx < SUB_GROUP_SIZE) {
-                        sub_group_reduce_add(_f, local_idx);
-                    }
-                });
-            #else
-                gpu_reduce_add(_f, wGroup);
-            #endif
+            gpu_reduce_add(_f.get_pointer(), item);
 
             //Set fitness
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t local_idx = index.get_local_id(0);
-                if (local_idx == 0) {
-                     fitness[0] += _f[0]/number_of_timeslices;
-                }
-            });
-        }));
+            if (local_idx == 0) {
+                 fitness[0] += _f[0]/number_of_timeslices;
+            }
+        });
     });
 }
 
 void gpu_set_fitness_moments_reduced_chi_squared(sycl::queue q, size_t grid_size, double* __restrict__ fitness, double* __restrict__ moments, double moment, double moment_error, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t global_idx = index.get_global_id(0);
-                if (global_idx < population_size) {
-                    fitness[global_idx] += sycl::pown((moment - moments[global_idx])/moment_error, 2);
-                }
-            });
-        }));
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+            [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            size_t global_idx = item.get_global_id(0);
+            if (global_idx < population_size) {
+                fitness[global_idx] += sycl::pown((moment - moments[global_idx])/moment_error, 2);
+            }
+        });
     });
 }
 
 void gpu_set_fitness_moments_chi_squared(sycl::queue q, size_t grid_size, double* __restrict__ fitness, double* __restrict__ moments, double moment, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t global_idx = index.get_global_id(0);
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+            [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+                size_t global_idx = item.get_global_id(0);
                 if (global_idx < population_size) {
                     fitness[global_idx] += sycl::pown(moment - moments[global_idx], 2);
                 }
-            });
-        }));
+        });
     });
-}
-
-void gpu_get_minimum_fitness(sycl::queue q, double* __restrict__ fitness, double* __restrict__ minimum_fitness, size_t population_size) {
-    gpu_get_minimum(q, minimum_fitness, fitness, population_size);
 }
 
 void gpu_set_fitness_mean(sycl::queue q, double* __restrict__ fitness_mean, double* __restrict__ fitness, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_work_group(sycl::range<1>{1}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        sycl::local_accessor<double, 1> _fm(sycl::range<1>(GPU_BLOCK_SIZE), cgh);
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             // Set shared local memory _fm
-            double _fm[GPU_BLOCK_SIZE];
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t local_idx = index.get_local_id(0);
-                if (local_idx < population_size) {
-                    _fm[local_idx] = fitness[local_idx];
-                } else {
-                    _fm[local_idx] = 0.0;
-                }
+            size_t local_idx = item.get_local_id(0);
+            if (local_idx < population_size) {
+                _fm[local_idx] = fitness[local_idx];
+            } else {
+                _fm[local_idx] = 0.0;
+            }
 
-                for (size_t i = 1; i < (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
-                    size_t j = GPU_BLOCK_SIZE*i + local_idx;
-                    if (j < population_size) {
-                        _fm[local_idx] += fitness[j];
-                    }
+            for (size_t i = 1; i < (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
+                size_t j = GPU_BLOCK_SIZE*i + local_idx;
+                if (j < population_size) {
+                    _fm[local_idx] += fitness[j];
                 }
-            });
+            }
+            sycl::group_barrier(item.get_group());
             
             // Reduce _fm (using shared local memory)
-            #ifdef SYCL_MATMUL_WA
-                // copy/paste code directly from gpu_reduce_add
-                #if (GPU_BLOCK_SIZE >= 1024) && (SUB_GROUP_SIZE < 512)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 512) {
-                            _fm[local_idx] += _fm[local_idx + 512];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 512) && (SUB_GROUP_SIZE < 256)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 256) {
-                            _fm[local_idx] += _fm[local_idx + 256];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 256) && (SUB_GROUP_SIZE < 128)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 128) {
-                            _fm[local_idx] += _fm[local_idx + 128];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 128) && (SUB_GROUP_SIZE < 64)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 64) {
-                            _fm[local_idx] += _fm[local_idx + 64];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 64) && (SUB_GROUP_SIZE < 32)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 32) {
-                            _fm[local_idx] += _fm[local_idx + 32];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 32) && (SUB_GROUP_SIZE < 16)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 16) {
-                            _fm[local_idx] += _fm[local_idx + 16];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 16) && (SUB_GROUP_SIZE < 8)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 8) {
-                            _fm[local_idx] += _fm[local_idx + 8];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 8) && (SUB_GROUP_SIZE < 4)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 4) {
-                            _fm[local_idx] += _fm[local_idx + 4];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 4) && (SUB_GROUP_SIZE < 2)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 2) {
-                            _fm[local_idx] += _fm[local_idx + 2];
-                        }
-                    });
-                #endif
-
-                //Sub-group reduce
-                wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                    size_t local_idx = index.get_local_id(0);
-                    if (local_idx < SUB_GROUP_SIZE) {
-                        sub_group_reduce_add(_fm, local_idx);
-                    }
-                });
-            #else
-                gpu_reduce_add(_fm, wGroup);
-            #endif
+            gpu_reduce_add(_fm.get_pointer(), item);
 
             //Set fitness_mean
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t local_idx = index.get_local_id(0);
-                if (local_idx == 0) {
-                     fitness_mean[0] = _fm[0]/population_size;
-                }
-            });
-        }));
+            if (local_idx == 0) {
+                 fitness_mean[0] += _fm[0]/population_size;
+            }
+        });
     });
 }
 
 void gpu_set_fitness_squared_mean(sycl::queue q, double* __restrict__ fitness_squared_mean, double* __restrict__ fitness, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_work_group(sycl::range<1>{1}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+        sycl::local_accessor<double, 1> _fsm(sycl::range<1>(GPU_BLOCK_SIZE), cgh);
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             // Set shared local memory _fsm
-            double _fsm[GPU_BLOCK_SIZE];
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t local_idx = index.get_local_id(0);
-                if (local_idx < population_size) {
-                    _fsm[local_idx] = fitness[local_idx]*fitness[local_idx];
-                } else {
-                    _fsm[local_idx] = 0.0;
-                }
+            size_t local_idx = item.get_local_id(0);
+            if (local_idx < population_size) {
+                _fsm[local_idx] = fitness[local_idx]*fitness[local_idx];
+            } else {
+                _fsm[local_idx] = 0.0;
+            }
 
-                for (size_t i = 1; i < (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
-                    size_t j = GPU_BLOCK_SIZE*i + local_idx;
-                    if (j < population_size) {
-                        _fsm[local_idx] += fitness[j]*fitness[j];
-                    }
+            for (size_t i = 1; i < (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
+                size_t j = GPU_BLOCK_SIZE*i + local_idx;
+                if (j < population_size) {
+                    _fsm[local_idx] += fitness[j]*fitness[j];
                 }
-            });
+            }
+            sycl::group_barrier(item.get_group());
             
             // Reduce _fsm (using shared local memory)
-            #ifdef SYCL_MATMUL_WA
-                // copy/paste code directly from gpu_reduce_add
-                #if (GPU_BLOCK_SIZE >= 1024) && (SUB_GROUP_SIZE < 512)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 512) {
-                            _fsm[local_idx] += _fsm[local_idx + 512];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 512) && (SUB_GROUP_SIZE < 256)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 256) {
-                            _fsm[local_idx] += _fsm[local_idx + 256];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 256) && (SUB_GROUP_SIZE < 128)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 128) {
-                            _fsm[local_idx] += _fsm[local_idx + 128];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 128) && (SUB_GROUP_SIZE < 64)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 64) {
-                            _fsm[local_idx] += _fsm[local_idx + 64];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 64) && (SUB_GROUP_SIZE < 32)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 32) {
-                            _fsm[local_idx] += _fsm[local_idx + 32];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 32) && (SUB_GROUP_SIZE < 16)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 16) {
-                            _fsm[local_idx] += _fsm[local_idx + 16];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 16) && (SUB_GROUP_SIZE < 8)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 8) {
-                            _fsm[local_idx] += _fsm[local_idx + 8];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 8) && (SUB_GROUP_SIZE < 4)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 4) {
-                            _fsm[local_idx] += _fsm[local_idx + 4];
-                        }
-                    });
-                #endif
-
-                #if (GPU_BLOCK_SIZE >= 4) && (SUB_GROUP_SIZE < 2)
-                    wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                        size_t local_idx = index.get_local_id(0);
-                        if (local_idx < 2) {
-                            _fsm[local_idx] += _fsm[local_idx + 2];
-                        }
-                    });
-                #endif
-
-                //Sub-group reduce
-                wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                    size_t local_idx = index.get_local_id(0);
-                    if (local_idx < SUB_GROUP_SIZE) {
-                        sub_group_reduce_add(_fsm, local_idx);
-                    }
-                });
-            #else
-                gpu_reduce_add(_fsm, wGroup);
-            #endif
+            gpu_reduce_add(_fsm.get_pointer(), item);
 
             //Set fitness_squared_mean
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t local_idx = index.get_local_id(0);
-                if (local_idx == 0) {
-                     fitness_squared_mean[0] = _fsm[0]/population_size;
-                }
-            });
-        }));
+            if (local_idx == 0) {
+                 fitness_squared_mean[0] += _fsm[0]/population_size;
+            }
+        });
     });
 }
 
+// FIXME FIXME FIXME continue here
 void gpu_set_population_new(sycl::queue q, size_t grid_size, double* __restrict__ population_new, double* __restrict__ population_old, size_t* __restrict__ mutant_indices, double* __restrict__ differential_weights_new, bool* __restrict__ mutate_indices, size_t population_size, size_t genome_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {

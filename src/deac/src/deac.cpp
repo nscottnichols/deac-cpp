@@ -1022,7 +1022,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     for (size_t ii=0; ii < number_of_generations - 1; ii++) {
         generation = ii;
         #ifdef USE_GPU
-            gpu_get_minimum_fitness(default_stream, d_fitness_old, d_minimum_fitness, population_size);
+            gpu_get_minimum(default_stream, d_fitness_old, d_minimum_fitness, population_size);
             GPU_ASSERT(deac_memcpy_device_to_host(&minimum_fitness, d_minimum_fitness, bytes_minimum_fitness, default_stream));
             GPU_ASSERT(deac_wait(default_stream));
         #else
