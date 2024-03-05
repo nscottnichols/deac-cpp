@@ -216,7 +216,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double self_adapting_differential_weight_probability,
         double self_adapting_differential_weight_shift,
         double self_adapting_differential_weight, double stop_minimum_fitness,
-        bool track_stats, size_t seed, std::string uuid_str, fs::path save_directory) {
+        bool track_stats, size_t seed, std::string uuid_str, std::string spectra_type, fs::path save_directory) {
 
     #ifdef ZEROT
         //Set flags and temperature
@@ -1527,22 +1527,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         }
     }
 
-    // FIXME FIXME FIXME continue here
     //Save data
-    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-        #ifndef ZEROT
-            std::string deac_prefix = "deac";
-        #endif
-        #ifdef ZEROT
-            std::string deac_prefix = "deac-zT";
-        #endif
+    #ifndef ZEROT
+        std::string deac_prefix = "deac-" + spectra_type;
     #else
-        #ifndef ZEROT
-            std::string deac_prefix = "deac-spfsf";
-        #endif
-        #ifdef ZEROT
-            std::string deac_prefix = "deac-zT-spfsf";
-        #endif
+        std::string deac_prefix = "deac-zT" + spectra_type;
     #endif
     std::string best_dsf_filename_str = string_format("%s_dsf_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
     fs::path best_dsf_filename = save_directory / best_dsf_filename_str;
@@ -2201,6 +2190,9 @@ int main (int argc, char *argv[]) {
     log_ofs << "isf_file: " << isf_file << std::endl;
     log_ofs.close();
 
+    //FIXME FIXME FIXME need to add this
+    std::string spectra_type
+
     deac( &rng, imaginary_time, isf, isf_error, frequency, temperature,
             number_of_generations, number_of_timeslices, population_size, genome_size,
             normalize, use_negative_first_moment, first_moment, third_moment,
@@ -2209,7 +2201,7 @@ int main (int argc, char *argv[]) {
             self_adapting_differential_weight_probability,
             self_adapting_differential_weight_shift,
             self_adapting_differential_weight, stop_minimum_fitness,
-            track_stats, seed_int, uuid_str, save_directory);
+            track_stats, seed_int, uuid_str, spectra_type, save_directory);
 
     free(numpy_data);
     free(frequency);
