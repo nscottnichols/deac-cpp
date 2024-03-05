@@ -1125,108 +1125,40 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
         #ifdef USE_GPU
             size_t grid_size_set_population_new = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-            #ifdef USE_HIP
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    hipLaunchKernelGGL(gpu_set_population_new,
-                            dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE), 0, 0,
-                            d_population_new, d_population_old, d_mutant_indices, d_differential_weights_new, d_mutate_indices, population_size, genome_size);
-                    HIP_ASSERT(hipDeviceSynchronize());
-                #else
-                    size_t grid_size_match_population_zero = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                    hipLaunchKernelGGL(gpu_set_population_new,
-                            dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
-                            d_population_new_positive_frequency, d_population_old_positive_frequency, d_mutant_indices, d_differential_weights_new_positive_frequency, d_mutate_indices_positive_frequency, population_size, genome_size);
-                    hipLaunchKernelGGL(gpu_set_population_new,
-                            dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
-                            d_population_new_negative_frequency, d_population_old_negative_frequency, d_mutant_indices, d_differential_weights_new_negative_frequency, d_mutate_indices_negative_frequency, population_size, genome_size);
-                    HIP_ASSERT(hipDeviceSynchronize());
-
-                    hipLaunchKernelGGL(gpu_match_population_zero,
-                            dim3(grid_size_match_population_zero), dim3(GPU_BLOCK_SIZE), 0, 0,
-                            d_population_new_negative_frequency, d_population_new_positive_frequency, population_size, genome_size);
-                    HIP_ASSERT(hipDeviceSynchronize());
-                #endif
+            gpu_set_population_new(default_stream, grid_size_set_population_new, d_population_new_positive_frequency, d_population_old_positive_frequency, d_mutant_indices, d_differential_weights_new_positive_frequency, d_mutate_indices_positive_frequency, population_size, genome_size);
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                gpu_set_population_new(default_stream, grid_size_set_population_new, d_population_new_negative_frequency, d_population_old_negative_frequency, d_mutant_indices, d_differential_weights_new_negative_frequency, d_mutate_indices_negative_frequency, population_size, genome_size);
             #endif
-            #ifdef USE_CUDA
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    cuda_wrapper::gpu_set_population_new_wrapper(
-                            dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE),
-                            d_population_new, d_population_old, d_mutant_indices, d_differential_weights_new, d_mutate_indices, population_size, genome_size);
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #else
-                    size_t grid_size_match_population_zero = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                    cuda_wrapper::gpu_set_population_new_wrapper(
-                            dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE), stream_array[0],
-                            d_population_new_positive_frequency, d_population_old_positive_frequency, d_mutant_indices, d_differential_weights_new_positive_frequency, d_mutate_indices_positive_frequency, population_size, genome_size);
-                    cuda_wrapper::gpu_set_population_new_wrapper(
-                            dim3(grid_size_set_population_new), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
-                            d_population_new_negative_frequency, d_population_old_negative_frequency, d_mutant_indices, d_differential_weights_new_negative_frequency, d_mutate_indices_negative_frequency, population_size, genome_size);
-                    CUDA_ASSERT(cudaDeviceSynchronize());
+            GPU_ASSERT(deac_wait(default_stream));
 
-                    cuda_wrapper::gpu_match_population_zero_wrapper(
-                            dim3(grid_size_match_population_zero), dim3(GPU_BLOCK_SIZE),
-                            d_population_new_negative_frequency, d_population_new_positive_frequency, population_size, genome_size);
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #endif
-            #endif
-            #ifdef USE_SYCL
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    gpu_set_population_new( q, grid_size_set_population_new, d_population_new, d_population_old, d_mutant_indices, d_differential_weights_new, d_mutate_indices, population_size, genome_size );
-                    q.wait();
-                #else
-                    size_t grid_size_match_population_zero = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                    gpu_set_population_new(q, grid_size_set_population_new, d_population_new_positive_frequency, d_population_old_positive_frequency, d_mutant_indices, d_differential_weights_new_positive_frequency, d_mutate_indices_positive_frequency, population_size, genome_size);
-                    gpu_set_population_new(q, grid_size_set_population_new, d_population_new_negative_frequency, d_population_old_negative_frequency, d_mutant_indices, d_differential_weights_new_negative_frequency, d_mutate_indices_negative_frequency, population_size, genome_size);
-                    q.wait();
-
-                    gpu_match_population_zero(q, grid_size_match_population_zero, d_population_new_negative_frequency, d_population_new_positive_frequency, population_size, genome_size);
-                    q.wait();
-                #endif
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                size_t grid_size_match_population_zero = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+                gpu_match_population_zero(default_stream, grid_size_match_population_zero, d_population_new_negative_frequency, d_population_new_positive_frequency, population_size, genome_size);
+                GPU_ASSERT(deac_wait(default_stream));
             #endif
         #else
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                for (size_t i=0; i<population_size; i++) {
-                    double F = differential_weights_new[i];
-                    size_t mutant_index1 = mutant_indices[3*i];
-                    size_t mutant_index2 = mutant_indices[3*i + 1];
-                    size_t mutant_index3 = mutant_indices[3*i + 2];
-                    for (size_t j=0; j<genome_size; j++) {
-                        bool mutate = mutate_indices[i*genome_size + j];
-                        if (mutate) {
-                            #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
-                                population_new[i*genome_size + j] =  
-                                    population_old[mutant_index1*genome_size + j] + F*(
-                                            population_old[mutant_index2*genome_size + j] -
-                                            population_old[mutant_index3*genome_size + j]);
-                            #else
-                                population_new[i*genome_size + j] = fabs( 
-                                    population_old[mutant_index1*genome_size + j] + F*(
-                                            population_old[mutant_index2*genome_size + j] -
-                                            population_old[mutant_index3*genome_size + j]));
-                            #endif
-                        } else {
-                            population_new[i*genome_size + j] = population_old[i*genome_size + j];
-                        }
-                    }
-                }
-            #else
-                for (size_t i=0; i<population_size; i++) {
-                    double F_positive_frequency = differential_weights_new_positive_frequency[i];
+            for (size_t i=0; i<population_size; i++) {
+                double F_positive_frequency = differential_weights_new_positive_frequency[i];
+                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                     double F_negative_frequency = differential_weights_new_negative_frequency[i];
-                    size_t mutant_index1 = mutant_indices[3*i];
-                    size_t mutant_index2 = mutant_indices[3*i + 1];
-                    size_t mutant_index3 = mutant_indices[3*i + 2];
-                    for (size_t j=0; j<genome_size; j++) {
-                        bool mutate_positive_frequency = mutate_indices_positive_frequency[i*genome_size + j];
+                #endif
+                size_t mutant_index1 = mutant_indices[3*i];
+                size_t mutant_index2 = mutant_indices[3*i + 1];
+                size_t mutant_index3 = mutant_indices[3*i + 2];
+                for (size_t j=0; j<genome_size; j++) {
+                    bool mutate_positive_frequency = mutate_indices_positive_frequency[i*genome_size + j];
+                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                         bool mutate_negative_frequency = mutate_indices_negative_frequency[i*genome_size + j];
-                        if (mutate_positive_frequency) {
-                            population_new_positive_frequency[i*genome_size + j] = fabs( 
-                                population_old_positive_frequency[mutant_index1*genome_size + j] + F_positive_frequency*(
-                                        population_old_positive_frequency[mutant_index2*genome_size + j] -
-                                        population_old_positive_frequency[mutant_index3*genome_size + j]));
-                        } else {
-                            population_new_positive_frequency[i*genome_size + j] = population_old_positive_frequency[i*genome_size + j];
-                        }
+                    #endif
+                    if (mutate_positive_frequency) {
+                        population_new_positive_frequency[i*genome_size + j] = fabs( 
+                            population_old_positive_frequency[mutant_index1*genome_size + j] + F_positive_frequency*(
+                                    population_old_positive_frequency[mutant_index2*genome_size + j] -
+                                    population_old_positive_frequency[mutant_index3*genome_size + j]));
+                    } else {
+                        population_new_positive_frequency[i*genome_size + j] = population_old_positive_frequency[i*genome_size + j];
+                    }
+                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                         if (mutate_negative_frequency) {
                             population_new_negative_frequency[i*genome_size + j] = fabs( 
                                 population_old_negative_frequency[mutant_index1*genome_size + j] + F_negative_frequency*(
@@ -1239,9 +1171,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                             // Set zero frequency to same value
                             population_new_negative_frequency[i*genome_size + j] = population_new_positive_frequency[i*genome_size + j];
                         }
-                    }
+                    #endif
                 }
-            #endif
+            }
         #endif
 
         // Normalization
