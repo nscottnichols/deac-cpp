@@ -990,7 +990,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     mutant_indices = (size_t*) malloc(bytes_mutant_indices);
     #ifdef USE_GPU
         size_t* d_mutant_indices;
-        GPU_ASSERT((deac_malloc_device(bool, d_mutant_indices, 3*population_size, default_stream));
+        GPU_ASSERT((deac_malloc_device(size_t, d_mutant_indices, 3*population_size, default_stream));
     #endif
 
     double minimum_fitness;
@@ -998,15 +998,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #ifdef USE_GPU
         size_t bytes_minimum_fitness = sizeof(double);
         double* d_minimum_fitness;
-        #ifdef USE_HIP
-            HIP_ASSERT(hipMalloc(&d_minimum_fitness, bytes_minimum_fitness));
-        #endif
-        #ifdef USE_CUDA
-            CUDA_ASSERT(cudaMalloc(&d_minimum_fitness, bytes_minimum_fitness));
-        #endif
-        #ifdef USE_SYCL
-            auto h_minimum_fitness = sycl::malloc_host< double >( 1, default_stream ); 
-        #endif
+        GPU_ASSERT((deac_malloc_device(bool, d_minimum_fitness, 1, default_stream));
     #endif
 
     #ifdef USE_GPU
