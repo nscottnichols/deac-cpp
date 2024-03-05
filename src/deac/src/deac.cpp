@@ -1962,9 +1962,6 @@ int main (int argc, char *argv[]) {
     log_ofs << "isf_file: " << isf_file << std::endl;
     log_ofs.close();
 
-    //FIXME FIXME FIXME need to add this
-    std::string spectra_type
-
     deac( &rng, imaginary_time, isf, isf_error, frequency, temperature,
             number_of_generations, number_of_timeslices, population_size, genome_size,
             normalize, use_negative_first_moment, first_moment, third_moment,
