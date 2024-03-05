@@ -1848,8 +1848,13 @@ int main (int argc, char *argv[]) {
         .default_value(false)
         .implicit_value(true);
     program.add_argument("--spectra_type")
-        .help("Choose spectral type for kernel factors [bdsf, spbsf, spfsf, full].")
-        .default_value("bdsf");
+        #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            .help("Choose spectral type for kernel factors [bdsf].")
+            .default_value("bdsf");
+        #else
+            .help("Choose spectral type for kernel factors [spbsf, spfsf, full].")
+            .default_value("spfsf");
+        #endif
     program.add_argument("isf_file") //FIXME make this more generic
         .help("binary file containing isf data (tau, isf, error)");
     try {
@@ -1866,6 +1871,25 @@ int main (int argc, char *argv[]) {
         uuid_str = std::to_string(program.get<unsigned long>("--seed"));
     }
     std::cout << "uuid: " << uuid_str << std::endl;
+
+    std::string spectra_type = program.get<std::string>("--spectra_type");
+    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+        std::string valid_spectra_type = "bdsf";
+    #else
+        std::string valid_spectra_type = "spbsf, spfsf, full";
+    #endif
+    if !(
+         #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+             (spectra_type == "bdsf")
+         #else
+             (spectra_type == "spbsf") ||
+             (spectra_type == "spfsf") ||
+             (spectra_type == "full")
+         #endif
+        ) {
+        std::cout << "Please choose spectra_type from the following options: " << valid_spectra_type << std::endl;
+        exit(1);
+    }
 
     size_t number_of_elements;
     double* numpy_data;
@@ -1924,20 +1948,10 @@ int main (int argc, char *argv[]) {
     fs::create_directory(save_directory);
 
     //Write to log file
-    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-        #ifndef ZEROT
-            std::string deac_prefix = "deac";
-        #endif
-        #ifdef ZEROT
-            std::string deac_prefix = "deac-zT";
-        #endif
+    #ifndef ZEROT
+        std::string deac_prefix = "deac-" + spectra_type;
     #else
-        #ifndef ZEROT
-            std::string deac_prefix = "deac-spfsf";
-        #endif
-        #ifdef ZEROT
-            std::string deac_prefix = "deac-zT-spfsf";
-        #endif
+        std::string deac_prefix = "deac-zT" + spectra_type;
     #endif
     std::string log_filename_str = string_format("%s_log_%s.dat",deac_prefix.c_str(),uuid_str.c_str());
     fs::path log_filename = save_directory / log_filename_str;
