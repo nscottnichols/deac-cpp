@@ -812,128 +812,51 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #endif
 
     double * fitness_old;
+    size_t bytes_fitness = sizeof(double)*population_size;
+    fitness_old = (double*) malloc(bytes_fitness);
+
     #ifdef USE_GPU
         double* d_fitness_old;
         double* d_fitness_new;
-        size_t bytes_fitness_new = sizeof(double)*population_size;
-    #endif
-    size_t bytes_fitness_old = sizeof(double)*population_size;
-    fitness_old = (double*) malloc(bytes_fitness_old);
+        GPU_ASSERT((deac_malloc_device(double, d_fitness_old, population_size, default_stream));
+        GPU_ASSERT((deac_malloc_device(double, d_fitness_new, population_size, default_stream));
 
-    #ifdef USE_GPU
-        #ifdef USE_HIP
-            HIP_ASSERT(hipMalloc(&d_fitness_old, bytes_fitness_old));
-            HIP_ASSERT(hipMalloc(&d_fitness_new, bytes_fitness_new));
-        #endif
-        #ifdef USE_CUDA
-            CUDA_ASSERT(cudaMalloc(&d_fitness_old, bytes_fitness_old));
-            CUDA_ASSERT(cudaMalloc(&d_fitness_new, bytes_fitness_new));
-        #endif
-        #ifdef USE_SYCL
-            d_fitness_old = sycl::malloc_device< double >( population_size, default_stream ); 
-            d_fitness_new = sycl::malloc_device< double >( population_size, default_stream ); 
-        #endif
-    #endif
-    #ifdef USE_GPU
         size_t grid_size_set_fitness = (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
         size_t grid_size_set_fitness_moments = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-        #ifdef USE_HIP
-            HIP_ASSERT(hipMemset(d_fitness_old,0, bytes_fitness_old));
-            for (size_t i=0; i<population_size; i++) {
-                size_t stream_idx = i % MAX_GPU_STREAMS;
-                hipLaunchKernelGGL(gpu_set_fitness,
-                        dim3(grid_size_set_fitness), dim3(GPU_BLOCK_SIZE), 0, stream_array[stream_idx],
-                        d_fitness_old, d_isf, d_isf_model, d_isf_error, number_of_timeslices, i);
-            }
-            HIP_ASSERT(hipDeviceSynchronize());
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+        deac_memset(d_fitness_old, 0, bytes_fitness, default_stream);
+        GPU_ASSERT(deac_wait(default_stream));
+        for (size_t i=0; i<population_size; i++) {
+            size_t stream_idx = i % MAX_GPU_STREAMS;
+            gpu_set_fitness(stream_array[stream_idx], d_fitness_old + i, d_isf, d_isf_model + number_of_timeslices*i, d_isf_error, number_of_timeslices);
+        }
+        for (auto& s : stream_array) {
+            GPU_ASSERT(deac_wait(s));
+        }
+        #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
             if (use_negative_first_moment) {
-                hipLaunchKernelGGL(gpu_set_fitness_moments_reduced_chi_squared,
-                        dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE), 0, 0,
-                        d_fitness_old, d_negative_first_moments, inverse_first_moment, inverse_first_moment_error, population_size);
-                HIP_ASSERT(hipDeviceSynchronize());
+                gpu_set_fitness_moments_reduced_chi_squared(default_stream, grid_size_set_fitness_moments, d_fitness_old, d_negative_first_moments, inverse_first_moment, inverse_first_moment_error, population_size);
+                GPU_ASSERT(deac_wait(default_stream));
             }
-            #else
-                //FIXME inverse first moment not implemented for single particle fermionic spectral function
-            #endif
-            if (use_first_moment) {
-                hipLaunchKernelGGL(gpu_set_fitness_moments_chi_squared,
-                        dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE), 0, 0,
-                        d_fitness_old, d_first_moments, first_moment, population_size);
-                HIP_ASSERT(hipDeviceSynchronize());
-            }
-            if (use_third_moment) {
-                hipLaunchKernelGGL(gpu_set_fitness_moments_reduced_chi_squared,
-                        dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE), 0, 0,
-                        d_fitness_old, d_third_moments, third_moment, third_moment_error, population_size);
-                HIP_ASSERT(hipDeviceSynchronize());
-            }
+        #else
+            //FIXME inverse first moment not implemented for single particle fermionic spectral function
         #endif
-        #ifdef USE_CUDA
-            CUDA_ASSERT(cudaMemset(d_fitness_old,0, bytes_fitness_old));
-            for (size_t i=0; i<population_size; i++) {
-                size_t stream_idx = i % MAX_GPU_STREAMS;
-                cuda_wrapper::gpu_set_fitness_wrapper(
-                        dim3(grid_size_set_fitness), dim3(GPU_BLOCK_SIZE), stream_array[stream_idx],
-                        d_fitness_old, d_isf, d_isf_model, d_isf_error, number_of_timeslices, i);
-            }
-            CUDA_ASSERT(cudaDeviceSynchronize());
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            if (use_negative_first_moment) {
-                cuda_wrapper::gpu_set_fitness_moments_reduced_chi_squared_wrapper(
-                        dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE),
-                        d_fitness_old, d_negative_first_moments, inverse_first_moment, inverse_first_moment_error, population_size);
-                CUDA_ASSERT(cudaDeviceSynchronize());
-            }
-            #else
-                //FIXME inverse first moment not implemented for single particle fermionic spectral function
-            #endif
-            if (use_first_moment) {
-                cuda_wrapper::gpu_set_fitness_moments_chi_squared_wrapper(
-                        dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE),
-                        d_fitness_old, d_first_moments, first_moment, population_size);
-                CUDA_ASSERT(cudaDeviceSynchronize());
-            }
-            if (use_third_moment) {
-                cuda_wrapper::gpu_set_fitness_moments_reduced_chi_squared_wrapper(
-                        dim3(grid_size_set_fitness_moments), dim3(GPU_BLOCK_SIZE),
-                        d_fitness_old, d_third_moments, third_moment, third_moment_error, population_size);
-                CUDA_ASSERT(cudaDeviceSynchronize());
-            }
-        #endif
-        #ifdef USE_SYCL
-            q.memset(d_fitness_old, 0, bytes_fitness_old);
-            q.wait();
-            for (size_t i=0; i<population_size; i++) {
-                gpu_set_fitness(q, d_fitness_old + i, d_isf, d_isf_model + number_of_timeslices*i, d_isf_error, number_of_timeslices);
-            }
-            q.wait();
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                if (use_negative_first_moment) {
-                    gpu_set_fitness_moments_reduced_chi_squared(q, grid_size_set_fitness_moments, d_fitness_old, d_negative_first_moments, inverse_first_moment, inverse_first_moment_error, population_size);
-                    q.wait();
-                }
-            #else
-                //FIXME inverse first moment not implemented for single particle fermionic spectral function
-            #endif
-            if (use_first_moment) {
-                gpu_set_fitness_moments_chi_squared(q, grid_size_set_fitness_moments, d_fitness_old, d_first_moments, first_moment, population_size);
-                q.wait();
-            }
-            if (use_third_moment) {
-                gpu_set_fitness_moments_reduced_chi_squared(q, grid_size_set_fitness_moments, d_fitness_old, d_third_moments, third_moment, third_moment_error, population_size);
-                q.wait();
-            }
-        #endif
+        if (use_first_moment) {
+            gpu_set_fitness_moments_chi_squared(default_stream, grid_size_set_fitness_moments, d_fitness_old, d_first_moments, first_moment, population_size);
+            GPU_ASSERT(deac_wait(default_stream));
+        }
+        if (use_third_moment) {
+            gpu_set_fitness_moments_reduced_chi_squared(default_stream, grid_size_set_fitness_moments, d_fitness_old, d_third_moments, third_moment, third_moment_error, population_size);
+            GPU_ASSERT(deac_wait(default_stream));
+        }
     #else
         for (size_t i=0; i<population_size; i++) {
             double _fitness = reduced_chi_square_statistic(isf,
                     isf_model + i*number_of_timeslices, isf_error,
                     number_of_timeslices)/number_of_timeslices;
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-            if (use_negative_first_moment) {
-                _fitness += pow((negative_first_moment - inverse_first_moments[i])/inverse_first_moment_error,2);
-            }
+            #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                if (use_negative_first_moment) {
+                    _fitness += pow((negative_first_moment - inverse_first_moments[i])/inverse_first_moment_error,2);
+                }
             #else
                 //FIXME inverse first moment not implemented for single particle fermionic spectral function
             #endif
@@ -2157,7 +2080,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             size_t grid_size_set_fitness = (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
             size_t grid_size_set_fitness_moments = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
             #ifdef USE_HIP
-                HIP_ASSERT(hipMemset(d_fitness_new,0, bytes_fitness_new));
+                HIP_ASSERT(hipMemset(d_fitness_new,0, bytes_fitness));
                 for (size_t i=0; i<population_size; i++) {
                     size_t stream_idx = i % MAX_GPU_STREAMS;
                     hipLaunchKernelGGL(gpu_set_fitness,
@@ -2189,7 +2112,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 }
             #endif
             #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMemset(d_fitness_new,0, bytes_fitness_new));
+                CUDA_ASSERT(cudaMemset(d_fitness_new,0, bytes_fitness));
                 for (size_t i=0; i<population_size; i++) {
                     size_t stream_idx = i % MAX_GPU_STREAMS;
                     cuda_wrapper::gpu_set_fitness_wrapper(
@@ -2221,7 +2144,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 }
             #endif
             #ifdef USE_SYCL
-                q.memset(d_fitness_new, 0, bytes_fitness_new);
+                q.memset(d_fitness_new, 0, bytes_fitness);
                 q.wait();
                 for (size_t i=0; i<population_size; i++) {
                     gpu_set_fitness(q, d_fitness_new + i, d_isf, d_isf_model + number_of_timeslices*i, d_isf_error, number_of_timeslices);
@@ -2396,7 +2319,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #ifdef USE_GPU
         #ifdef USE_HIP
             HIP_ASSERT(hipDeviceSynchronize());
-            HIP_ASSERT(hipMemcpy(fitness_old, d_fitness_old, bytes_fitness_old, hipMemcpyDeviceToHost));
+            HIP_ASSERT(hipMemcpy(fitness_old, d_fitness_old, bytes_fitness, hipMemcpyDeviceToHost));
             #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                 HIP_ASSERT(hipMemcpy(population_old, d_population_old, bytes_population, hipMemcpyDeviceToHost));
             #else
@@ -2411,7 +2334,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #endif
         #ifdef USE_CUDA
             CUDA_ASSERT(cudaDeviceSynchronize());
-            CUDA_ASSERT(cudaMemcpy(fitness_old, d_fitness_old, bytes_fitness_old, cudaMemcpyDeviceToHost));
+            CUDA_ASSERT(cudaMemcpy(fitness_old, d_fitness_old, bytes_fitness, cudaMemcpyDeviceToHost));
             #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                 CUDA_ASSERT(cudaMemcpy(population_old, d_population_old, bytes_population, cudaMemcpyDeviceToHost));
             #else
@@ -2425,7 +2348,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             }
         #endif
         #ifdef USE_SYCL
-            q.memcpy(fitness_old, d_fitness_old, bytes_fitness_old);
+            q.memcpy(fitness_old, d_fitness_old, bytes_fitness);
             #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
                 q.memcpy(population_old, d_population_old, bytes_population);
             #else
