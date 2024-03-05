@@ -1100,86 +1100,27 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #ifdef USE_GPU
             size_t grid_size_set_mutant_indices = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
             size_t grid_size_set_mutate_indices = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-            #ifdef USE_HIP
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    hipLaunchKernelGGL(gpu_set_mutant_indices,
-                            dim3(grid_size_set_mutant_indices), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
-                            d_rng_state, d_mutant_indices, population_size);
-                    hipLaunchKernelGGL(gpu_set_mutate_indices,
-                            dim3(grid_size_set_mutate_indices), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
-                            d_rng_state + 4*population_size, d_mutate_indices, d_crossover_probabilities_new, population_size, genome_size);
-                    HIP_ASSERT(hipDeviceSynchronize());
-                #else
-                    hipLaunchKernelGGL(gpu_set_mutant_indices,
-                            dim3(grid_size_set_mutant_indices), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
-                            d_rng_state, d_mutant_indices, population_size);
-                    hipLaunchKernelGGL(gpu_set_mutate_indices,
-                            dim3(grid_size_set_mutate_indices), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
-                            d_rng_state + 4*population_size, d_mutate_indices_positive_frequency, d_crossover_probabilities_new_positive_frequency, population_size, genome_size);
-                    hipLaunchKernelGGL(gpu_set_mutate_indices,
-                            dim3(grid_size_set_mutate_indices), dim3(GPU_BLOCK_SIZE), 0, stream_array[2 % MAX_GPU_STREAMS],
-                            d_rng_state + 4*population_size, d_mutate_indices_negative_frequency, d_crossover_probabilities_new_negative_frequency, population_size, genome_size);
-                    HIP_ASSERT(hipDeviceSynchronize());
-                #endif
+            gpu_set_mutant_indices(default_stream, grid_size_set_mutant_indices, d_rng_state, d_mutant_indices, population_size);
+            gpu_set_mutate_indices(default_stream, grid_size_set_mutate_indices, d_rng_state + 4*population_size, d_mutate_indices_positive_frequency, d_crossover_probabilities_new_positive_frequency, population_size, genome_size);
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                gpu_set_mutate_indices(default_stream, grid_size_set_mutate_indices, d_rng_state + 4*population_size, d_mutate_indices_negative_frequency, d_crossover_probabilities_new_negative_frequency, population_size, genome_size);
             #endif
-            #ifdef USE_CUDA
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    cuda_wrapper::gpu_set_mutant_indices_wrapper(
-                            dim3(grid_size_set_mutant_indices), dim3(GPU_BLOCK_SIZE), stream_array[0],
-                            d_rng_state, d_mutant_indices, population_size);
-                    cuda_wrapper::gpu_set_mutate_indices_wrapper(
-                            dim3(grid_size_set_mutate_indices), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
-                            d_rng_state + 4*population_size, d_mutate_indices, d_crossover_probabilities_new, population_size, genome_size);
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #else
-                    cuda_wrapper::gpu_set_mutant_indices_wrapper(
-                            dim3(grid_size_set_mutant_indices), dim3(GPU_BLOCK_SIZE), stream_array[0],
-                            d_rng_state, d_mutant_indices, population_size);
-                    cuda_wrapper::gpu_set_mutate_indices_wrapper(
-                            dim3(grid_size_set_mutate_indices), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
-                            d_rng_state + 4*population_size, d_mutate_indices_positive_frequency, d_crossover_probabilities_new_positive_frequency, population_size, genome_size);
-                    cuda_wrapper::gpu_set_mutate_indices_wrapper(
-                            dim3(grid_size_set_mutate_indices), dim3(GPU_BLOCK_SIZE), stream_array[2 % MAX_GPU_STREAMS],
-                            d_rng_state + 4*population_size, d_mutate_indices_negative_frequency, d_crossover_probabilities_new_negative_frequency, population_size, genome_size);
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #endif
-            #endif
-            #ifdef USE_SYCL
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    gpu_set_mutant_indices( q, grid_size_set_mutant_indices, d_rng_state, d_mutant_indices, population_size );
-                    gpu_set_mutate_indices( q, grid_size_set_mutate_indices, d_rng_state + 4*population_size, d_mutate_indices, d_crossover_probabilities_new, population_size, genome_size );
-                    q.wait();
-                #else
-                    gpu_set_mutant_indices( q, grid_size_set_mutant_indices, d_rng_state, d_mutant_indices, population_size );
-                    gpu_set_mutate_indices( q, grid_size_set_mutate_indices, d_rng_state + 4*population_size, d_mutate_indices_positive_frequency, d_crossover_probabilities_new_positive_frequency, population_size, genome_size );
-                    gpu_set_mutate_indices( q, grid_size_set_mutate_indices, d_rng_state + 4*population_size, d_mutate_indices_negative_frequency, d_crossover_probabilities_new_negative_frequency, population_size, genome_size );
-                    q.wait();
-                #endif
-            #endif
+            GPU_ASSERT(deac_wait(default_stream));
         #else
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                //Set mutant population and indices 
-                for (size_t i=0; i<population_size; i++) {
-                    set_mutant_indices(rng, mutant_indices + 3*i, i, population_size);
-                    double crossover_rate = crossover_probabilities_new[i];
-                    for (size_t j=0; j<genome_size; j++) {
-                        mutate_indices[i*genome_size + j] = (xoshiro256p(rng) >> 11) * 0x1.0p-53 < crossover_rate;
-                    }
+            //Set mutant population and indices 
+            for (size_t i=0; i<population_size; i++) {
+                set_mutant_indices(rng, mutant_indices + 3*i, i, population_size);
+                double crossover_rate_positive_frequency = crossover_probabilities_new_positive_frequency[i];
+                for (size_t j=0; j<genome_size; j++) {
+                    mutate_indices_positive_frequency[i*genome_size + j] = (xoshiro256p(rng) >> 11) * 0x1.0p-53 < crossover_rate_positive_frequency;
                 }
-            #else
-                //Set mutant population and indices 
-                for (size_t i=0; i<population_size; i++) {
-                    set_mutant_indices(rng, mutant_indices + 3*i, i, population_size);
-                    double crossover_rate_positive_frequency = crossover_probabilities_new_positive_frequency[i];
-                    for (size_t j=0; j<genome_size; j++) {
-                        mutate_indices_positive_frequency[i*genome_size + j] = (xoshiro256p(rng) >> 11) * 0x1.0p-53 < crossover_rate_positive_frequency;
-                    }
+                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                     double crossover_rate_negative_frequency = crossover_probabilities_new_negative_frequency[i];
                     for (size_t j=0; j<genome_size; j++) {
                         mutate_indices_negative_frequency[i*genome_size + j] = (xoshiro256p(rng) >> 11) * 0x1.0p-53 < crossover_rate_negative_frequency;
                     }
-                }
-            #endif
+                #endif
+            }
         #endif
 
         #ifdef USE_GPU
