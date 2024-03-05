@@ -28,8 +28,8 @@
         #define deac_stream_create(x) hipStreamCreate(&x)
         #define deac_stream_destroy(x) hipStreamDestroy(x)
         #define deac_malloc_device(T, x, y, z) hipMallocAsync(&x, sizeof(T)*y, z)
-        #define deac_memcopy_host_to_device(w, x, y, z) hipMemcpyAsync(w, x, y, hipMemcpyHostToDevice, z)
-        #define deac_memcopy_device_to_host(w, x, y, z) hipMemcpyAsync(w, x, y, hipMemcpyDeviceToHost, z)
+        #define deac_memcpy_host_to_device(w, x, y, z) hipMemcpyAsync(w, x, y, hipMemcpyHostToDevice, z)
+        #define deac_memcpy_device_to_host(w, x, y, z) hipMemcpyAsync(w, x, y, hipMemcpyDeviceToHost, z)
         #define deac_wait(x) hipStreamSynchronize(x)
         #define deac_memset(w, x, y, z) hipMemsetAsync(w, x, y, z)
     #endif
@@ -40,8 +40,8 @@
         #define deac_stream_create(x) cudaStreamCreate(&x)
         #define deac_stream_destroy(x) cudaStreamDestroy(x)
         #define deac_malloc_device(T, x, y, z) cudaMallocAsync(&x, sizeof(T)*y, z)
-        #define deac_memcopy_host_to_device(w, x, y, z) cudaMemcpyAsync(w, x, y, cudaMemcpyHostToDevice, z)
-        #define deac_memcopy_device_to_host(w, x, y, z) cudaMemcpyAsync(w, x, y, cudaMemcpyDeviceToHost, z)
+        #define deac_memcpy_host_to_device(w, x, y, z) cudaMemcpyAsync(w, x, y, cudaMemcpyHostToDevice, z)
+        #define deac_memcpy_device_to_host(w, x, y, z) cudaMemcpyAsync(w, x, y, cudaMemcpyDeviceToHost, z)
         #define deac_wait(x) cudaStreamSynchronize(x)
         #define deac_memset(w, x, y, z) cudaMemsetAsync(w, x, y, z)
     #endif
@@ -61,8 +61,8 @@
         #define deac_stream_create(x) x = sycl::queue()
         #define deac_stream_destroy(x) do {} while(0)
         #define deac_malloc_device(T, x, y, z) x = sycl::malloc_device< T >( y, z )
-        #define deac_memcopy_host_to_device(w, x, y, z) z.memcpy(w, x, y)
-        #define deac_memcopy_device_to_host(w, x, y, z) z.memcpy(w, x, y)
+        #define deac_memcpy_host_to_device(w, x, y, z) z.memcpy(w, x, y)
+        #define deac_memcpy_device_to_host(w, x, y, z) z.memcpy(w, x, y)
         #define deac_wait(x) x.wait()
         #define deac_memset(w, x, y, z) z.memset(w, x, y)
     #endif
