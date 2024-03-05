@@ -906,78 +906,38 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #endif
 
     size_t bytes_differential_weights = sizeof(double)*population_size;
-    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-        double * differential_weights_old;
-        double * differential_weights_new;
-        differential_weights_old = (double*) malloc(bytes_differential_weights);
-        differential_weights_new = (double*) malloc(bytes_differential_weights);
-        for (size_t i=0; i<population_size; i++) {
-            differential_weights_old[i] = differential_weight;
-        }
-        #ifdef USE_GPU
-            double* d_differential_weights_old;
-            double* d_differential_weights_new;
-            #ifdef USE_HIP
-                HIP_ASSERT(hipMalloc(&d_differential_weights_old, bytes_differential_weights));
-                HIP_ASSERT(hipMalloc(&d_differential_weights_new, bytes_differential_weights));
-                HIP_ASSERT(hipMemcpy( d_differential_weights_old, differential_weights_old, bytes_differential_weights, hipMemcpyHostToDevice ));
-            #endif
-            #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMalloc(&d_differential_weights_old, bytes_differential_weights));
-                CUDA_ASSERT(cudaMalloc(&d_differential_weights_new, bytes_differential_weights));
-                CUDA_ASSERT(cudaMemcpy( d_differential_weights_old, differential_weights_old, bytes_differential_weights, cudaMemcpyHostToDevice )); 
-            #endif
-            #ifdef USE_SYCL
-                d_differential_weights_old = sycl::malloc_device< double >( population_size, default_stream ); 
-                d_differential_weights_new = sycl::malloc_device< double >( population_size, default_stream ); 
-                q.memcpy( d_differential_weights_old, differential_weights_old, bytes_differential_weights );
-                q.wait();
-            #endif
-        #endif
-    #else
-        double * differential_weights_old_positive_frequency;
+    double * differential_weights_old_positive_frequency;
+    double * differential_weights_new_positive_frequency;
+    differential_weights_old_positive_frequency = (double*) malloc(bytes_differential_weights);
+    differential_weights_new_positive_frequency = (double*) malloc(bytes_differential_weights);
+    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
         double * differential_weights_old_negative_frequency;
-        double * differential_weights_new_positive_frequency;
         double * differential_weights_new_negative_frequency;
-        differential_weights_old_positive_frequency = (double*) malloc(bytes_differential_weights);
         differential_weights_old_negative_frequency = (double*) malloc(bytes_differential_weights);
-        differential_weights_new_positive_frequency = (double*) malloc(bytes_differential_weights);
         differential_weights_new_negative_frequency = (double*) malloc(bytes_differential_weights);
-        for (size_t i=0; i<population_size; i++) {
-            differential_weights_old_positive_frequency[i] = differential_weight;
+    #endif
+
+    for (size_t i=0; i<population_size; i++) {
+        differential_weights_old_positive_frequency[i] = differential_weight;
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
             differential_weights_old_negative_frequency[i] = differential_weight;
-        }
-        #ifdef USE_GPU
-            double* d_differential_weights_old_positive_frequency;
-            double* d_differential_weights_old_negative_frequency;
-            double* d_differential_weights_new_positive_frequency;
-            double* d_differential_weights_new_negative_frequency;
-            #ifdef USE_HIP
-                HIP_ASSERT(hipMalloc(&d_differential_weights_old_positive_frequency, bytes_differential_weights));
-                HIP_ASSERT(hipMalloc(&d_differential_weights_new_positive_frequency, bytes_differential_weights));
-                HIP_ASSERT(hipMemcpy( d_differential_weights_old_positive_frequency, differential_weights_old_positive_frequency, bytes_differential_weights, hipMemcpyHostToDevice ));
-                HIP_ASSERT(hipMalloc(&d_differential_weights_old_negative_frequency, bytes_differential_weights));
-                HIP_ASSERT(hipMalloc(&d_differential_weights_new_negative_frequency, bytes_differential_weights));
-                HIP_ASSERT(hipMemcpy( d_differential_weights_old_negative_frequency, differential_weights_old_negative_frequency, bytes_differential_weights, hipMemcpyHostToDevice ));
-            #endif
-            #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMalloc(&d_differential_weights_old_positive_frequency, bytes_differential_weights));
-                CUDA_ASSERT(cudaMalloc(&d_differential_weights_new_positive_frequency, bytes_differential_weights));
-                CUDA_ASSERT(cudaMemcpy( d_differential_weights_old_positive_frequency, differential_weights_old_positive_frequency, bytes_differential_weights, cudaMemcpyHostToDevice )); 
-                CUDA_ASSERT(cudaMalloc(&d_differential_weights_old_negative_frequency, bytes_differential_weights));
-                CUDA_ASSERT(cudaMalloc(&d_differential_weights_new_negative_frequency, bytes_differential_weights));
-                CUDA_ASSERT(cudaMemcpy( d_differential_weights_old_negative_frequency, differential_weights_old_negative_frequency, bytes_differential_weights, cudaMemcpyHostToDevice )); 
-            #endif
-            #ifdef USE_SYCL
-                d_differential_weights_old_positive_frequency = sycl::malloc_device< double >( population_size, default_stream ); 
-                d_differential_weights_old_negative_frequency = sycl::malloc_device< double >( population_size, default_stream ); 
-                d_differential_weights_new_positive_frequency = sycl::malloc_device< double >( population_size, default_stream ); 
-                d_differential_weights_new_negative_frequency = sycl::malloc_device< double >( population_size, default_stream ); 
-                q.memcpy( d_differential_weights_old_positive_frequency, differential_weights_old_positive_frequency, bytes_differential_weights );
-                q.memcpy( d_differential_weights_old_negative_frequency, differential_weights_old_negative_frequency, bytes_differential_weights );
-                q.wait();
-            #endif
         #endif
+    }
+
+    #ifdef USE_GPU
+        double* d_differential_weights_old_positive_frequency;
+        double* d_differential_weights_new_positive_frequency;
+        GPU_ASSERT((deac_malloc_device(double, d_differential_weights_old_positive_frequency, population_size, default_stream));
+        GPU_ASSERT((deac_malloc_device(double, d_differential_weights_new_positive_frequency, population_size, default_stream));
+        GPU_ASSERT(deac_memcpy_host_to_device(d_differential_weights_old_positive_frequency, differential_weights_old_positive_frequency, bytes_differential_weights, default_stream));
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            double* d_differential_weights_old_negative_frequency;
+            double* d_differential_weights_new_negative_frequency;
+            GPU_ASSERT((deac_malloc_device(double, d_differential_weights_old_negative_frequency, population_size, default_stream));
+            GPU_ASSERT((deac_malloc_device(double, d_differential_weights_new_negative_frequency, population_size, default_stream));
+            GPU_ASSERT(deac_memcpy_host_to_device(d_differential_weights_old_negative_frequency, differential_weights_old_negative_frequency, bytes_differential_weights, default_stream));
+        #endif
+        q.wait();
     #endif
 
     //Initialize statistics arrays
