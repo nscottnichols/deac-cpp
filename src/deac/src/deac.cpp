@@ -1002,7 +1002,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #endif
 
     #ifdef USE_GPU
-        size_t bytes_rng_state = sizeof(uint64_t)*4*population_size*(genome_size + 1);
+        size_t bytes_rng_state = sizeof(uint64_t)*4*population_size*(genome_size + 1); //FIXME FIXME FIXME might need bigger state for negative frequency space (double check this calculation)
 
         // Generate rng state
         uint64_t* d_rng_state;
@@ -1015,20 +1015,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 xoshiro256p_jump(rng->s);
             }
         }
-        #ifdef USE_HIP
-            HIP_ASSERT(hipMalloc(&d_rng_state, bytes_rng_state));
-            HIP_ASSERT(hipMemcpy( d_rng_state, rng_state, bytes_rng_state, hipMemcpyHostToDevice ));
-        #endif
-        #ifdef USE_CUDA
-            CUDA_ASSERT(cudaMalloc(&d_rng_state, bytes_rng_state));
-            CUDA_ASSERT(cudaMemcpy( d_rng_state, rng_state, bytes_rng_state, cudaMemcpyHostToDevice ));
-        #endif
-        #ifdef USE_SYCL
-            // FIXME FIXME FIXME need bigger state for -infinity to infinity frequency (population positive population negative) to avoid race condition (probably just 2x)
-            d_rng_state = sycl::malloc_device< uint64_t >( 4*population_size*(genome_size + 1), default_stream ); 
-            q.memcpy( d_rng_state, rng_state, bytes_rng_state );
-            q.wait();
-        #endif
+        GPU_ASSERT((deac_malloc_device(uint64_t, d_rng_state, 4*population_size*(genome_size + 1), default_stream)); //FIXME FIXME FIXME might need bigger state for negative frequency (double check this calculation)
+        GPU_ASSERT(deac_memcpy_host_to_device(d_rng_state, rng_state, bytes_rng_state, default_stream));
+        GPU_ASSERT(deac_wait(default_stream));
     #endif
     
     size_t generation;
