@@ -1024,89 +1024,22 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     for (size_t ii=0; ii < number_of_generations - 1; ii++) {
         generation = ii;
         #ifdef USE_GPU
-            #ifdef USE_HIP
-                hipLaunchKernelGGL(gpu_get_minimum_fitness,
-                        dim3(1), dim3(GPU_BLOCK_SIZE), 0, 0,
-                        d_fitness_old, d_minimum_fitness, population_size);
-                HIP_ASSERT(hipDeviceSynchronize());
-                hipMemcpy(&minimum_fitness, d_minimum_fitness, bytes_minimum_fitness, hipMemcpyDeviceToHost);
-            #endif
-            #ifdef USE_CUDA
-                cuda_wrapper::gpu_get_minimum_fitness_wrapper(
-                        dim3(1), dim3(GPU_BLOCK_SIZE),
-                        d_fitness_old, d_minimum_fitness, population_size);
-                CUDA_ASSERT(cudaDeviceSynchronize());
-                cudaMemcpy(&minimum_fitness, d_minimum_fitness, bytes_minimum_fitness, cudaMemcpyDeviceToHost);
-            #endif
-            #ifdef USE_SYCL
-                gpu_get_minimum_fitness( q, d_fitness_old, h_minimum_fitness, population_size);
-                q.wait();
-            #endif
+            gpu_get_minimum_fitness(default_stream, d_fitness_old, d_minimum_fitness, population_size);
+            GPU_ASSERT(deac_memcpy_device_to_host(&minimum_fitness, d_minimum_fitness, bytes_minimum_fitness, default_stream));
+            GPU_ASSERT(deac_wait(default_stream));
+        #else
+            minimum_fitness = minimum(fitness_old, population_size);
         #endif
-        #ifndef USE_GPU
-            minimum_fitness = minimum(fitness_old,population_size);
-        #endif
-
-        //FIXME experimental break loop without transferring memory
-        //#ifdef USE_GPU
-        //    #ifdef USE_HIP
-        //        hipLaunchKernelGGL(gpu_check_minimum_fitness,
-        //                dim3(1), dim3(1), 0, 0,
-        //                d_minimum_fitness, stop_minimum_fitness
-        //                );
-        //        if (hipPeekAtLastError() != hipSuccess) {
-        //            break;
-        //        }
-        //    #endif
-        //    #ifdef USE_CUDA
-        //        cuda_wrapper::gpu_check_minimum_fitness_wrapper(
-        //                dim3(1), dim3(1),
-        //                d_minimum_fitness, stop_minimum_fitness
-        //                );
-        //        if (cudaPeekAtLastError() != cudaSuccess) {
-        //            break;
-        //        }
-        //    #endif
-        //#endif
-        //#ifndef USE_GPU
-        ////Stopping criteria
-        //if (minimum_fitness <= stop_minimum_fitness) {
-        //    break;
-        //}
-        //#endif
 
         //Get Statistics
         if (track_stats) {
             #ifdef USE_GPU
                 size_t grid_size_set_stats = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-                #ifdef USE_HIP
-                    hipLaunchKernelGGL(gpu_set_fitness_mean,
-                            dim3(grid_size_set_stats), dim3(GPU_BLOCK_SIZE), 0, 0,
-                            d_fitness_mean, d_fitness_old, population_size, ii);
-                    hipMemcpy(d_fitness_minimum + ii, d_minimum_fitness, bytes_minimum_fitness, hipMemcpyDeviceToDevice);
-                    hipLaunchKernelGGL(gpu_set_fitness_squared_mean,
-                            dim3(grid_size_set_stats), dim3(GPU_BLOCK_SIZE), 0, 0,
-                            d_fitness_squared_mean, d_fitness_old, population_size, ii);
-                    HIP_ASSERT(hipDeviceSynchronize());
-                #endif
-                #ifdef USE_CUDA
-                    cuda_wrapper::gpu_set_fitness_mean_wrapper(
-                            dim3(grid_size_set_stats), dim3(GPU_BLOCK_SIZE),
-                            d_fitness_mean, d_fitness_old, population_size, ii);
-                    cudaMemcpy(d_fitness_minimum + ii, d_minimum_fitness, bytes_minimum_fitness, cudaMemcpyDeviceToDevice);
-                    cuda_wrapper::gpu_set_fitness_squared_mean_wrapper(
-                            dim3(grid_size_set_stats), dim3(GPU_BLOCK_SIZE),
-                            d_fitness_squared_mean, d_fitness_old, population_size, ii);
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #endif
-                #ifdef USE_SYCL
-                    gpu_set_fitness_mean(q, d_fitness_mean + ii, d_fitness_old, population_size);
-                    fitness_minimum[ii] = h_minimum_fitness[0];
-                    gpu_set_fitness_squared_mean(q, d_fitness_squared_mean + ii, d_fitness_old, population_size);
-                    q.wait();
-                #endif
-            #endif
-            #ifndef USE_GPU
+                gpu_set_fitness_mean(default_stream, d_fitness_mean + ii, d_fitness_old, population_size);
+                fitness_minimum[ii] = minimum_fitness;
+                gpu_set_fitness_squared_mean(default_stream, d_fitness_squared_mean + ii, d_fitness_old, population_size);
+                GPU_ASSERT(deac_wait(default_stream));
+            #else
                 fitness_mean[ii] = mean(fitness_old, population_size);
                 fitness_minimum[ii] = minimum_fitness;
                 fitness_squared_mean[ii] = squared_mean(fitness_old, population_size);
@@ -1114,15 +1047,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         }
         
         //Stopping criteria
-        #ifndef USE_SYCL
-            if (minimum_fitness <= stop_minimum_fitness) {
-                break;
-            }
-        #else
-            if (h_minimum_fitness[0] <= stop_minimum_fitness) {
-                break;
-            }
-        #endif
+        if (minimum_fitness <= stop_minimum_fitness) {
+            break;
+        }
 
         #ifdef USE_GPU
             size_t grid_size_self_adapting_parameters = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
