@@ -12,7 +12,6 @@
 #include <stdexcept> // throw
 #include <fstream> // std::ofstream
 #include <cassert>
-#include <uuid.h>
 #include <fs.h> //fs namespace (std::filesystem or std::experimental::filesystem)
 
 //GPU acceleration
@@ -1834,6 +1833,9 @@ int main (int argc, char *argv[]) {
         .help("Seed to pass to random number generator.")
         .default_value(0)
         .action([](const std::string& value) { return std::stoul(value); });
+    program.add_argument("--uuid")
+        .help("UUID for run. If empty will be set to `seed`.")
+        .default_value("");
     program.add_argument("--save_state")
         .help("Save state of DEAC algorithm. Saves the random number generator, population, and population fitness.")
         .default_value(false)
@@ -1859,20 +1861,10 @@ int main (int argc, char *argv[]) {
         exit(1);
     }
 
-    std::random_device rd;
-    auto seed_data = std::array<int, std::mt19937::state_size> {};
-    std::generate(std::begin(seed_data), std::end(seed_data), std::ref(rd));
-    std::seed_seq seq(std::begin(seed_data), std::end(seed_data));
-    std::mt19937 generator(seq);
-    uuids::uuid_random_generator gen{generator};
-    
-    uuids::uuid const id = gen();
-    assert(!id.is_nil());
-    assert(id.as_bytes().size() == 16);
-    assert(id.version() == uuids::uuid_version::random_number_based);
-    assert(id.variant() == uuids::uuid_variant::rfc);
-
-    std::string uuid_str = uuids::to_string(id);
+    std::string uuid_str = program.get<std::string>("--uuid");
+    if (uuid_str == "") {
+        uuid_str = std::to_string(program.get<unsigned long>("--seed"));
+    }
     std::cout << "uuid: " << uuid_str << std::endl;
 
     size_t number_of_elements;
