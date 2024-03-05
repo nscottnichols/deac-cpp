@@ -962,71 +962,34 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             GPU_ASSERT((deac_malloc_device(double, d_fitness_squared_mean, number_of_generations, default_stream));
             GPU_ASSERT(deac_memset(d_fitness_mean,         0, bytes_normalization default_stream));
             GPU_ASSERT(deac_memset(d_fitness_squared_mean, 0, bytes_normalization default_stream));
-            GPU_ASSERT(deac_wait(default_stream));
         #endif
     }
     
-    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-        bool* mutate_indices;
-        #ifdef USE_GPU
-            size_t bytes_rejection_indices = sizeof(bool)*population_size;
-            bool* d_mutate_indices;
-            bool* d_rejection_indices;
-        #endif
-        size_t bytes_mutate_indices = sizeof(bool)*genome_size*population_size;
-        mutate_indices = (bool*) malloc(bytes_mutate_indices);
-        #ifdef USE_GPU
-            #ifdef USE_HIP
-                HIP_ASSERT(hipMalloc(&d_mutate_indices, bytes_mutate_indices));
-                HIP_ASSERT(hipMalloc(&d_rejection_indices, bytes_rejection_indices));
-            #endif
-            #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMalloc(&d_mutate_indices, bytes_mutate_indices));
-                CUDA_ASSERT(cudaMalloc(&d_rejection_indices, bytes_rejection_indices));
-            #endif
-            #ifdef USE_SYCL
-                d_mutate_indices    = sycl::malloc_device< bool >( population_size*genome_size, default_stream ); 
-                d_rejection_indices = sycl::malloc_device< bool >( population_size, default_stream ); 
-            #endif
-        #endif
-    #else
-        bool* mutate_indices_positive_frequency;
+    size_t bytes_mutate_indices = sizeof(bool)*genome_size*population_size;
+    bool* mutate_indices_positive_frequency;
+    mutate_indices_positive_frequency = (bool*) malloc(bytes_mutate_indices);
+    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
         bool* mutate_indices_negative_frequency;
-        #ifdef USE_GPU
-            size_t bytes_rejection_indices = sizeof(bool)*population_size;
-            bool* d_mutate_indices_positive_frequency;
-            bool* d_mutate_indices_negative_frequency;
-            bool* d_rejection_indices;
-        #endif
-        size_t bytes_mutate_indices = sizeof(bool)*genome_size*population_size;
-        mutate_indices_positive_frequency = (bool*) malloc(bytes_mutate_indices);
         mutate_indices_negative_frequency = (bool*) malloc(bytes_mutate_indices);
-        #ifdef USE_GPU
-            #ifdef USE_HIP
-                HIP_ASSERT(hipMalloc(&d_mutate_indices_positive_frequency, bytes_mutate_indices));
-                HIP_ASSERT(hipMalloc(&d_mutate_indices_negative_frequency, bytes_mutate_indices));
-                HIP_ASSERT(hipMalloc(&d_rejection_indices, bytes_rejection_indices));
-            #endif
-            #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMalloc(&d_mutate_indices_positive_frequency, bytes_mutate_indices));
-                CUDA_ASSERT(cudaMalloc(&d_mutate_indices_negative_frequency, bytes_mutate_indices));
-                CUDA_ASSERT(cudaMalloc(&d_rejection_indices, bytes_rejection_indices));
-            #endif
-            #ifdef USE_SYCL
-                d_mutate_indices_positive_frequency = sycl::malloc_device< bool >( population_size*genome_size, default_stream ); 
-                d_mutate_indices_negative_frequency = sycl::malloc_device< bool >( population_size*genome_size, default_stream ); 
-                d_rejection_indices                 = sycl::malloc_device< bool >( population_size, default_stream ); 
-            #endif
+    #endif
+    #ifdef USE_GPU
+        bool* d_mutate_indices_positive_frequency;
+        GPU_ASSERT((deac_malloc_device(bool, d_mutate_indices_positive_frequency, population_size*genome_size, default_stream));
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            bool* d_mutate_indices_negative_frequency;
+            GPU_ASSERT((deac_malloc_device(bool, d_mutate_indices_negative_frequency, population_size*genome_size, default_stream));
         #endif
+
+        size_t bytes_rejection_indices = sizeof(bool)*population_size;
+        bool* d_rejection_indices;
+        GPU_ASSERT((deac_malloc_device(bool, d_rejection_indices, population_size, default_stream));
     #endif
 
     size_t* mutant_indices;
-    #ifdef USE_GPU
-        size_t* d_mutant_indices;
-    #endif
     size_t bytes_mutant_indices = sizeof(size_t)*3*population_size;
     mutant_indices = (size_t*) malloc(bytes_mutant_indices);
     #ifdef USE_GPU
+        size_t* d_mutant_indices;
         #ifdef USE_HIP
             HIP_ASSERT(hipMalloc(&d_mutant_indices, bytes_mutant_indices));
         #endif
