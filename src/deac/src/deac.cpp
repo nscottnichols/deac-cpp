@@ -457,13 +457,13 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
         //Set normalization
         #ifdef USE_GPU
-            //FIXME need gpu_matmul and gpu_normalize_population kernel launchers (and possibly implementations) for CUDA and HIP (also should take a look at SYCL version)
+            //FIXME need gpu_dot and gpu_normalize_population kernel launchers (and possibly implementations) for CUDA and HIP (also should take a look at SYCL version)
             size_t grid_size_set_normalization = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
             GPU_ASSERT(deac_memset(d_normalization, 0, bytes_normalization, default_stream));
             GPU_ASSERT(deac_wait(default_stream));
             for (size_t i=0; i<population_size; i++) {
                 size_t stream_idx = i % MAX_GPU_STREAMS;
-                gpu_matmul(stream_array[stream_idx], d_normalization + i, d_normalization_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
+                gpu_dot(stream_array[stream_idx], d_normalization + i, d_normalization_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
             }
             for (auto& s : stream_array) {
                 GPU_ASSERT(deac_wait(s));
@@ -471,7 +471,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                 for (size_t i=0; i<population_size; i++) {
                     size_t stream_idx = i % MAX_GPU_STREAMS;
-                    gpu_matmul(stream_array[stream_idx], d_normalization + i, d_normalization_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
+                    gpu_dot(stream_array[stream_idx], d_normalization + i, d_normalization_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
                 }
                 for (auto& s : stream_array) {
                     GPU_ASSERT(deac_wait(s));
@@ -580,7 +580,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             GPU_ASSERT(deac_wait(default_stream));
             for (size_t i=0; i<population_size; i++) {
                 size_t stream_idx = i % MAX_GPU_STREAMS;
-                gpu_matmul(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
+                gpu_dot(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
             }
             for (auto& s : stream_array) {
                 GPU_ASSERT(deac_wait(s));
@@ -588,7 +588,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                 for (size_t i=0; i<population_size; i++) {
                     size_t stream_idx = i % MAX_GPU_STREAMS;
-                    gpu_matmul(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
+                    gpu_dot(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
                 }
                 for (auto& s : stream_array) {
                     GPU_ASSERT(deac_wait(s));
@@ -682,7 +682,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             GPU_ASSERT(deac_wait(default_stream));
             for (size_t i=0; i<population_size; i++) {
                 size_t stream_idx = i % MAX_GPU_STREAMS;
-                gpu_matmul(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
+                gpu_dot(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
             }
             for (auto& s : stream_array) {
                 GPU_ASSERT(deac_wait(s));
@@ -690,7 +690,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                 for (size_t i=0; i<population_size; i++) {
                     size_t stream_idx = i % MAX_GPU_STREAMS;
-                    gpu_matmul(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
+                    gpu_dot(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
                 }
                 for (auto& s : stream_array) {
                     GPU_ASSERT(deac_wait(s));
@@ -725,7 +725,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             size_t stream_idx = i % MAX_GPU_STREAMS;
             size_t _i = i/number_of_timeslices;
             size_t _j = i - _i*number_of_timeslices;
-            gpu_matmul(stream_array[stream_idx], d_isf_model + i, d_population_old_positive_frequency + genome_size*_i, d_isf_term_positive_frequency + genome_size*_j, genome_size);
+            gpu_dot(stream_array[stream_idx], d_isf_model + i, d_population_old_positive_frequency + genome_size*_i, d_isf_term_positive_frequency + genome_size*_j, genome_size);
         }
         for (auto& s : stream_array) {
             GPU_ASSERT(deac_wait(s));
@@ -735,7 +735,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 size_t stream_idx = i % MAX_GPU_STREAMS;
                 size_t _i = i/number_of_timeslices;
                 size_t _j = i - _i*number_of_timeslices;
-                gpu_matmul(stream_array[stream_idx], d_isf_model + i, d_population_old_negative_frequency + genome_size*_i, d_isf_term_negative_frequency + genome_size*_j, genome_size);
+                gpu_dot(stream_array[stream_idx], d_isf_model + i, d_population_old_negative_frequency + genome_size*_i, d_isf_term_negative_frequency + genome_size*_j, genome_size);
             }
             for (auto& s : stream_array) {
                 GPU_ASSERT(deac_wait(s));
@@ -793,7 +793,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 GPU_ASSERT(deac_wait(default_stream));
                 for (size_t i=0; i<population_size; i++) {
                     size_t stream_idx = i % MAX_GPU_STREAMS;
-                    gpu_matmul(stream_array[stream_idx], d_negative_first_moments + i, d_negative_first_moments_term, d_isf_model + number_of_timeslices*i, number_of_timeslices);
+                    gpu_dot(stream_array[stream_idx], d_negative_first_moments + i, d_negative_first_moments_term, d_isf_model + number_of_timeslices*i, number_of_timeslices);
                 }
                 for (auto& s : stream_array) {
                     GPU_ASSERT(deac_wait(s));
@@ -1182,7 +1182,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 GPU_ASSERT(deac_wait(default_stream));
                 for (size_t i=0; i<population_size; i++) {
                     size_t stream_idx = i % MAX_GPU_STREAMS;
-                    gpu_matmul(stream_array[stream_idx], d_normalization + i, d_normalization_term_positive_frequency, d_population_new_positive_frequency + genome_size*i, genome_size);
+                    gpu_dot(stream_array[stream_idx], d_normalization + i, d_normalization_term_positive_frequency, d_population_new_positive_frequency + genome_size*i, genome_size);
                 }
                 for (auto& s : stream_array) {
                     GPU_ASSERT(deac_wait(s));
@@ -1190,7 +1190,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                     for (size_t i=0; i<population_size; i++) {
                         size_t stream_idx = i % MAX_GPU_STREAMS;
-                        gpu_matmul(stream_array[stream_idx], d_normalization + i, d_normalization_term_negative_frequency, d_population_new_negative_frequency + genome_size*i, genome_size);
+                        gpu_dot(stream_array[stream_idx], d_normalization + i, d_normalization_term_negative_frequency, d_population_new_negative_frequency + genome_size*i, genome_size);
                     }
                     for (auto& s : stream_array) {
                         GPU_ASSERT(deac_wait(s));
@@ -1238,7 +1238,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 size_t stream_idx = i % MAX_GPU_STREAMS;
                 size_t _i = i/number_of_timeslices;
                 size_t _j = i - _i*number_of_timeslices;
-                gpu_matmul(stream_array[stream_idx], d_isf_model + i, d_population_new_positive_frequency + genome_size*_i, d_isf_term_positive_frequency + genome_size*_j, genome_size);
+                gpu_dot(stream_array[stream_idx], d_isf_model + i, d_population_new_positive_frequency + genome_size*_i, d_isf_term_positive_frequency + genome_size*_j, genome_size);
             }
             for (auto& s : stream_array) {
                 GPU_ASSERT(deac_wait(s));
@@ -1248,7 +1248,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     size_t stream_idx = i % MAX_GPU_STREAMS;
                     size_t _i = i/number_of_timeslices;
                     size_t _j = i - _i*number_of_timeslices;
-                    gpu_matmul(stream_array[stream_idx], d_isf_model + i, d_population_new_negative_frequency + genome_size*_i, d_isf_term_negative_frequency + genome_size*_j, genome_size);
+                    gpu_dot(stream_array[stream_idx], d_isf_model + i, d_population_new_negative_frequency + genome_size*_i, d_isf_term_negative_frequency + genome_size*_j, genome_size);
                 }
                 for (auto& s : stream_array) {
                     GPU_ASSERT(deac_wait(s));
@@ -1275,7 +1275,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     GPU_ASSERT(deac_wait(default_stream));
                     for (size_t i=0; i<population_size; i++) {
                         size_t stream_idx = i % MAX_GPU_STREAMS;
-                        gpu_matmul(stream_array[stream_idx], d_negative_first_moments + i, d_negative_first_moments_term, d_isf_model + number_of_timeslices*i, number_of_timeslices);
+                        gpu_dot(stream_array[stream_idx], d_negative_first_moments + i, d_negative_first_moments_term, d_isf_model + number_of_timeslices*i, number_of_timeslices);
                     }
                     for (auto& s : stream_array) {
                         GPU_ASSERT(deac_wait(s));
@@ -1298,7 +1298,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 GPU_ASSERT(deac_wait(default_stream));
                 for (size_t i=0; i<population_size; i++) {
                     size_t stream_idx = i % MAX_GPU_STREAMS;
-                    gpu_matmul(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_positive_frequency, d_population_new_positive_frequency + genome_size*i, genome_size);
+                    gpu_dot(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_positive_frequency, d_population_new_positive_frequency + genome_size*i, genome_size);
                 }
                 for (auto& s : stream_array) {
                     GPU_ASSERT(deac_wait(s));
@@ -1306,7 +1306,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                     for (size_t i=0; i<population_size; i++) {
                         size_t stream_idx = i % MAX_GPU_STREAMS;
-                        gpu_matmul(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_negative_frequency, d_population_new_negative_frequency + genome_size*i, genome_size);
+                        gpu_dot(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_negative_frequency, d_population_new_negative_frequency + genome_size*i, genome_size);
                     }
                     for (auto& s : stream_array) {
                         GPU_ASSERT(deac_wait(s));
@@ -1331,7 +1331,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 GPU_ASSERT(deac_wait(default_stream));
                 for (size_t i=0; i<population_size; i++) {
                     size_t stream_idx = i % MAX_GPU_STREAMS;
-                    gpu_matmul(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_positive_frequency, d_population_new_positive_frequency + genome_size*i, genome_size);
+                    gpu_dot(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_positive_frequency, d_population_new_positive_frequency + genome_size*i, genome_size);
                 }
                 for (auto& s : stream_array) {
                     GPU_ASSERT(deac_wait(s));
@@ -1339,7 +1339,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                     for (size_t i=0; i<population_size; i++) {
                         size_t stream_idx = i % MAX_GPU_STREAMS;
-                        gpu_matmul(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_negative_frequency, d_population_new_negative_frequency + genome_size*i, genome_size);
+                        gpu_dot(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_negative_frequency, d_population_new_negative_frequency + genome_size*i, genome_size);
                     }
                     for (auto& s : stream_array) {
                         GPU_ASSERT(deac_wait(s));
