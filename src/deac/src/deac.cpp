@@ -1053,97 +1053,32 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
         #ifdef USE_GPU
             size_t grid_size_self_adapting_parameters = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-            #ifdef USE_HIP
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    hipLaunchKernelGGL(gpu_set_crossover_probabilities_new,
-                            dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
-                            d_rng_state, d_crossover_probabilities_new, d_crossover_probabilities_old, self_adapting_crossover_probability, population_size);
-                    hipLaunchKernelGGL(gpu_set_differential_weights_new,
-                            dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
-                            d_rng_state + 4*population_size, d_differential_weights_new, d_differential_weights_old, self_adapting_differential_weight_probability, population_size);
-                    HIP_ASSERT(hipDeviceSynchronize());
-                #else
-                    hipLaunchKernelGGL(gpu_set_crossover_probabilities_new,
-                            dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[0],
-                            d_rng_state, d_crossover_probabilities_new_positive_frequency, d_crossover_probabilities_old_positive_frequency, self_adapting_crossover_probability, population_size);
-                    hipLaunchKernelGGL(gpu_set_differential_weights_new,
-                            dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[1 % MAX_GPU_STREAMS],
-                            d_rng_state + 4*population_size, d_differential_weights_new_positive_frequency, d_differential_weights_old_positive_frequency, self_adapting_differential_weight_probability, population_size);
-                    hipLaunchKernelGGL(gpu_set_crossover_probabilities_new,
-                            dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[2 % MAX_GPU_STREAMS],
-                            d_rng_state, d_crossover_probabilities_new_negative_frequency, d_crossover_probabilities_old_negative_frequency, self_adapting_crossover_probability, population_size);
-                    hipLaunchKernelGGL(gpu_set_differential_weights_new,
-                            dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), 0, stream_array[3 % MAX_GPU_STREAMS],
-                            d_rng_state + 4*population_size, d_differential_weights_new_negative_frequency, d_differential_weights_old_negative_frequency, self_adapting_differential_weight_probability, population_size);
-                    HIP_ASSERT(hipDeviceSynchronize());
-                #endif
+            gpu_set_crossover_probabilities_new(default_stream, grid_size_self_adapting_parameters, d_rng_state, d_crossover_probabilities_new_positive_frequency, d_crossover_probabilities_old_positive_frequency, self_adapting_crossover_probability, population_size);
+            gpu_set_differential_weights_new(default_stream, grid_size_self_adapting_parameters, d_rng_state + 4*population_size, d_differential_weights_new_positive_frequency, d_differential_weights_old_positive_frequency, self_adapting_differential_weight_probability, population_size);
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                gpu_set_crossover_probabilities_new(default_stream, grid_size_self_adapting_parameters, d_rng_state, d_crossover_probabilities_new_negative_frequency, d_crossover_probabilities_old_negative_frequency, self_adapting_crossover_probability, population_size);
+                gpu_set_differential_weights_new(default_stream, grid_size_self_adapting_parameters, d_rng_state + 4*population_size, d_differential_weights_new_negative_frequency, d_differential_weights_old_negative_frequency, self_adapting_differential_weight_probability, population_size);
             #endif
-            #ifdef USE_CUDA
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    cuda_wrapper::gpu_set_crossover_probabilities_new_wrapper(
-                            dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), stream_array[0],
-                            d_rng_state, d_crossover_probabilities_new, d_crossover_probabilities_old, self_adapting_crossover_probability, population_size);
-                    cuda_wrapper::gpu_set_differential_weights_new_wrapper(
-                            dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
-                            d_rng_state + 4*population_size, d_differential_weights_new, d_differential_weights_old, self_adapting_differential_weight_probability, population_size);
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #else
-                    cuda_wrapper::gpu_set_crossover_probabilities_new_wrapper(
-                            dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), stream_array[0],
-                            d_rng_state, d_crossover_probabilities_new_positive_frequency, d_crossover_probabilities_old_positive_frequency, self_adapting_crossover_probability, population_size);
-                    cuda_wrapper::gpu_set_differential_weights_new_wrapper(
-                            dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), stream_array[1 % MAX_GPU_STREAMS],
-                            d_rng_state + 4*population_size, d_differential_weights_new_positive_frequency, d_differential_weights_old_positive_frequency, self_adapting_differential_weight_probability, population_size);
-                    cuda_wrapper::gpu_set_crossover_probabilities_new_wrapper(
-                            dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), stream_array[2 % MAX_GPU_STREAMS],
-                            d_rng_state, d_crossover_probabilities_new_negative_frequency, d_crossover_probabilities_old_negative_frequency, self_adapting_crossover_probability, population_size);
-                    cuda_wrapper::gpu_set_differential_weights_new_wrapper(
-                            dim3(grid_size_self_adapting_parameters), dim3(GPU_BLOCK_SIZE), stream_array[3 % MAX_GPU_STREAMS],
-                            d_rng_state + 4*population_size, d_differential_weights_new_negative_frequency, d_differential_weights_old_negative_frequency, self_adapting_differential_weight_probability, population_size);
-                    CUDA_ASSERT(cudaDeviceSynchronize());
-                #endif
-            #endif
-            #ifdef USE_SYCL
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                    gpu_set_crossover_probabilities_new( q, grid_size_self_adapting_parameters, d_rng_state, d_crossover_probabilities_new, d_crossover_probabilities_old, self_adapting_crossover_probability, population_size );
-                    gpu_set_differential_weights_new( q, grid_size_self_adapting_parameters, d_rng_state + 4*population_size, d_differential_weights_new, d_differential_weights_old, self_adapting_differential_weight_probability, population_size );
-                    q.wait();
-                #else
-                    gpu_set_crossover_probabilities_new( q, grid_size_self_adapting_parameters, d_rng_state, d_crossover_probabilities_new_positive_frequency, d_crossover_probabilities_old_positive_frequency, self_adapting_crossover_probability, population_size );
-                    gpu_set_differential_weights_new( q, grid_size_self_adapting_parameters, d_rng_state + 4*population_size, d_differential_weights_new_positive_frequency, d_differential_weights_old_positive_frequency, self_adapting_differential_weight_probability, population_size );
-                    gpu_set_crossover_probabilities_new( q, grid_size_self_adapting_parameters, d_rng_state, d_crossover_probabilities_new_negative_frequency, d_crossover_probabilities_old_negative_frequency, self_adapting_crossover_probability, population_size );
-                    gpu_set_differential_weights_new( q, grid_size_self_adapting_parameters, d_rng_state + 4*population_size, d_differential_weights_new_negative_frequency, d_differential_weights_old_negative_frequency, self_adapting_differential_weight_probability, population_size );
-                    q.wait();
-                #endif
-            #endif
+            GPU_ASSERT(deac_wait(default_stream));
         #else
-            #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                //Set crossover probabilities and differential weights
-                for (size_t i=0; i<population_size; i++) {
-                    if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_crossover_probability) {
-                        crossover_probabilities_new[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53;
-                    } else {
-                        crossover_probabilities_new[i] = crossover_probabilities_old[i];
-                    }
-
-                    if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_differential_weight_probability) {
-                        //differential_weights_new[i] = 
-                        //    self_adapting_differential_weight_shift + 
-                        //    self_adapting_differential_weight*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
-                        differential_weights_new[i] = 2.0*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
-                    } else {
-                        differential_weights_new[i] = differential_weights_old[i];
-                    }
+            //Set crossover probabilities and differential weights
+            for (size_t i=0; i<population_size; i++) {
+                if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_crossover_probability) {
+                    crossover_probabilities_new_positive_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53;
+                } else {
+                    crossover_probabilities_new_positive_frequency[i] = crossover_probabilities_old_positive_frequency[i];
                 }
-            #else
-                //Set crossover probabilities and differential weights
-                for (size_t i=0; i<population_size; i++) {
-                    if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_crossover_probability) {
-                        crossover_probabilities_new_positive_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53;
-                    } else {
-                        crossover_probabilities_new_positive_frequency[i] = crossover_probabilities_old_positive_frequency[i];
-                    }
 
+                if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_differential_weight_probability) {
+                    //differential_weights_new[i] = 
+                    //    self_adapting_differential_weight_shift + 
+                    //    self_adapting_differential_weight*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
+                    differential_weights_new_positive_frequency[i] = 2.0*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
+                } else {
+                    differential_weights_new_positive_frequency[i] = differential_weights_old_positive_frequency[i];
+                }
+
+                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                     if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_crossover_probability) {
                         crossover_probabilities_new_negative_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53;
                     } else {
@@ -1154,21 +1089,12 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                         //differential_weights_new[i] = 
                         //    self_adapting_differential_weight_shift + 
                         //    self_adapting_differential_weight*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
-                        differential_weights_new_positive_frequency[i] = 2.0*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
-                    } else {
-                        differential_weights_new_positive_frequency[i] = differential_weights_old_positive_frequency[i];
-                    }
-
-                    if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_differential_weight_probability) {
-                        //differential_weights_new[i] = 
-                        //    self_adapting_differential_weight_shift + 
-                        //    self_adapting_differential_weight*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
                         differential_weights_new_negative_frequency[i] = 2.0*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
                     } else {
                         differential_weights_new_negative_frequency[i] = differential_weights_old_negative_frequency[i];
                     }
-                }
-            #endif
+                #endif
+            }
         #endif
 
         #ifdef USE_GPU
