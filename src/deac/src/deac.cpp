@@ -858,7 +858,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     _fitness += pow((negative_first_moment - inverse_first_moments[i])/inverse_first_moment_error,2);
                 }
             #else
-                //FIXME inverse first moment not implemented for single particle fermionic spectral function
+                //FIXME inverse first moment not implemented
             #endif
             if (use_first_moment) {
                 _fitness += pow(first_moments[i] - first_moment,2)/first_moment;
@@ -871,78 +871,38 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #endif
 
     size_t bytes_crossover_probabilities = sizeof(double)*population_size;
-    #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-        double * crossover_probabilities_old;
-        double * crossover_probabilities_new;
-        crossover_probabilities_old = (double*) malloc(bytes_crossover_probabilities);
-        crossover_probabilities_new = (double*) malloc(bytes_crossover_probabilities);
-        for (size_t i=0; i<population_size; i++) {
-            crossover_probabilities_old[i] = crossover_probability;
-        }
-        #ifdef USE_GPU
-            double* d_crossover_probabilities_old;
-            double* d_crossover_probabilities_new;
-            #ifdef USE_HIP
-                HIP_ASSERT(hipMalloc(&d_crossover_probabilities_old, bytes_crossover_probabilities));
-                HIP_ASSERT(hipMalloc(&d_crossover_probabilities_new, bytes_crossover_probabilities));
-                HIP_ASSERT(hipMemcpy( d_crossover_probabilities_old, crossover_probabilities_old, bytes_crossover_probabilities, hipMemcpyHostToDevice ));
-            #endif
-            #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMalloc(&d_crossover_probabilities_old, bytes_crossover_probabilities));
-                CUDA_ASSERT(cudaMalloc(&d_crossover_probabilities_new, bytes_crossover_probabilities));
-                CUDA_ASSERT(cudaMemcpy( d_crossover_probabilities_old, crossover_probabilities_old, bytes_crossover_probabilities, cudaMemcpyHostToDevice )); 
-            #endif
-            #ifdef USE_SYCL
-                d_crossover_probabilities_old = sycl::malloc_device< double >( population_size, default_stream ); 
-                d_crossover_probabilities_new = sycl::malloc_device< double >( population_size, default_stream ); 
-                q.memcpy( d_crossover_probabilities_old, crossover_probabilities_old, bytes_crossover_probabilities );
-                q.wait();
-            #endif
-        #endif
-    #else
-        double * crossover_probabilities_old_positive_frequency;
+    double * crossover_probabilities_old_positive_frequency;
+    double * crossover_probabilities_new_positive_frequency;
+    crossover_probabilities_old_positive_frequency = (double*) malloc(bytes_crossover_probabilities);
+    crossover_probabilities_new_positive_frequency = (double*) malloc(bytes_crossover_probabilities);
+    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
         double * crossover_probabilities_old_negative_frequency;
-        double * crossover_probabilities_new_positive_frequency;
         double * crossover_probabilities_new_negative_frequency;
-        crossover_probabilities_old_positive_frequency = (double*) malloc(bytes_crossover_probabilities);
         crossover_probabilities_old_negative_frequency = (double*) malloc(bytes_crossover_probabilities);
-        crossover_probabilities_new_positive_frequency = (double*) malloc(bytes_crossover_probabilities);
         crossover_probabilities_new_negative_frequency = (double*) malloc(bytes_crossover_probabilities);
-        for (size_t i=0; i<population_size; i++) {
-            crossover_probabilities_old_positive_frequency[i] = crossover_probability;
+    #endif
+
+    for (size_t i=0; i<population_size; i++) {
+        crossover_probabilities_old_positive_frequency[i] = crossover_probability;
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
             crossover_probabilities_old_negative_frequency[i] = crossover_probability;
-        }
-        #ifdef USE_GPU
-            double* d_crossover_probabilities_old_positive_frequency;
-            double* d_crossover_probabilities_old_negative_frequency;
-            double* d_crossover_probabilities_new_positive_frequency;
-            double* d_crossover_probabilities_new_negative_frequency;
-            #ifdef USE_HIP
-                HIP_ASSERT(hipMalloc(&d_crossover_probabilities_old_positive_frequency, bytes_crossover_probabilities));
-                HIP_ASSERT(hipMalloc(&d_crossover_probabilities_new_positive_frequency, bytes_crossover_probabilities));
-                HIP_ASSERT(hipMemcpy( d_crossover_probabilities_old_positive_frequency, crossover_probabilities_old_positive_frequency, bytes_crossover_probabilities, hipMemcpyHostToDevice ));
-                HIP_ASSERT(hipMalloc(&d_crossover_probabilities_old_negative_frequency, bytes_crossover_probabilities));
-                HIP_ASSERT(hipMalloc(&d_crossover_probabilities_new_negative_frequency, bytes_crossover_probabilities));
-                HIP_ASSERT(hipMemcpy( d_crossover_probabilities_old_negative_frequency, crossover_probabilities_old_negative_frequency, bytes_crossover_probabilities, hipMemcpyHostToDevice ));
-            #endif
-            #ifdef USE_CUDA
-                CUDA_ASSERT(cudaMalloc(&d_crossover_probabilities_old_positive_frequency, bytes_crossover_probabilities));
-                CUDA_ASSERT(cudaMalloc(&d_crossover_probabilities_new_positive_frequency, bytes_crossover_probabilities));
-                CUDA_ASSERT(cudaMemcpy( d_crossover_probabilities_old_positive_frequency, crossover_probabilities_old_positive_frequency, bytes_crossover_probabilities, cudaMemcpyHostToDevice )); 
-                CUDA_ASSERT(cudaMalloc(&d_crossover_probabilities_old_negative_frequency, bytes_crossover_probabilities));
-                CUDA_ASSERT(cudaMalloc(&d_crossover_probabilities_new_negative_frequency, bytes_crossover_probabilities));
-                CUDA_ASSERT(cudaMemcpy( d_crossover_probabilities_old_negative_frequency, crossover_probabilities_old_negative_frequency, bytes_crossover_probabilities, cudaMemcpyHostToDevice )); 
-            #endif
-            #ifdef USE_SYCL
-                d_crossover_probabilities_old_positive_frequency = sycl::malloc_device< double >( population_size, default_stream ); 
-                d_crossover_probabilities_old_negative_frequency = sycl::malloc_device< double >( population_size, default_stream ); 
-                d_crossover_probabilities_new_positive_frequency = sycl::malloc_device< double >( population_size, default_stream ); 
-                d_crossover_probabilities_new_negative_frequency = sycl::malloc_device< double >( population_size, default_stream ); 
-                q.memcpy( d_crossover_probabilities_old_positive_frequency, crossover_probabilities_old_positive_frequency, bytes_crossover_probabilities );
-                q.memcpy( d_crossover_probabilities_old_negative_frequency, crossover_probabilities_old_negative_frequency, bytes_crossover_probabilities );
-                q.wait();
-            #endif
         #endif
+    }
+
+    #ifdef USE_GPU
+        double* d_crossover_probabilities_old_positive_frequency;
+        double* d_crossover_probabilities_new_positive_frequency;
+        GPU_ASSERT((deac_malloc_device(double, d_crossover_probabilities_old_positive_frequency, population_size, default_stream));
+        GPU_ASSERT((deac_malloc_device(double, d_crossover_probabilities_new_positive_frequency, population_size, default_stream));
+        GPU_ASSERT(deac_memcpy_host_to_device(d_crossover_probabilities_old_positive_frequency, crossover_probabilities_old_positive_frequency, bytes_crossover_probabilities, default_stream));
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            double* d_crossover_probabilities_old_negative_frequency;
+            double* d_crossover_probabilities_new_negative_frequency;
+            GPU_ASSERT((deac_malloc_device(double, d_crossover_probabilities_old_negative_frequency, population_size, default_stream));
+            GPU_ASSERT((deac_malloc_device(double, d_crossover_probabilities_new_negative_frequency, population_size, default_stream));
+            GPU_ASSERT(deac_memcpy_host_to_device(d_crossover_probabilities_old_negative_frequency, crossover_probabilities_old_negative_frequency, bytes_crossover_probabilities, default_stream));
+        #endif
+        GPU_ASSERT(deac_wait(default_stream));
     #endif
 
     size_t bytes_differential_weights = sizeof(double)*population_size;
