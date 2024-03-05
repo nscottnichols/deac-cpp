@@ -990,15 +990,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     mutant_indices = (size_t*) malloc(bytes_mutant_indices);
     #ifdef USE_GPU
         size_t* d_mutant_indices;
-        #ifdef USE_HIP
-            HIP_ASSERT(hipMalloc(&d_mutant_indices, bytes_mutant_indices));
-        #endif
-        #ifdef USE_CUDA
-            CUDA_ASSERT(cudaMalloc(&d_mutant_indices, bytes_mutant_indices));
-        #endif
-        #ifdef USE_SYCL
-            d_mutant_indices = sycl::malloc_device< size_t >( 3*population_size, default_stream ); 
-        #endif
+        GPU_ASSERT((deac_malloc_device(bool, d_mutant_indices, 3*population_size, default_stream));
     #endif
 
     double minimum_fitness;
