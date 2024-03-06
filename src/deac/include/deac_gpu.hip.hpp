@@ -406,6 +406,83 @@ void gpu_set_fitness_squared_mean(double* __restrict__ fitness_squared_mean, dou
          fitness_squared_mean[0] += _fsm[0]/population_size;
     }
 }
+
+__global__
+void gpu_set_population_new(double* __restrict__ population_new, double* __restrict__ population_old, size_t* __restrict__ mutant_indices, double* __restrict__ differential_weights_new, bool* __restrict__ mutate_indices, size_t population_size, size_t genome_size) {
+    size_t global_idx = hipBlockDim_x*hipBlockIdx_x + hipThreadIdx_x;
+    if (global_idx < population_size*genome_size) {
+        size_t _i = global_idx/genome_size;
+        size_t _j = global_idx - _i*genome_size;
+        double F = differential_weights_new[_i];
+        size_t mutant_index1 = mutant_indices[3*_i];
+        size_t mutant_index2 = mutant_indices[3*_i + 1];
+        size_t mutant_index3 = mutant_indices[3*_i + 2];
+        bool mutate = mutate_indices[global_idx];
+        if (mutate) {
+            #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
+                population_new[global_idx] = population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]);
+            #else
+                population_new[global_idx] = sycl::fabs( population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]) );
+            #endif
+        } else {
+            population_new[global_idx] = population_old[global_idx];
+        }
+    }
+}
+
+
+__global__
+void gpu_match_population_zero(double* __restrict__ population_negative_frequency, double* __restrict__ population_positive_frequency, size_t population_size, size_t genome_size) {
+    size_t global_idx = hipBlockDim_x*hipBlockIdx_x + hipThreadIdx_x;
+    if (global_idx < population_size) {
+        population_negative_frequency[global_idx*genome_size] = population_positive_frequency[global_idx*genome_size];
+    }
+}
+
+__global__
+void gpu_set_rejection_indices(bool* __restrict__ rejection_indices, double* __restrict__ fitness_new, double* __restrict__ fitness_old, size_t population_size) {
+    size_t global_idx = hipBlockDim_x*hipBlockIdx_x + hipThreadIdx_x;
+    if (global_idx < population_size) {
+        bool accept = fitness_new[global_idx] <= fitness_old[global_idx];
+        rejection_indices[global_idx] = accept;
+        if (accept) {
+            fitness_old[global_idx] = fitness_new[global_idx];
+        }
+    }
+}
+
+__global__
+void gpu_swap_control_parameters(double* __restrict__ control_parameter_old, double* __restrict__ control_parameter_new, bool* __restrict__ rejection_indices, size_t population_size) {
+    size_t global_idx = hipBlockDim_x*hipBlockIdx_x + hipThreadIdx_x;
+    if (global_idx < population_size) {
+        if (rejection_indices[global_idx]) {
+            control_parameter_old[global_idx] = control_parameter_new[global_idx];
+        }
+    }
+}
+
+__global__
+void gpu_swap_populations(double* __restrict__ population_old, double* __restrict__ population_new, bool* __restrict__ rejection_indices, size_t population_size, size_t genome_size) {
+    size_t global_idx = hipBlockDim_x*hipBlockIdx_x + hipThreadIdx_x;
+    if (global_idx < population_size*genome_size) {
+        size_t _i = global_idx/genome_size;
+        if (rejection_indices[_i]) {
+            population_old[global_idx] = population_new[global_idx];
+        }
+    }
+}
+
+__global__
+void gpu_set_crossover_probabilities_new(uint64_t* __restrict__ rng_state, double* __restrict__ crossover_probabilities_new, double* __restrict__ crossover_probabilities_old, double self_adapting_crossover_probability, size_t population_size) {
+    size_t global_idx = hipBlockDim_x*hipBlockIdx_x + hipThreadIdx_x;
+    if (global_idx < population_size) {
+        if ((gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53 < self_adapting_crossover_probability) {
+            crossover_probabilities_new[global_idx] = (gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53;
+        } else {
+            crossover_probabilities_new[global_idx] = crossover_probabilities_old[global_idx];
+        }
+    }
+}
 __global__
 void gpu_matrix_multiply_MxN_by_Nx1(double * C, double * A, double * B, size_t N, size_t idx) {
     __shared__ double _c[GPU_BLOCK_SIZE];
