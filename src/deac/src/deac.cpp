@@ -220,6 +220,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         }
         use_negative_first_moment = false; //FIXME disabling inverse first moment for zero temperature (needs further investigation)
         temperature = 0.0;
+    #else
+        //Use beta periodicity in imaginary time to reduce numerical instabilities
+        double periodicity = 1.0; // Periodic for bosnonic systems
+        if (
+            (spectra_type == "spfsf") ||
+            (spectra_type == "ffull")
+           ) {
+           periodicity = -1.0; // Antiperiodic for fermionic systems
+        }
     #endif
 
     #ifdef USE_GPU
@@ -281,13 +290,30 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double t = imaginary_time[i];
         #ifndef ZEROT
             #ifdef USE_HYPERBOLIC_MODEL
-                double bo2mt = 0.5*beta - t;
+                #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    double bo2mt  = 0.5*beta - t;
+                #else
+                    double bo2mtp = -0.5*beta - t; // add beta to tau
+                    double bo2mtn = 1.5*beta - t; // subtract beta from tau
+                #endif
             #endif
             #ifdef USE_STANDARD_MODEL
-                double bmt = beta - t;
+                #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    double bmt = beta - t;
+                #else
+                    double tmb = t - beta; // subtract beta from tau
+                #endif
             #endif
             #ifdef USE_NORMALIZATION_MODEL
-                double bmt = beta - t;
+                #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    double bmt = beta - t;
+                #else
+                    double tmb = t - beta; // subtract beta from tau
+                #endif
+            #endif
+        #else
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                double tmb = t - beta; // subtract beta from tau
             #endif
         #endif
         for (size_t j=0; j<genome_size; j++) {
@@ -303,29 +329,42 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             size_t isf_term_idx = i*genome_size + j;
             #ifndef ZEROT
                 #ifdef USE_HYPERBOLIC_MODEL
-                    isf_term_positive_frequency[isf_term_idx] = df*cosh(bo2mt*f); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
-                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                        isf_term_negative_frequency[isf_term_idx] = df*cosh(bo2mt*f); //FIXME need to calculate new value
+                    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        isf_term_positive_frequency[isf_term_idx] = df*cosh(bo2mt*f);
+                    #else
+                        isf_term_positive_frequency[isf_term_idx] = periodicity*df*exp(bo2mtp*f)/2;
+                        isf_term_negative_frequency[isf_term_idx] = periodicity*df*exp(-bo2mtn*f)/2;
                     #endif
                 #endif
                 #ifdef USE_STANDARD_MODEL
-                    isf_term_positive_frequency[isf_term_idx] = df*(exp(-bmt*f) + exp(-t*f)); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
-                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                        isf_term_negative_frequency[isf_term_idx] = df*(exp(-bmt*f) + exp(-t*f)); //FIXME need to calculate new value
+                    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        isf_term_positive_frequency[isf_term_idx] = df*(exp(-bmt*f) + exp(-t*f));
+                    #else
+                        isf_term_positive_frequency[isf_term_idx] = df*exp(-t*f);
+                        isf_term_negative_frequency[isf_term_idx] = periodicity*df*exp(tmb*f);
                     #endif
                 #endif
                 #ifdef USE_NORMALIZATION_MODEL
-                    double _num = exp(-bmt*f) + exp(-t*f);
-                    double _denom = 1.0 + exp(-beta*f);
-                    isf_term_positive_frequency[isf_term_idx] = df*(_num/_denom); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
-                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                        isf_term_negative_frequency[isf_term_idx] = df*(_num/_denom); //FIXME need to calculate new value
+                    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        double _num = exp(-bmt*f) + exp(-t*f);
+                        double _denom = 1.0 + exp(-beta*f);
+                        isf_term_positive_frequency[isf_term_idx] = df*(_num/_denom);
+                    #else
+                        // exp(-t*f)/(1 + exp(-beta*f)) == exp(-t*f) - exp(-t*f)/(1 + exp(beta*f))
+                        double _num = exp(-t*f);
+                        double _denom = 1.0 + exp(-beta*f);
+                        isf_term_positive_frequency[isf_term_idx] = df*(_num/_denom);
+                        double e_to_mtw_n = exp((tmb*f); // exp(-t*f) with t - beta
+                        double _denom_n = 1.0 + exp(-beta*f); // 1.0 + exp(beta*f) where f is negative here
+                        isf_term_negative_frequency[isf_term_idx] = periodicity*df*(e_to_mtw_n - e_to_mtw_n/denom_n);
                     #endif
                 #endif
             #else
-                isf_term_positive_frequency[isf_term_idx] = df*exp(-t*f); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
-                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                    isf_term_negative_frequency[isf_term_idx] = df*exp(-t*f); //FIXME need to calculate new value
+                #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    isf_term_positive_frequency[isf_term_idx] = df*exp(-t*f);
+                #else
+                    isf_term_positive_frequency[isf_term_idx] = df*exp(-t*f);
+                    isf_term_negative_frequency[isf_term_idx] = periodicity*df*exp(tmb*f); // exp(-t*f) with t - beta
                 #endif
             #endif
         }
@@ -1848,7 +1887,7 @@ int main (int argc, char *argv[]) {
             .help("Choose spectral type for kernel factors [bdsf].")
             .default_value("bdsf");
         #else
-            .help("Choose spectral type for kernel factors [spbsf, spfsf, full].")
+            .help("Choose spectral type for kernel factors [spbsf, spfsf, bfull, ffull].")
             .default_value("spfsf");
         #endif
     program.add_argument("isf_file") //FIXME make this more generic
@@ -1872,7 +1911,7 @@ int main (int argc, char *argv[]) {
     #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
         std::string valid_spectra_type = "bdsf";
     #else
-        std::string valid_spectra_type = "spbsf, spfsf, full";
+        std::string valid_spectra_type = "spbsf, spfsf, bfull, ffull";
     #endif
     if !(
          #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
@@ -1880,7 +1919,8 @@ int main (int argc, char *argv[]) {
          #else
              (spectra_type == "spbsf") ||
              (spectra_type == "spfsf") ||
-             (spectra_type == "full")
+             (spectra_type == "bfull") ||
+             (spectra_type == "ffull")
          #endif
         ) {
         std::cout << "Please choose spectra_type from the following options: " << valid_spectra_type << std::endl;
