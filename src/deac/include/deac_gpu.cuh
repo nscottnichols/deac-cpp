@@ -3,66 +3,20 @@
 #include "device_launch_parameters.h"
 #include <stdint.h>
 
-namespace cuda_wrapper {
-#ifdef DEAC_DEBUG
-    void gpu_check_array_wrapper(dim3, dim3, double *, size_t);
-    void gpu_check_array_wrapper(dim3, dim3, cudaStream_t, double *, size_t);
-#endif
-
-    void gpu_matrix_multiply_MxN_by_Nx1_wrapper(dim3, dim3, double *, double *, double *, size_t, size_t);
-    void gpu_matrix_multiply_MxN_by_Nx1_wrapper(dim3, dim3, cudaStream_t, double *, double *, double *, size_t, size_t);
-    
-    void gpu_matrix_multiply_LxM_by_MxN_wrapper(dim3, dim3, double *, double *, double *, size_t, size_t, size_t);
-    void gpu_matrix_multiply_LxM_by_MxN_wrapper(dim3, dim3, cudaStream_t, double *, double *, double *, size_t, size_t, size_t);
-    
-    void gpu_normalize_population_wrapper(dim3, dim3, double *, double *, double, size_t, size_t);
-    void gpu_normalize_population_wrapper(dim3, dim3, cudaStream_t, double *, double *, double, size_t, size_t);
-    
-    void gpu_set_fitness_wrapper(dim3, dim3, double *, double *, double *, double *, size_t, size_t);
-    void gpu_set_fitness_wrapper(dim3, dim3, cudaStream_t, double *, double *, double *, double *, size_t, size_t);
-    
-    void gpu_set_fitness_moments_reduced_chi_squared_wrapper(dim3, dim3, double *, double *, double, double, size_t);
-    void gpu_set_fitness_moments_reduced_chi_squared_wrapper(dim3, dim3, cudaStream_t, double *, double *, double, double, size_t);
-    
-    void gpu_set_fitness_moments_chi_squared_wrapper(dim3, dim3, double *, double *, double, size_t);
-    void gpu_set_fitness_moments_chi_squared_wrapper(dim3, dim3, cudaStream_t, double *, double *, double, size_t);
-    
-    void gpu_get_minimum_fitness_wrapper(dim3, dim3, double *, double *, size_t);
-    void gpu_get_minimum_fitness_wrapper(dim3, dim3, cudaStream_t, double *, double *, size_t);
-    
-    void gpu_set_fitness_mean_wrapper(dim3, dim3, double *, double *, size_t, size_t);
-    void gpu_set_fitness_mean_wrapper(dim3, dim3, cudaStream_t, double *, double *, size_t, size_t);
-    
-    void gpu_set_fitness_squared_mean_wrapper(dim3, dim3, double *, double *, size_t, size_t);
-    void gpu_set_fitness_squared_mean_wrapper(dim3, dim3, cudaStream_t, double *, double *, size_t, size_t);
-    
-    void gpu_set_population_new_wrapper(dim3, dim3, double *, double *, size_t *, double *, bool *, size_t, size_t);
-    void gpu_set_population_new_wrapper(dim3, dim3, cudaStream_t, double *, double *, size_t *, double *, bool *, size_t, size_t);
-    
-    void gpu_match_population_zero_wrapper(dim3, dim3, double *, double *, size_t, size_t);
-    void gpu_match_population_zero_wrapper(dim3, dim3, cudaStream_t, double *, double *, size_t, size_t);
-    
-    void gpu_set_rejection_indices_wrapper(dim3, dim3, bool *, double *, double *, size_t);
-    void gpu_set_rejection_indices_wrapper(dim3, dim3, cudaStream_t, bool *, double *, double *, size_t);
-    
-    void gpu_swap_control_parameters_wrapper(dim3, dim3, double *, double *, bool *, size_t);
-    void gpu_swap_control_parameters_wrapper(dim3, dim3, cudaStream_t, double *, double *, bool *, size_t);
-    
-    void gpu_swap_populations_wrapper(dim3, dim3, double *, double *, bool *, size_t, size_t);
-    void gpu_swap_populations_wrapper(dim3, dim3, cudaStream_t, double *, double *, bool *, size_t, size_t);
-
-    void gpu_set_crossover_probabilities_new_wrapper(dim3, dim3, uint64_t *, double *, double *, double, size_t);
-    void gpu_set_crossover_probabilities_new_wrapper(dim3, dim3, cudaStream_t, uint64_t *, double *, double *, double, size_t);
-    
-    void gpu_set_differential_weights_new_wrapper(dim3, dim3, uint64_t *, double *, double *, double, size_t);
-    void gpu_set_differential_weights_new_wrapper(dim3, dim3, cudaStream_t, uint64_t *, double *, double *, double, size_t);
-    
-    void gpu_set_mutant_indices_wrapper(dim3, dim3, uint64_t *, size_t *, size_t);
-    void gpu_set_mutant_indices_wrapper(dim3, dim3, cudaStream_t, uint64_t *, size_t *, size_t);
-    
-    void gpu_set_mutate_indices_wrapper(dim3, dim3, uint64_t *, bool *, double *, size_t, size_t);
-    void gpu_set_mutate_indices_wrapper(dim3, dim3, cudaStream_t, uint64_t *, bool *, double *, size_t, size_t);
-
-    void gpu_check_minimum_fitness_wrapper(dim3, dim3, double *, double);
-    void gpu_check_minimum_fitness_wrapper(dim3, dim3, cudaStream_t, double *, double);
-}
+void gpu_dot(cudaStream_t s, double* __restrict__ C, double* __restrict__ B, double* __restrict__ A, size_t N);
+void gpu_get_minimum(cudaStream_t s, double* __restrict__ minimum, double* __restrict__ array, size_t N);
+void gpu_normalize_population(cudaStream_t s, size_t grid_size, double* __restrict__ population, double* __restrict__ normalization, double zeroth_moment, size_t population_size, size_t genome_size);
+void gpu_set_fitness(cudaStream_t s, double* __restrict__ fitness, double* __restrict__ isf, double* __restrict__ isf_model, double* __restrict__ isf_error, size_t number_of_timeslices);
+void gpu_set_fitness_moments_reduced_chi_squared(cudaStream_t s, size_t grid_size, double* __restrict__ fitness, double* __restrict__ moments, double moment, double moment_error, size_t population_size);
+void gpu_set_fitness_moments_chi_squared(cudaStream_t s, size_t grid_size, double* __restrict__ fitness, double* __restrict__ moments, double moment, size_t population_size);
+void gpu_set_fitness_mean(cudaStream_t s, double* __restrict__ fitness_mean, double* __restrict__ fitness, size_t population_size);
+void gpu_set_fitness_squared_mean(cudaStream_t s, double* __restrict__ fitness_squared_mean, double* __restrict__ fitness, size_t population_size);
+void gpu_set_population_new(cudaStream_t s, size_t grid_size, double* __restrict__ population_new, double* __restrict__ population_old, size_t* __restrict__ mutant_indices, double* __restrict__ differential_weights_new, bool* __restrict__ mutate_indices, size_t population_size, size_t genome_size);
+void gpu_match_population_zero(cudaStream_t s, size_t grid_size, double* __restrict__ population_negative_frequency, double* __restrict__ population_positive_frequency, size_t population_size, size_t genome_size);
+void gpu_set_rejection_indices(cudaStream_t s, size_t grid_size, bool* __restrict__ rejection_indices, double* __restrict__ fitness_new, double* __restrict__ fitness_old, size_t population_size);
+void gpu_swap_control_parameters(cudaStream_t s, size_t grid_size, double* __restrict__ control_parameter_old, double* __restrict__ control_parameter_new, bool* __restrict__ rejection_indices, size_t population_size);
+void gpu_swap_populations(cudaStream_t s, size_t grid_size, double* __restrict__ population_old, double* __restrict__ population_new, bool* __restrict__ rejection_indices, size_t population_size, size_t genome_size);
+void gpu_set_crossover_probabilities_new(cudaStream_t s, size_t grid_size, uint64_t* __restrict__ rng_state, double* __restrict__ crossover_probabilities_new, double* __restrict__ crossover_probabilities_old, double self_adapting_crossover_probability, size_t population_size);
+void gpu_set_differential_weights_new(cudaStream_t s, size_t grid_size, uint64_t* __restrict__ rng_state, double* __restrict__ differential_weights_new, double* __restrict__ differential_weights_old, double self_adapting_differential_weight_probability, size_t population_size);
+void gpu_set_mutant_indices(cudaStream_t s, size_t grid_size, uint64_t* __restrict__ rng_state, size_t* __restrict__ mutant_indices, size_t population_size);
+void gpu_set_mutate_indices(cudaStream_t s, size_t grid_size, uint64_t* __restrict__ rng_state, bool* __restrict__ mutate_indices, double* __restrict__ crossover_probabilities, size_t population_size, size_t genome_size);
