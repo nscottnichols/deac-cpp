@@ -25,10 +25,6 @@
     #include "deac_gpu.sycl.h"
 #endif
 
-#ifdef DEAC_DEBUG
-    #include "deac_debug.h"
-#endif
-
 void write_to_logfile(fs::path filename, std::string log_message ) {
     std::ofstream ofs(filename.c_str(), std::ios_base::out | std::ios_base::app );
     ofs << log_message << std::endl;
