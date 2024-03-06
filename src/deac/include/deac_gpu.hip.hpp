@@ -298,6 +298,14 @@ void gpu_get_minimum(double* __restrict__ minimum, double* __restrict__ array, s
          minimum[0] = _c[0];
     }
 }
+
+__global__
+void gpu_normalize_population(double* __restrict__ population, double* __restrict__ normalization, double zeroth_moment, size_t population_size, size_t genome_size) {
+    size_t global_idx = hipBlockDim_x*hipBlockIdx_x + hipThreadIdx_x;
+    if (global_idx < population_size*genome_size) {
+        population[global_idx] *= zeroth_moment/normalization[global_idx/genome_size];
+    }
+}
 __global__
 void gpu_matrix_multiply_MxN_by_Nx1(double * C, double * A, double * B, size_t N, size_t idx) {
     __shared__ double _c[GPU_BLOCK_SIZE];
