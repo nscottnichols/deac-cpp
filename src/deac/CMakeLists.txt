@@ -15,11 +15,6 @@ if(STATIC)
     list(APPEND CMAKE_EXE_LINKER_FLAGS_DEBUG "-static")
 endif()
 
-# Check for <span> flags
-if (USE_TCB_SPAN)
-    add_definitions(-D USE_TCB_SPAN=${USE_TCB_SPAN})
-endif()
-
 # Check for workaround flag
 if(DEFINED USE_SYCL_MATMUL_WA)
     add_definitions(-D SYCL_MATMUL_WA=${USE_SYCL_MATMUL_WA})
