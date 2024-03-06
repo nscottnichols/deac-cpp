@@ -240,38 +240,33 @@ void gpu_reduce_min(double* _c) {
 }
 
 __global__
-void gpu_dot(sycl::queue q, double* __restrict__ C, double* __restrict__ B, double* __restrict__ A, size_t N) {
+void gpu_dot(double* __restrict__ C, double* __restrict__ B, double* __restrict__ A, size_t N) {
     // C = B*A where [B] = 1xN and [A] = Nx1
-    q.submit([&](sycl::handler& cgh) {
-        // Shared Local Memory _c
-        sycl::local_accessor<double, 1> _c(sycl::range<1>(GPU_BLOCK_SIZE), cgh);
-        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
-                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            // Set shared local memory _c
-            size_t local_idx = item.get_local_id(0);
-            if (local_idx < N) {
-                _c[local_idx] = A[local_idx]*B[local_idx];
-            } else {
-                _c[local_idx] = 0.0;
-            }
+    // Shared Local Memory _c
+    __shared__ double _c[GPU_BLOCK_SIZE];
+    // Set shared local memory _c
+    size_t local_idx = hipThreadIdx_x;
+    if (local_idx < N) {
+        _c[local_idx] = A[local_idx]*B[local_idx];
+    } else {
+        _c[local_idx] = 0.0;
+    }
 
-            for (size_t i = 1; i < (N + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
-                size_t j = GPU_BLOCK_SIZE*i + local_idx;
-                if (j < N) {
-                    _c[local_idx] += A[j]*B[j];
-                }
-            }
-            sycl::group_barrier(item.get_group());
+    for (size_t i = 1; i < (N + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
+        size_t j = GPU_BLOCK_SIZE*i + local_idx;
+        if (j < N) {
+            _c[local_idx] += A[j]*B[j];
+        }
+    }
+    __syncthreads();
 
-            // Reduce _c (using shared local memory)
-            gpu_reduce_add(_c.get_pointer(), item);
+    // Reduce _c (using shared local memory)
+    gpu_reduce_add(_c, item);
 
-            //Set C
-            if (local_idx == 0) {
-                 C[0] = _c[0];
-            }
-        });
-    });
+    //Set C
+    if (local_idx == 0) {
+         C[0] = _c[0];
+    }
 }
 
 __global__
