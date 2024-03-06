@@ -498,7 +498,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
         //Set normalization
         #ifdef USE_GPU
-            //FIXME need gpu_dot and gpu_normalize_population kernel launchers (and possibly implementations) for CUDA and HIP (also should take a look at SYCL version)
             size_t grid_size_set_normalization = (genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
             GPU_ASSERT(deac_memset(d_normalization, 0, bytes_normalization, default_stream));
             GPU_ASSERT(deac_wait(default_stream));
@@ -580,27 +579,34 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             }
             #ifndef ZEROT
                 #ifdef USE_HYPERBOLIC_MODEL
-                    first_moments_term_positive_frequency[j] = df*f*sinh(0.5*beta*f); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
-                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                        first_moments_term_negative_frequency[j] = df*f; //FIXME need to calculate new value
+                    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        first_moments_term_positive_frequency[j] = df*f*sinh(0.5*beta*f);
+                    #else
+                        first_moments_term_positive_frequency[j] = 0.5*f*df/exp(-0.5*beta*f);
+                        first_moments_term_negative_frequency[j] = -0.5*f*df*exp(-0.5*beta*f);
                     #endif
                 #endif
                 #ifdef USE_STANDARD_MODEL
-                    first_moments_term_positive_frequency[j] = df*f*(1.0 - exp(-beta*f)); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
-                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                        first_moments_term_negative_frequency[j] = df*f; //FIXME need to calculate new value
+                    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        first_moments_term_positive_frequency[j] = df*f*(1.0 - exp(-beta*f));
+                    #else
+                        first_moments_term_positive_frequency[j] = df*f;
+                        first_moments_term_negative_frequency[j] = -df*f;
                     #endif
                 #endif
                 #ifdef USE_NORMALIZATION_MODEL
-                    first_moments_term_positive_frequency[j] = df*f*tanh(0.5*beta*f); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
-                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                        first_moments_term_negative_frequency[j] = df*f; //FIXME need to calculate new value
+                    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        first_moments_term_positive_frequency[j] = df*f*tanh(0.5*beta*f);
+                    #else
+                        first_moments_term_positive_frequency[j] = df*f(1.0/(1.0 + exp(-beta*f)));
+                        double e_to_bf = exp(-beta*f) // exp(beta*f) for negative f
+                        first_moments_term_negative_frequency[j] = -df*f*(e_to_bf/(1.0 + e_to_bf));
                     #endif
                 #endif
             #else
-                first_moments_term_positive_frequency[j] = df*f; //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                first_moments_term_positive_frequency[j] = df*f;
                 #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                    first_moments_term_negative_frequency[j] = df*f; //FIXME need to calculate new value
+                    first_moments_term_negative_frequency[j] = -df*f;
                 #endif
             #endif
         }
