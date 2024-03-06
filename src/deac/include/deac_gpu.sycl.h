@@ -464,7 +464,7 @@ void gpu_set_population_new(sycl::queue q, size_t grid_size, double* __restrict_
                     #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
                         population_new[global_idx] = population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]);
                     #else
-                        population_new[global_idx] = sycl::fabs( population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]) );
+                        population_new[global_idx] = sycl::fabs(population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]));
                     #endif
                 } else {
                     population_new[global_idx] = population_old[global_idx];

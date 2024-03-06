@@ -313,7 +313,8 @@ void gpu_set_fitness(double* __restrict__ fitness, double* __restrict__ isf, dou
     // Set shared local memory _f
     size_t local_idx = hipThreadIdx_x;
     if (local_idx < number_of_timeslices) {
-        _f[local_idx] = sycl::pown((isf[local_idx] - isf_model[local_idx])/isf_error[local_idx], 2);
+        double __f = (isf[local_idx] - isf_model[local_idx])/isf_error[local_idx];
+        _f[local_idx] = __f*__f;
     } else {
         _f[local_idx] = 0.0;
     }
@@ -321,7 +322,8 @@ void gpu_set_fitness(double* __restrict__ fitness, double* __restrict__ isf, dou
     for (size_t i = 1; i < (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
         size_t j = GPU_BLOCK_SIZE*i + local_idx;
         if (j < number_of_timeslices) {
-            _f[local_idx] += sycl::pown((isf[j] - isf_model[j])/isf_error[j], 2);
+            double __f = (isf[j] - isf_model[j])/isf_error[j];
+            _f[local_idx] += __f*__f;
         }
     }
     __syncthreads();
@@ -339,7 +341,8 @@ __global__
 void gpu_set_fitness_moments_reduced_chi_squared(double* __restrict__ fitness, double* __restrict__ moments, double moment, double moment_error, size_t population_size) {
     size_t global_idx = hipBlockDim_x*hipBlockIdx_x + hipThreadIdx_x;
     if (global_idx < population_size) {
-        fitness[global_idx] += sycl::pown((moment - moments[global_idx])/moment_error, 2);
+        double __f = (moment - moments[global_idx])/moment_error;
+        fitness[global_idx] += __f*__f;
     }
 }
 
@@ -347,7 +350,8 @@ __global__
 void gpu_set_fitness_moments_chi_squared(double* __restrict__ fitness, double* __restrict__ moments, double moment, size_t population_size) {
     size_t global_idx = hipBlockDim_x*hipBlockIdx_x + hipThreadIdx_x;
     if (global_idx < population_size) {
-        fitness[global_idx] += sycl::pown(moment - moments[global_idx], 2);
+        double __f = moment - moments[global_idx];
+        fitness[global_idx] += __f*__f;
     }
 }
 
@@ -422,7 +426,7 @@ void gpu_set_population_new(double* __restrict__ population_new, double* __restr
             #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
                 population_new[global_idx] = population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]);
             #else
-                population_new[global_idx] = sycl::fabs( population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]) );
+                population_new[global_idx] = fabs(population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]));
             #endif
         } else {
             population_new[global_idx] = population_old[global_idx];
@@ -483,6 +487,55 @@ void gpu_set_crossover_probabilities_new(uint64_t* __restrict__ rng_state, doubl
         }
     }
 }
+
+__global__
+void gpu_set_differential_weights_new(uint64_t* __restrict__ rng_state, double* __restrict__ differential_weights_new, double* __restrict__ differential_weights_old, double self_adapting_differential_weight_probability, size_t population_size) {
+    size_t global_idx = hipBlockDim_x*hipBlockIdx_x + hipThreadIdx_x;
+    if (global_idx < population_size) {
+        if ((gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53 < self_adapting_differential_weight_probability) {
+            differential_weights_new[global_idx] = 2.0*((gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53);
+        } else {
+            differential_weights_new[global_idx] = differential_weights_old[global_idx];
+        }
+    }
+}
+
+__device__
+void gpu_set_mutant_indices(uint64_t* __restrict__ rng_state, size_t* __restrict__ mutant_indices, size_t mutant_index0, size_t length) {
+    mutant_indices[0] = mutant_index0;
+    mutant_indices[1] = mutant_index0;
+    mutant_indices[2] = mutant_index0;
+    while (mutant_indices[0] == mutant_index0) {
+        mutant_indices[0] = gpu_xoshiro256p_next(rng_state) % length;
+    }
+
+    while ((mutant_indices[1] == mutant_index0) || (mutant_indices[1] == mutant_indices[0])) {
+        mutant_indices[1] = gpu_xoshiro256p_next(rng_state) % length;
+    }
+
+    while ((mutant_indices[2] == mutant_index0) || (mutant_indices[2] == mutant_indices[0])
+            || (mutant_indices[2] == mutant_indices[1])) {
+        mutant_indices[2] = gpu_xoshiro256p_next(rng_state) % length;
+    }
+}
+
+__global__
+void gpu_set_mutant_indices(uint64_t* __restrict__ rng_state, size_t* __restrict__ mutant_indices, size_t population_size) {
+    size_t global_idx = hipBlockDim_x*hipBlockIdx_x + hipThreadIdx_x;
+    if (global_idx < population_size) {
+        gpu_set_mutant_indices(rng_state + 4*global_idx, mutant_indices + 3*global_idx, global_idx, population_size);
+    }
+}
+
+__global__
+void gpu_set_mutate_indices(uint64_t* __restrict__ rng_state, bool* __restrict__ mutate_indices, double* __restrict__ crossover_probabilities, size_t population_size, size_t genome_size) {
+    size_t global_idx = hipBlockDim_x*hipBlockIdx_x + hipThreadIdx_x;
+    if (global_idx < population_size*genome_size) {
+        size_t _i = global_idx/genome_size;
+        mutate_indices[global_idx] = (gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53 < crossover_probabilities[_i];
+    }
+}
+
 __global__
 void gpu_matrix_multiply_MxN_by_Nx1(double * C, double * A, double * B, size_t N, size_t idx) {
     __shared__ double _c[GPU_BLOCK_SIZE];
@@ -980,21 +1033,106 @@ void gpu_check_minimum_fitness(double * minimum_fitness, double stop_minimum_fit
 }
 
 // Kernel Launcher
-void gpu_dot(sycl::queue q, double* __restrict__ C, double* __restrict__ B, double* __restrict__ A, size_t N) {
-void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __restrict__ array, size_t N) {
-void gpu_normalize_population(sycl::queue q, size_t grid_size, double* __restrict__ population, double* __restrict__ normalization, double zeroth_moment, size_t population_size, size_t genome_size) {
-void gpu_set_fitness(sycl::queue q, double* __restrict__ fitness, double* __restrict__ isf, double* __restrict__ isf_model, double* __restrict__ isf_error, size_t number_of_timeslices) {
-void gpu_set_fitness_moments_reduced_chi_squared(sycl::queue q, size_t grid_size, double* __restrict__ fitness, double* __restrict__ moments, double moment, double moment_error, size_t population_size) {
-void gpu_set_fitness_moments_chi_squared(sycl::queue q, size_t grid_size, double* __restrict__ fitness, double* __restrict__ moments, double moment, size_t population_size) {
-void gpu_set_fitness_mean(sycl::queue q, double* __restrict__ fitness_mean, double* __restrict__ fitness, size_t population_size) {
-void gpu_set_fitness_squared_mean(sycl::queue q, double* __restrict__ fitness_squared_mean, double* __restrict__ fitness, size_t population_size) {
-void gpu_set_population_new(sycl::queue q, size_t grid_size, double* __restrict__ population_new, double* __restrict__ population_old, size_t* __restrict__ mutant_indices, double* __restrict__ differential_weights_new, bool* __restrict__ mutate_indices, size_t population_size, size_t genome_size) {
-void gpu_match_population_zero(sycl::queue q, size_t grid_size, double* __restrict__ population_negative_frequency, double* __restrict__ population_positive_frequency, size_t population_size, size_t genome_size) {
-void gpu_set_rejection_indices(sycl::queue q, size_t grid_size, bool* __restrict__ rejection_indices, double* __restrict__ fitness_new, double* __restrict__ fitness_old, size_t population_size) {
-void gpu_swap_control_parameters(sycl::queue q, size_t grid_size, double* __restrict__ control_parameter_old, double* __restrict__ control_parameter_new, bool* __restrict__ rejection_indices, size_t population_size) {
-void gpu_swap_populations(sycl::queue q, size_t grid_size, double* __restrict__ population_old, double* __restrict__ population_new, bool* __restrict__ rejection_indices, size_t population_size, size_t genome_size) {
-void gpu_set_crossover_probabilities_new(sycl::queue q, size_t grid_size, uint64_t* __restrict__ rng_state, double* __restrict__ crossover_probabilities_new, double* __restrict__ crossover_probabilities_old, double self_adapting_crossover_probability, size_t population_size) {
-void gpu_set_differential_weights_new(sycl::queue q, size_t grid_size, uint64_t* __restrict__ rng_state, double* __restrict__ differential_weights_new, double* __restrict__ differential_weights_old, double self_adapting_differential_weight_probability, size_t population_size) {
-void gpu_set_mutant_indices(sycl::queue q, size_t grid_size, uint64_t* __restrict__ rng_state, size_t* __restrict__ mutant_indices, size_t population_size) {
-void gpu_set_mutate_indices(sycl::queue q, size_t grid_size, uint64_t* __restrict__ rng_state, bool* __restrict__ mutate_indices, double* __restrict__ crossover_probabilities, size_t population_size, size_t genome_size) {
+void gpu_dot(hipStream_t s, double* __restrict__ C, double* __restrict__ B, double* __restrict__ A, size_t N) {
+    hipLaunchKernelGGL(gpu_dot,
+            dim3(1), dim3(GPU_BLOCK_SIZE), 0, s,
+            C, B, A, N);
+}
+
+void gpu_get_minimum(hipStream_t s, double* __restrict__ minimum, double* __restrict__ array, size_t N) {
+    hipLaunchKernelGGL(gpu_get_minimum,
+            dim3(1), dim3(GPU_BLOCK_SIZE), 0, s,
+            minimum, array, N);
+}
+
+void gpu_normalize_population(hipStream_t s, size_t grid_size, double* __restrict__ population, double* __restrict__ normalization, double zeroth_moment, size_t population_size, size_t genome_size) {
+    hipLaunchKernelGGL(gpu_normalize_population,
+            dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s,
+            population, normalization, zeroth_moment, population_size, genome_size);
+}
+
+void gpu_set_fitness(hipStream_t s, double* __restrict__ fitness, double* __restrict__ isf, double* __restrict__ isf_model, double* __restrict__ isf_error, size_t number_of_timeslices) {
+    hipLaunchKernelGGL(gpu_set_fitness,
+            dim3(1), dim3(GPU_BLOCK_SIZE), 0, s,
+            fitness, isf, isf_model, isf_error, number_of_timeslices);
+}
+
+void gpu_set_fitness_moments_reduced_chi_squared(hipStream_t s, size_t grid_size, double* __restrict__ fitness, double* __restrict__ moments, double moment, double moment_error, size_t population_size) {
+    hipLaunchKernelGGL(gpu_set_fitness_moments_reduced_chi_squared,
+            dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s,
+            fitness, moments, moment, moment_error, population_size);
+}
+
+void gpu_set_fitness_moments_chi_squared(hipStream_t s, size_t grid_size, double* __restrict__ fitness, double* __restrict__ moments, double moment, size_t population_size) {
+    hipLaunchKernelGGL(gpu_set_fitness_moments_chi_squared,
+            dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s,
+            fitness, moments, moment, population_size);
+}
+
+void gpu_set_fitness_mean(hipStream_t s, double* __restrict__ fitness_mean, double* __restrict__ fitness, size_t population_size) {
+    hipLaunchKernelGGL(gpu_set_fitness_mean,
+            dim3(1), dim3(GPU_BLOCK_SIZE), 0, s,
+            fitness_mean, fitness, population_size);
+}
+
+void gpu_set_fitness_squared_mean(hipStream_t s, double* __restrict__ fitness_squared_mean, double* __restrict__ fitness, size_t population_size) {
+    hipLaunchKernelGGL(gpu_set_fitness_squared_mean,
+            dim3(1), dim3(GPU_BLOCK_SIZE), 0, s,
+            fitness_squared_mean, fitness, population_size);
+}
+
+void gpu_set_population_new(hipStream_t s, size_t grid_size, double* __restrict__ population_new, double* __restrict__ population_old, size_t* __restrict__ mutant_indices, double* __restrict__ differential_weights_new, bool* __restrict__ mutate_indices, size_t population_size, size_t genome_size) {
+    hipLaunchKernelGGL(gpu_set_population_new,
+            dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s,
+            population_new, population_old, mutant_indices, differential_weights_new, mutate_indices, population_size, genome_size);
+}
+
+void gpu_match_population_zero(hipStream_t s, size_t grid_size, double* __restrict__ population_negative_frequency, double* __restrict__ population_positive_frequency, size_t population_size, size_t genome_size) {
+    hipLaunchKernelGGL(gpu_match_population_zero,
+            dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s,
+            population_negative_frequency, population_positive_frequency, population_size, genome_size);
+}
+
+void gpu_set_rejection_indices(hipStream_t s, size_t grid_size, bool* __restrict__ rejection_indices, double* __restrict__ fitness_new, double* __restrict__ fitness_old, size_t population_size) {
+    hipLaunchKernelGGL(gpu_set_rejection_indices,
+            dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s,
+            rejection_indices, fitness_new, fitness_old, population_size);
+}
+
+void gpu_swap_control_parameters(hipStream_t s, size_t grid_size, double* __restrict__ control_parameter_old, double* __restrict__ control_parameter_new, bool* __restrict__ rejection_indices, size_t population_size) {
+    hipLaunchKernelGGL(gpu_swap_control_parameters,
+            dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s,
+            control_parameter_old, control_parameter_new, rejection_indices, population_size);
+}
+
+void gpu_swap_populations(hipStream_t s, size_t grid_size, double* __restrict__ population_old, double* __restrict__ population_new, bool* __restrict__ rejection_indices, size_t population_size, size_t genome_size) {
+    hipLaunchKernelGGL(gpu_swap_populations,
+            dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s,
+            population_old, population_new, rejection_indices, population_size, genome_size);
+}
+
+void gpu_set_crossover_probabilities_new(hipStream_t s, size_t grid_size, uint64_t* __restrict__ rng_state, double* __restrict__ crossover_probabilities_new, double* __restrict__ crossover_probabilities_old, double self_adapting_crossover_probability, size_t population_size) {
+    hipLaunchKernelGGL(gpu_set_crossover_probabilities_new,
+            dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s,
+            rng_state, crossover_probabilities_new, crossover_probabilities_old, self_adapting_crossover_probability, population_size);
+}
+
+void gpu_set_differential_weights_new(hipStream_t s, size_t grid_size, uint64_t* __restrict__ rng_state, double* __restrict__ differential_weights_new, double* __restrict__ differential_weights_old, double self_adapting_differential_weight_probability, size_t population_size) {
+    hipLaunchKernelGGL(gpu_set_differential_weights_new,
+            dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s,
+            rng_state, differential_weights_new, differential_weights_old, self_adapting_differential_weight_probability, population_size);
+}
+
+void gpu_set_mutant_indices(hipStream_t s, size_t grid_size, uint64_t* __restrict__ rng_state, size_t* __restrict__ mutant_indices, size_t population_size) {
+    hipLaunchKernelGGL(gpu_set_mutant_indices,
+            dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s,
+            rng_state, mutant_indices, population_size);
+}
+
+void gpu_set_mutate_indices(hipStream_t s, size_t grid_size, uint64_t* __restrict__ rng_state, bool* __restrict__ mutate_indices, double* __restrict__ crossover_probabilities, size_t population_size, size_t genome_size) {
+    hipLaunchKernelGGL(gpu_set_mutate_indices,
+            dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s,
+            rng_state, mutate_indices, crossover_probabilities, population_size, genome_size);
+}
+
 #endif
