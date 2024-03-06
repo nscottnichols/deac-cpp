@@ -22,16 +22,6 @@
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 
-#ifdef DEAC_DEBUG
-    __global__
-    void gpu_check_array(double * _array, size_t length) {
-        size_t i = hipBlockDim_x * hipBlockIdx_x + hipThreadIdx_x;
-        if (i < length) {
-            prsize_tf("_array[%d]: %e\n", i, _array[i]);
-        }
-    }
-#endif
-
 __device__
 uint64_t gpu_rol64(uint64_t x, uint64_t k) {
     return (x << k) | (x >> (64 - k));
@@ -53,25 +43,235 @@ uint64_t gpu_xoshiro256p_next(uint64_t * s) {
     return result;
 }
 
-// GPU Kernel for reduction using warp (uses appropriate warp for NVIDIA vs AMD devices i. e. "portable wave aware code")
-__device__ void warp_reduce(volatile double *sdata, size_t thread_idx) {
-    if (warpSize == 64) { if (GPU_BLOCK_SIZE >= 128) sdata[thread_idx] += sdata[thread_idx + 64]; }
-    if (GPU_BLOCK_SIZE >= 64) sdata[thread_idx] += sdata[thread_idx + 32];
-    if (GPU_BLOCK_SIZE >= 32) sdata[thread_idx] += sdata[thread_idx + 16];
-    if (GPU_BLOCK_SIZE >= 16) sdata[thread_idx] += sdata[thread_idx + 8];
-    if (GPU_BLOCK_SIZE >= 8) sdata[thread_idx] += sdata[thread_idx + 4];
-    if (GPU_BLOCK_SIZE >= 4) sdata[thread_idx] += sdata[thread_idx + 2];
-    if (GPU_BLOCK_SIZE >= 2) sdata[thread_idx] += sdata[thread_idx + 1];
+__device__
+void sub_group_reduce_add(volatile double* _c, size_t local_idx) {
+    #if (SUB_GROUP_SIZE >= 64)
+        _c[local_idx] += _c[local_idx + 64];
+    #endif
+    #if (SUB_GROUP_SIZE >= 32)
+        _c[local_idx] += _c[local_idx + 32];
+    #endif
+    #if (SUB_GROUP_SIZE >= 16)
+        _c[local_idx] += _c[local_idx + 16];
+    #endif
+    #if (SUB_GROUP_SIZE >= 8)
+        _c[local_idx] += _c[local_idx + 8];
+    #endif
+    #if (SUB_GROUP_SIZE >= 4)
+        _c[local_idx] += _c[local_idx + 4];
+    #endif
+    #if (SUB_GROUP_SIZE >= 2)
+        _c[local_idx] += _c[local_idx + 2];
+    #endif
+    #if (SUB_GROUP_SIZE >= 1)
+        _c[local_idx] += _c[local_idx + 1];
+    #endif
 }
 
-__device__ void warp_reduce_min(volatile double *sdata, size_t thread_idx) {
-    if (warpSize == 64) { if (GPU_BLOCK_SIZE >= 128) sdata[thread_idx] = sdata[thread_idx + 64] < sdata[thread_idx] ? sdata[thread_idx + 64] : sdata[thread_idx]; }
-    if (GPU_BLOCK_SIZE >= 64) sdata[thread_idx] = sdata[thread_idx + 32] < sdata[thread_idx] ? sdata[thread_idx + 32] : sdata[thread_idx];
-    if (GPU_BLOCK_SIZE >= 32) sdata[thread_idx] = sdata[thread_idx + 16] < sdata[thread_idx] ? sdata[thread_idx + 16] : sdata[thread_idx];
-    if (GPU_BLOCK_SIZE >= 16) sdata[thread_idx] = sdata[thread_idx + 8] < sdata[thread_idx] ? sdata[thread_idx + 8] : sdata[thread_idx];
-    if (GPU_BLOCK_SIZE >= 8) sdata[thread_idx] = sdata[thread_idx + 4] < sdata[thread_idx] ? sdata[thread_idx + 4] : sdata[thread_idx];
-    if (GPU_BLOCK_SIZE >= 4) sdata[thread_idx] = sdata[thread_idx + 2] < sdata[thread_idx] ? sdata[thread_idx + 2] : sdata[thread_idx];
-    if (GPU_BLOCK_SIZE >= 2) sdata[thread_idx] = sdata[thread_idx + 1] < sdata[thread_idx] ? sdata[thread_idx + 1] : sdata[thread_idx];
+__device__
+void gpu_reduce_add(double* _c) {
+    size_t local_idx = hipThreadIdx_x;
+    #if (GPU_BLOCK_SIZE >= 1024) && (SUB_GROUP_SIZE < 512)
+        if (local_idx < 512) {
+            _c[local_idx] += _c[local_idx + 512];
+        }
+        __syncthreads();
+    #endif
+
+    #if (GPU_BLOCK_SIZE >= 512) && (SUB_GROUP_SIZE < 256)
+        if (local_idx < 256) {
+            _c[local_idx] += _c[local_idx + 256];
+        }
+        __syncthreads();
+    #endif
+
+    #if (GPU_BLOCK_SIZE >= 256) && (SUB_GROUP_SIZE < 128)
+        if (local_idx < 128) {
+            _c[local_idx] += _c[local_idx + 128];
+        }
+        __syncthreads();
+    #endif
+
+    #if (GPU_BLOCK_SIZE >= 128) && (SUB_GROUP_SIZE < 64)
+        if (local_idx < 64) {
+            _c[local_idx] += _c[local_idx + 64];
+        }
+        __syncthreads();
+    #endif
+
+    #if (GPU_BLOCK_SIZE >= 64) && (SUB_GROUP_SIZE < 32)
+        if (local_idx < 32) {
+            _c[local_idx] += _c[local_idx + 32];
+        }
+        __syncthreads();
+    #endif
+
+    #if (GPU_BLOCK_SIZE >= 32) && (SUB_GROUP_SIZE < 16)
+        if (local_idx < 16) {
+            _c[local_idx] += _c[local_idx + 16];
+        }
+        __syncthreads();
+    #endif
+
+    #if (GPU_BLOCK_SIZE >= 16) && (SUB_GROUP_SIZE < 8)
+        if (local_idx < 8) {
+            _c[local_idx] += _c[local_idx + 8];
+        }
+        __syncthreads();
+    #endif
+
+    #if (GPU_BLOCK_SIZE >= 8) && (SUB_GROUP_SIZE < 4)
+        if (local_idx < 4) {
+            _c[local_idx] += _c[local_idx + 4];
+        }
+        __syncthreads();
+    #endif
+
+    #if (GPU_BLOCK_SIZE >= 4) && (SUB_GROUP_SIZE < 2)
+        if (local_idx < 2) {
+            _c[local_idx] += _c[local_idx + 2];
+        }
+        __syncthreads();
+    #endif
+
+    //Sub-group reduce
+    if (local_idx < SUB_GROUP_SIZE) {
+        sub_group_reduce_add(_c, local_idx);
+    }
+    __syncthreads();
+}
+
+__device__
+void sub_group_reduce_min(volatile double* _c, size_t local_idx) {
+    #if (SUB_GROUP_SIZE >= 64)
+        _c[local_idx] = _c[local_idx + 64] < _c[local_idx] ? _c[local_idx + 64] : _c[local_idx];
+    #endif
+    #if (SUB_GROUP_SIZE >= 32)
+        _c[local_idx] = _c[local_idx + 32] < _c[local_idx] ? _c[local_idx + 32] : _c[local_idx];
+    #endif
+    #if (SUB_GROUP_SIZE >= 16)
+        _c[local_idx] = _c[local_idx + 16] < _c[local_idx] ? _c[local_idx + 16] : _c[local_idx];
+    #endif
+    #if (SUB_GROUP_SIZE >= 8)
+        _c[local_idx] = _c[local_idx + 8] < _c[local_idx] ? _c[local_idx + 8] : _c[local_idx];
+    #endif
+    #if (SUB_GROUP_SIZE >= 4)
+        _c[local_idx] = _c[local_idx + 4] < _c[local_idx] ? _c[local_idx + 4] : _c[local_idx];
+    #endif
+    #if (SUB_GROUP_SIZE >= 2)
+        _c[local_idx] = _c[local_idx + 2] < _c[local_idx] ? _c[local_idx + 2] : _c[local_idx];
+    #endif
+    #if (SUB_GROUP_SIZE >= 1)
+        _c[local_idx] = _c[local_idx + 1] < _c[local_idx] ? _c[local_idx + 1] : _c[local_idx];
+    #endif
+}
+
+__device__
+void gpu_reduce_min(double* _c) {
+    size_t local_idx = hipThreadIdx_x;
+    #if (GPU_BLOCK_SIZE >= 1024) && (SUB_GROUP_SIZE < 512)
+        if (local_idx < 512) {
+            _c[local_idx] = _c[local_idx + 512] < _c[local_idx] ? _c[local_idx + 512] : _c[local_idx];
+        }
+        __syncthreads();
+    #endif
+
+    #if (GPU_BLOCK_SIZE >= 512) && (SUB_GROUP_SIZE < 256)
+        if (local_idx < 256) {
+            _c[local_idx] = _c[local_idx + 256] < _c[local_idx] ? _c[local_idx + 256] : _c[local_idx];
+        }
+        __syncthreads();
+    #endif
+
+    #if (GPU_BLOCK_SIZE >= 256) && (SUB_GROUP_SIZE < 128)
+        if (local_idx < 128) {
+            _c[local_idx] = _c[local_idx + 128] < _c[local_idx] ? _c[local_idx + 128] : _c[local_idx];
+        }
+        __syncthreads();
+    #endif
+
+    #if (GPU_BLOCK_SIZE >= 128) && (SUB_GROUP_SIZE < 64)
+        if (local_idx < 64) {
+            _c[local_idx] = _c[local_idx + 64] < _c[local_idx] ? _c[local_idx + 64] : _c[local_idx];
+        }
+        __syncthreads();
+    #endif
+
+    #if (GPU_BLOCK_SIZE >= 64) && (SUB_GROUP_SIZE < 32)
+        if (local_idx < 32) {
+            _c[local_idx] = _c[local_idx + 32] < _c[local_idx] ? _c[local_idx + 32] : _c[local_idx];
+        }
+        __syncthreads();
+    #endif
+
+    #if (GPU_BLOCK_SIZE >= 32) && (SUB_GROUP_SIZE < 16)
+        if (local_idx < 16) {
+            _c[local_idx] = _c[local_idx + 16] < _c[local_idx] ? _c[local_idx + 16] : _c[local_idx];
+        }
+        __syncthreads();
+    #endif
+
+    #if (GPU_BLOCK_SIZE >= 16) && (SUB_GROUP_SIZE < 8)
+        if (local_idx < 8) {
+            _c[local_idx] = _c[local_idx + 8] < _c[local_idx] ? _c[local_idx + 8] : _c[local_idx];
+        }
+        __syncthreads();
+    #endif
+
+    #if (GPU_BLOCK_SIZE >= 8) && (SUB_GROUP_SIZE < 4)
+        if (local_idx < 4) {
+            _c[local_idx] = _c[local_idx + 4] < _c[local_idx] ? _c[local_idx + 4] : _c[local_idx];
+        }
+        __syncthreads();
+    #endif
+
+    #if (GPU_BLOCK_SIZE >= 4) && (SUB_GROUP_SIZE < 2)
+        if (local_idx < 2) {
+            _c[local_idx] = _c[local_idx + 2] < _c[local_idx] ? _c[local_idx + 2] : _c[local_idx];
+        }
+        __syncthreads();
+    #endif
+
+    //Sub-group reduce
+    if (local_idx < SUB_GROUP_SIZE) {
+        sub_group_reduce_min(_c, local_idx);
+    }
+    __syncthreads();
+}
+
+__global__
+void gpu_dot(sycl::queue q, double* __restrict__ C, double* __restrict__ B, double* __restrict__ A, size_t N) {
+    // C = B*A where [B] = 1xN and [A] = Nx1
+    q.submit([&](sycl::handler& cgh) {
+        // Shared Local Memory _c
+        sycl::local_accessor<double, 1> _c(sycl::range<1>(GPU_BLOCK_SIZE), cgh);
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            // Set shared local memory _c
+            size_t local_idx = item.get_local_id(0);
+            if (local_idx < N) {
+                _c[local_idx] = A[local_idx]*B[local_idx];
+            } else {
+                _c[local_idx] = 0.0;
+            }
+
+            for (size_t i = 1; i < (N + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
+                size_t j = GPU_BLOCK_SIZE*i + local_idx;
+                if (j < N) {
+                    _c[local_idx] += A[j]*B[j];
+                }
+            }
+            sycl::group_barrier(item.get_group());
+
+            // Reduce _c (using shared local memory)
+            gpu_reduce_add(_c.get_pointer(), item);
+
+            //Set C
+            if (local_idx == 0) {
+                 C[0] = _c[0];
+            }
+        });
+    });
 }
 
 __global__
@@ -570,4 +770,22 @@ void gpu_check_minimum_fitness(double * minimum_fitness, double stop_minimum_fit
     assert(*minimum_fitness >= stop_minimum_fitness);
 }
 
+// Kernel Launcher
+void gpu_dot(sycl::queue q, double* __restrict__ C, double* __restrict__ B, double* __restrict__ A, size_t N) {
+void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __restrict__ array, size_t N) {
+void gpu_normalize_population(sycl::queue q, size_t grid_size, double* __restrict__ population, double* __restrict__ normalization, double zeroth_moment, size_t population_size, size_t genome_size) {
+void gpu_set_fitness(sycl::queue q, double* __restrict__ fitness, double* __restrict__ isf, double* __restrict__ isf_model, double* __restrict__ isf_error, size_t number_of_timeslices) {
+void gpu_set_fitness_moments_reduced_chi_squared(sycl::queue q, size_t grid_size, double* __restrict__ fitness, double* __restrict__ moments, double moment, double moment_error, size_t population_size) {
+void gpu_set_fitness_moments_chi_squared(sycl::queue q, size_t grid_size, double* __restrict__ fitness, double* __restrict__ moments, double moment, size_t population_size) {
+void gpu_set_fitness_mean(sycl::queue q, double* __restrict__ fitness_mean, double* __restrict__ fitness, size_t population_size) {
+void gpu_set_fitness_squared_mean(sycl::queue q, double* __restrict__ fitness_squared_mean, double* __restrict__ fitness, size_t population_size) {
+void gpu_set_population_new(sycl::queue q, size_t grid_size, double* __restrict__ population_new, double* __restrict__ population_old, size_t* __restrict__ mutant_indices, double* __restrict__ differential_weights_new, bool* __restrict__ mutate_indices, size_t population_size, size_t genome_size) {
+void gpu_match_population_zero(sycl::queue q, size_t grid_size, double* __restrict__ population_negative_frequency, double* __restrict__ population_positive_frequency, size_t population_size, size_t genome_size) {
+void gpu_set_rejection_indices(sycl::queue q, size_t grid_size, bool* __restrict__ rejection_indices, double* __restrict__ fitness_new, double* __restrict__ fitness_old, size_t population_size) {
+void gpu_swap_control_parameters(sycl::queue q, size_t grid_size, double* __restrict__ control_parameter_old, double* __restrict__ control_parameter_new, bool* __restrict__ rejection_indices, size_t population_size) {
+void gpu_swap_populations(sycl::queue q, size_t grid_size, double* __restrict__ population_old, double* __restrict__ population_new, bool* __restrict__ rejection_indices, size_t population_size, size_t genome_size) {
+void gpu_set_crossover_probabilities_new(sycl::queue q, size_t grid_size, uint64_t* __restrict__ rng_state, double* __restrict__ crossover_probabilities_new, double* __restrict__ crossover_probabilities_old, double self_adapting_crossover_probability, size_t population_size) {
+void gpu_set_differential_weights_new(sycl::queue q, size_t grid_size, uint64_t* __restrict__ rng_state, double* __restrict__ differential_weights_new, double* __restrict__ differential_weights_old, double self_adapting_differential_weight_probability, size_t population_size) {
+void gpu_set_mutant_indices(sycl::queue q, size_t grid_size, uint64_t* __restrict__ rng_state, size_t* __restrict__ mutant_indices, size_t population_size) {
+void gpu_set_mutate_indices(sycl::queue q, size_t grid_size, uint64_t* __restrict__ rng_state, bool* __restrict__ mutate_indices, double* __restrict__ crossover_probabilities, size_t population_size, size_t genome_size) {
 #endif
