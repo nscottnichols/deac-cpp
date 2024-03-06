@@ -380,6 +380,33 @@ void gpu_set_fitness_mean(double* __restrict__ fitness_mean, double* __restrict_
 }
 
 __global__
+void gpu_set_fitness_squared_mean(double* __restrict__ fitness_squared_mean, double* __restrict__ fitness, size_t population_size) {
+    __shared__ double _fsm[GPU_BLOCK_SIZE];
+    // Set shared local memory _fsm
+    size_t local_idx = hipThreadIdx_x;
+    if (local_idx < population_size) {
+        _fsm[local_idx] = fitness[local_idx]*fitness[local_idx];
+    } else {
+        _fsm[local_idx] = 0.0;
+    }
+
+    for (size_t i = 1; i < (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
+        size_t j = GPU_BLOCK_SIZE*i + local_idx;
+        if (j < population_size) {
+            _fsm[local_idx] += fitness[j]*fitness[j];
+        }
+    }
+    __syncthreads();
+    
+    // Reduce _fsm (using shared local memory)
+    gpu_reduce_add(_fsm);
+
+    //Set fitness_squared_mean
+    if (local_idx == 0) {
+         fitness_squared_mean[0] += _fsm[0]/population_size;
+    }
+}
+__global__
 void gpu_matrix_multiply_MxN_by_Nx1(double * C, double * A, double * B, size_t N, size_t idx) {
     __shared__ double _c[GPU_BLOCK_SIZE];
     size_t _j = hipBlockDim_x * hipBlockIdx_x + hipThreadIdx_x;
