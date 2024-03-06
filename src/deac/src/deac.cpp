@@ -891,7 +891,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 GPU_ASSERT(deac_wait(default_stream));
             }
         #else
-            //FIXME inverse first moment not implemented for single particle fermionic spectral function
+            //FIXME inverse first moment not implemented
         #endif
         if (use_first_moment) {
             gpu_set_fitness_moments_chi_squared(default_stream, grid_size_set_fitness_moments, d_fitness_old, d_first_moments, first_moment, population_size);
@@ -1474,7 +1474,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                         _fitness += pow((negative_first_moment - negative_first_moments[i])/negative_first_moment_error,2);
                     }
                 #else
-                    //FIXME inverse first moment not implemented for single particle fermionic spectral function
+                    //FIXME inverse first moment not implemented
                 #endif
                 if (use_first_moment) {
                     _fitness += pow(first_moments[i] - first_moment,2)/first_moment;
@@ -1542,16 +1542,23 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
             best_frequency[idx_n] = -f;
         #endif
+
+        double spectra_factor = 1.0; // FIXME FIXME FIXME set spectra_factor based on spectra_type
+
         #ifndef ZEROT
             #ifdef USE_HYPERBOLIC_MODEL
-                best_dsf[idx_p] = 0.5*population_old_positive_frequency[genome_size*minimum_fitness_idx + i]*exp(0.5*beta*f); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
-                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                     best_dsf[idx_n] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i]; //FIXME need to calculate new value
+                #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                     best_dsf[idx_p] = 0.5*population_old_positive_frequency[genome_size*minimum_fitness_idx + i]*exp(0.5*beta*f);
+                #else
+                     best_dsf[idx_p] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i]*(1.0 + exp(-beta*f)); //FIXME this is wrong
+                     best_dsf[idx_n] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i]*(1.0 + exp(beta*f)); //FIXME this is wrong
                 #endif
             #endif
             #ifdef USE_STANDARD_MODEL
-                best_dsf[idx_p] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i]; //FIXME this might be wrong when not using bosonic detailed balance condition for isf
-                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    best_dsf[idx_p] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i];
+                #else
+                    best_dsf[idx_p] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i]; //FIXME need to calculate new value
                     best_dsf[idx_n] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i]; //FIXME need to calculate new value
                 #endif
             #endif
