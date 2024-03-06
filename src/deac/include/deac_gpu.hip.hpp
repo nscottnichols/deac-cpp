@@ -261,7 +261,7 @@ void gpu_dot(double* __restrict__ C, double* __restrict__ B, double* __restrict_
     __syncthreads();
 
     // Reduce _c (using shared local memory)
-    gpu_reduce_add(_c, item);
+    gpu_reduce_add(_c);
 
     //Set C
     if (local_idx == 0) {
@@ -269,6 +269,35 @@ void gpu_dot(double* __restrict__ C, double* __restrict__ B, double* __restrict_
     }
 }
 
+__global__
+void gpu_get_minimum(double* __restrict__ minimum, double* __restrict__ array, size_t N) {
+    // finds minimum of array with length N
+    // Shared Local Memory _c
+    __shared__ double _c[GPU_BLOCK_SIZE];
+    // Set shared local memory _c
+    size_t local_idx = hipThreadIdx_x;
+    if (local_idx < N) {
+        _c[local_idx] = array[local_idx];
+    } else {
+        _c[local_idx] = array[0];
+    }
+
+    for (size_t i = 1; i < (N + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
+        size_t j = GPU_BLOCK_SIZE*i + local_idx;
+        if (j < N) {
+            _c[local_idx] = array[j] < _c[local_idx] ? array[j] : _c[local_idx];
+        }
+    }
+    __syncthreads();
+
+    // Reduce _c (using shared local memory)
+    gpu_reduce_min(_c);
+
+    //Set minimum
+    if (local_idx == 0) {
+         minimum[0] = _c[0];
+    }
+}
 __global__
 void gpu_matrix_multiply_MxN_by_Nx1(double * C, double * A, double * B, size_t N, size_t idx) {
     __shared__ double _c[GPU_BLOCK_SIZE];
