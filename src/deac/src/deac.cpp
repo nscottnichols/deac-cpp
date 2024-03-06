@@ -452,28 +452,34 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             }
             #ifndef ZEROT
                 #ifdef USE_HYPERBOLIC_MODEL
-                    normalization_term_positive_frequency[j] = df*cosh(0.5*beta*f); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
-                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                        normalization_term_negative_frequency[j] = df; //FIXME need to calculate new value
+                    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        normalization_term_positive_frequency[j] = df*cosh(0.5*beta*f);
+                    #else
+                        normalization_term_positive_frequency[j] = 0.5*df/exp(-0.5*beta*f);
+                        normalization_term_negative_frequency[j] = 0.5*df*exp(-0.5*beta*f);
                     #endif
                 #endif
                 #ifdef USE_STANDARD_MODEL
-                    normalization_term_positive_frequency[j] = df*(1.0 + exp(-beta*f)); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
-                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                        normalization_term_negative_frequency[j] = df; //FIXME need to calculate new value
+                    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        normalization_term_positive_frequency[j] = df*(1.0 + exp(-beta*f));
+                    #else
+                        normalization_term_positive_frequency[j] = df;
+                        normalization_term_negative_frequency[j] = df;
                     #endif
                 #endif
                 #ifdef USE_NORMALIZATION_MODEL
-                    normalization_term_positive_frequency[j] = df; //FIXME this might be wrong when not using bosonic detailed balance condition for isf
-                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                        normalization_term_negative_frequency[j] = df; //FIXME need to calculate new value
+                    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        normalization_term_positive_frequency[j] = df;
+                    #else
+                        normalization_term_positive_frequency[j] = df*(1.0/(1.0 + exp(-beta*f)));
+                        double e_to_bf = exp(-beta*f) // exp(beta*f) for negative f
+                        normalization_term_negative_frequency[j] = df*(e_to_bf/(1.0 + e_to_bf));
                     #endif
                 #endif
-            #endif
-            #ifdef ZEROT
-                normalization_term_positive_frequency[j] = df; //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+            #else
+                normalization_term_positive_frequency[j] = df;
                 #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                    normalization_term_negative_frequency[j] = df; //FIXME need to calculate new value
+                    normalization_term_negative_frequency[j] = df;
                 #endif
             #endif
         }
