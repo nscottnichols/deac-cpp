@@ -327,7 +327,7 @@ void gpu_set_fitness(double* __restrict__ fitness, double* __restrict__ isf, dou
     __syncthreads();
 
     // Reduce _f (using shared local memory)
-    gpu_reduce_add(_f.get_pointer());
+    gpu_reduce_add(_f);
 
     //Set fitness
     if (local_idx == 0) {
@@ -348,6 +348,34 @@ void gpu_set_fitness_moments_chi_squared(double* __restrict__ fitness, double* _
     size_t global_idx = hipBlockDim_x*hipBlockIdx_x + hipThreadIdx_x;
     if (global_idx < population_size) {
         fitness[global_idx] += sycl::pown(moment - moments[global_idx], 2);
+    }
+}
+
+__global__
+void gpu_set_fitness_mean(double* __restrict__ fitness_mean, double* __restrict__ fitness, size_t population_size) {
+    __shared__ double _fm[GPU_BLOCK_SIZE];
+    // Set shared local memory _fm
+    size_t local_idx = hipThreadIdx_x;
+    if (local_idx < population_size) {
+        _fm[local_idx] = fitness[local_idx];
+    } else {
+        _fm[local_idx] = 0.0;
+    }
+
+    for (size_t i = 1; i < (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
+        size_t j = GPU_BLOCK_SIZE*i + local_idx;
+        if (j < population_size) {
+            _fm[local_idx] += fitness[j];
+        }
+    }
+    __syncthreads();
+    
+    // Reduce _fm (using shared local memory)
+    gpu_reduce_add(_fm);
+
+    //Set fitness_mean
+    if (local_idx == 0) {
+         fitness_mean[0] += _fm[0]/population_size;
     }
 }
 
