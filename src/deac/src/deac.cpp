@@ -582,8 +582,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                         first_moments_term_positive_frequency[j] = df*f*sinh(0.5*beta*f);
                     #else
-                        first_moments_term_positive_frequency[j] = 0.5*f*df/exp(-0.5*beta*f);
-                        first_moments_term_negative_frequency[j] = -0.5*f*df*exp(-0.5*beta*f);
+                        first_moments_term_positive_frequency[j] = 0.5*df*f/exp(-0.5*beta*f);
+                        first_moments_term_negative_frequency[j] = -0.5*df*f*exp(-0.5*beta*f);
                     #endif
                 #endif
                 #ifdef USE_STANDARD_MODEL
@@ -688,27 +688,34 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             }
             #ifndef ZEROT
                 #ifdef USE_HYPERBOLIC_MODEL
-                    third_moments_term_positive_frequency[j] = df*pow(f,3)*sinh(0.5*beta*f); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
-                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                        third_moments_term_negative_frequency[j] = df*pow(f,3); //FIXME need to calculate new value
+                    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        third_moments_term_positive_frequency[j] = df*pow(f,3)*f*sinh(0.5*beta*f);
+                    #else
+                        third_moments_term_positive_frequency[j] = 0.5*df*pow(f,3)*f/exp(-0.5*beta*f);
+                        third_moments_term_negative_frequency[j] = -0.5*df*pow(f,3)*f*exp(-0.5*beta*f);
                     #endif
                 #endif
                 #ifdef USE_STANDARD_MODEL
-                    third_moments_term_positive_frequency[j] = df*pow(f,3)*(1.0 - exp(-beta*f)); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
-                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                        third_moments_term_negative_frequency[j] = df*pow(f,3); //FIXME need to calculate new value
+                    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        third_moments_term_positive_frequency[j] = df*pow(f,3)*f*(1.0 - exp(-beta*f));
+                    #else
+                        third_moments_term_positive_frequency[j] = df*pow(f,3)*f;
+                        third_moments_term_negative_frequency[j] = -df*pow(f,3)*f;
                     #endif
                 #endif
                 #ifdef USE_NORMALIZATION_MODEL
-                    third_moments_term_positive_frequency[j] = df*pow(f,3)*tanh(0.5*beta*f); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
-                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                        third_moments_term_negative_frequency[j] = df*pow(f,3); //FIXME need to calculate new value
+                    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        third_moments_term_positive_frequency[j] = df*pow(f,3)*f*tanh(0.5*beta*f);
+                    #else
+                        third_moments_term_positive_frequency[j] = df*pow(f,3)*f(1.0/(1.0 + exp(-beta*f)));
+                        double e_to_bf = exp(-beta*f) // exp(beta*f) for negative f
+                        third_moments_term_negative_frequency[j] = -df*pow(f,3)*f*(e_to_bf/(1.0 + e_to_bf));
                     #endif
                 #endif
             #else
-                third_moments_term_positive_frequency[j] = df*pow(f,3); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+                third_moments_term_positive_frequency[j] = df*pow(f,3)*f;
                 #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                    third_moments_term_negative_frequency[j] = df*pow(f,3); //FIXME need to calculate new value
+                    third_moments_term_negative_frequency[j] = -df*pow(f,3)*f;
                 #endif
             #endif
         }
