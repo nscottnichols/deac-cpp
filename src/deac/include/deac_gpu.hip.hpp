@@ -306,6 +306,35 @@ void gpu_normalize_population(double* __restrict__ population, double* __restric
         population[global_idx] *= zeroth_moment/normalization[global_idx/genome_size];
     }
 }
+
+__global__
+void gpu_set_fitness(double* __restrict__ fitness, double* __restrict__ isf, double* __restrict__ isf_model, double* __restrict__ isf_error, size_t number_of_timeslices) {
+    __shared__ double _f[GPU_BLOCK_SIZE];
+    // Set shared local memory _f
+    size_t local_idx = hipThreadIdx_x;
+    if (local_idx < number_of_timeslices) {
+        _f[local_idx] = sycl::pown((isf[local_idx] - isf_model[local_idx])/isf_error[local_idx], 2);
+    } else {
+        _f[local_idx] = 0.0;
+    }
+
+    for (size_t i = 1; i < (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
+        size_t j = GPU_BLOCK_SIZE*i + local_idx;
+        if (j < number_of_timeslices) {
+            _f[local_idx] += sycl::pown((isf[j] - isf_model[j])/isf_error[j], 2);
+        }
+    }
+    __syncthreads();
+
+    // Reduce _f (using shared local memory)
+    gpu_reduce_add(_f.get_pointer());
+
+    //Set fitness
+    if (local_idx == 0) {
+         fitness[0] += _f[0]/number_of_timeslices;
+    }
+}
+
 __global__
 void gpu_matrix_multiply_MxN_by_Nx1(double * C, double * A, double * B, size_t N, size_t idx) {
     __shared__ double _c[GPU_BLOCK_SIZE];
