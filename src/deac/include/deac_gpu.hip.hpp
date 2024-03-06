@@ -344,6 +344,14 @@ void gpu_set_fitness_moments_reduced_chi_squared(double* __restrict__ fitness, d
 }
 
 __global__
+void gpu_set_fitness_moments_chi_squared(double* __restrict__ fitness, double* __restrict__ moments, double moment, size_t population_size) {
+    size_t global_idx = hipBlockDim_x*hipBlockIdx_x + hipThreadIdx_x;
+    if (global_idx < population_size) {
+        fitness[global_idx] += sycl::pown(moment - moments[global_idx], 2);
+    }
+}
+
+__global__
 void gpu_matrix_multiply_MxN_by_Nx1(double * C, double * A, double * B, size_t N, size_t idx) {
     __shared__ double _c[GPU_BLOCK_SIZE];
     size_t _j = hipBlockDim_x * hipBlockIdx_x + hipThreadIdx_x;
