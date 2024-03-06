@@ -362,7 +362,7 @@ void gpu_set_fitness(sycl::queue q, double* __restrict__ fitness, double* __rest
 void gpu_set_fitness_moments_reduced_chi_squared(sycl::queue q, size_t grid_size, double* __restrict__ fitness, double* __restrict__ moments, double moment, double moment_error, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
-            [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             size_t global_idx = item.get_global_id(0);
             if (global_idx < population_size) {
                 fitness[global_idx] += sycl::pown((moment - moments[global_idx])/moment_error, 2);
@@ -374,11 +374,11 @@ void gpu_set_fitness_moments_reduced_chi_squared(sycl::queue q, size_t grid_size
 void gpu_set_fitness_moments_chi_squared(sycl::queue q, size_t grid_size, double* __restrict__ fitness, double* __restrict__ moments, double moment, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
-            [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-                size_t global_idx = item.get_global_id(0);
-                if (global_idx < population_size) {
-                    fitness[global_idx] += sycl::pown(moment - moments[global_idx], 2);
-                }
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            size_t global_idx = item.get_global_id(0);
+            if (global_idx < population_size) {
+                fitness[global_idx] += sycl::pown(moment - moments[global_idx], 2);
+            }
         });
     });
 }
@@ -447,127 +447,119 @@ void gpu_set_fitness_squared_mean(sycl::queue q, double* __restrict__ fitness_sq
     });
 }
 
-// FIXME FIXME FIXME continue here
 void gpu_set_population_new(sycl::queue q, size_t grid_size, double* __restrict__ population_new, double* __restrict__ population_old, size_t* __restrict__ mutant_indices, double* __restrict__ differential_weights_new, bool* __restrict__ mutate_indices, size_t population_size, size_t genome_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t global_idx = index.get_global_id(0);
-                if (global_idx < population_size*genome_size) {
-                    size_t _i = global_idx/genome_size;
-                    size_t _j = global_idx - _i*genome_size;
-                    double F = differential_weights_new[_i];
-                    size_t mutant_index1 = mutant_indices[3*_i];
-                    size_t mutant_index2 = mutant_indices[3*_i + 1];
-                    size_t mutant_index3 = mutant_indices[3*_i + 2];
-                    bool mutate = mutate_indices[global_idx];
-                    if (mutate) {
-                        #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
-                            population_new[global_idx] = population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]);
-                        #else
-                            population_new[global_idx] = sycl::fabs( population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]) );
-                        #endif
-                    } else {
-                        population_new[global_idx] = population_old[global_idx];
-                    }
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            size_t global_idx = item.get_global_id(0);
+            if (global_idx < population_size*genome_size) {
+                size_t _i = global_idx/genome_size;
+                size_t _j = global_idx - _i*genome_size;
+                double F = differential_weights_new[_i];
+                size_t mutant_index1 = mutant_indices[3*_i];
+                size_t mutant_index2 = mutant_indices[3*_i + 1];
+                size_t mutant_index3 = mutant_indices[3*_i + 2];
+                bool mutate = mutate_indices[global_idx];
+                if (mutate) {
+                    #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
+                        population_new[global_idx] = population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]);
+                    #else
+                        population_new[global_idx] = sycl::fabs( population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]) );
+                    #endif
+                } else {
+                    population_new[global_idx] = population_old[global_idx];
                 }
-            });
-        }));
+            }
+        });
     });
 }
 
 void gpu_match_population_zero(sycl::queue q, size_t grid_size, double* __restrict__ population_negative_frequency, double* __restrict__ population_positive_frequency, size_t population_size, size_t genome_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t global_idx = index.get_global_id(0);
-                if (global_idx < population_size) {
-                    population_negative_frequency[global_idx*genome_size] = population_positive_frequency[global_idx*genome_size];
-                }
-            });
-        }));
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            size_t global_idx = item.get_global_id(0);
+            if (global_idx < population_size) {
+                population_negative_frequency[global_idx*genome_size] = population_positive_frequency[global_idx*genome_size];
+            }
+        });
     });
 }
 
 void gpu_set_rejection_indices(sycl::queue q, size_t grid_size, bool* __restrict__ rejection_indices, double* __restrict__ fitness_new, double* __restrict__ fitness_old, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t global_idx = index.get_global_id(0);
-                if (global_idx < population_size) {
-                    bool accept = fitness_new[global_idx] <= fitness_old[global_idx];
-                    rejection_indices[global_idx] = accept;
-                    if (accept) {
-                        fitness_old[global_idx] = fitness_new[global_idx];
-                    }
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            size_t global_idx = item.get_global_id(0);
+            if (global_idx < population_size) {
+                bool accept = fitness_new[global_idx] <= fitness_old[global_idx];
+                rejection_indices[global_idx] = accept;
+                if (accept) {
+                    fitness_old[global_idx] = fitness_new[global_idx];
                 }
-            });
-        }));
+            }
+        });
     });
 }
 
 void gpu_swap_control_parameters(sycl::queue q, size_t grid_size, double* __restrict__ control_parameter_old, double* __restrict__ control_parameter_new, bool* __restrict__ rejection_indices, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t global_idx = index.get_global_id(0);
-                if (global_idx < population_size) {
-                    if (rejection_indices[global_idx]) {
-                        control_parameter_old[global_idx] = control_parameter_new[global_idx];
-                    }
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            size_t global_idx = item.get_global_id(0);
+            if (global_idx < population_size) {
+                if (rejection_indices[global_idx]) {
+                    control_parameter_old[global_idx] = control_parameter_new[global_idx];
                 }
-            });
-        }));
+            }
+        });
     });
 }
 
 void gpu_swap_populations(sycl::queue q, size_t grid_size, double* __restrict__ population_old, double* __restrict__ population_new, bool* __restrict__ rejection_indices, size_t population_size, size_t genome_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t global_idx = index.get_global_id(0);
-                if (global_idx < population_size*genome_size) {
-                    size_t _i = global_idx/genome_size;
-                    if (rejection_indices[_i]) {
-                        population_old[global_idx] = population_new[global_idx];
-                    }
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            size_t global_idx = item.get_global_id(0);
+            if (global_idx < population_size*genome_size) {
+                size_t _i = global_idx/genome_size;
+                if (rejection_indices[_i]) {
+                    population_old[global_idx] = population_new[global_idx];
                 }
-            });
-        }));
+            }
+        });
     });
 }
 
 void gpu_set_crossover_probabilities_new(sycl::queue q, size_t grid_size, uint64_t* __restrict__ rng_state, double* __restrict__ crossover_probabilities_new, double* __restrict__ crossover_probabilities_old, double self_adapting_crossover_probability, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t global_idx = index.get_global_id(0);
-                if (global_idx < population_size) {
-                    if ((gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53 < self_adapting_crossover_probability) {
-                        crossover_probabilities_new[global_idx] = (gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53;
-                    } else {
-                        crossover_probabilities_new[global_idx] = crossover_probabilities_old[global_idx];
-                    }
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            size_t global_idx = item.get_global_id(0);
+            if (global_idx < population_size) {
+                if ((gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53 < self_adapting_crossover_probability) {
+                    crossover_probabilities_new[global_idx] = (gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53;
+                } else {
+                    crossover_probabilities_new[global_idx] = crossover_probabilities_old[global_idx];
                 }
-            });
-        }));
+            }
+        });
     });
 }
 
 void gpu_set_differential_weights_new(sycl::queue q, size_t grid_size, uint64_t* __restrict__ rng_state, double* __restrict__ differential_weights_new, double* __restrict__ differential_weights_old, double self_adapting_differential_weight_probability, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t global_idx = index.get_global_id(0);
-                if (global_idx < population_size) {
-                    if ((gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53 < self_adapting_differential_weight_probability) {
-                        differential_weights_new[global_idx] = 2.0*((gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53);
-                    } else {
-                        differential_weights_new[global_idx] = differential_weights_old[global_idx];
-                    }
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            size_t global_idx = item.get_global_id(0);
+            if (global_idx < population_size) {
+                if ((gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53 < self_adapting_differential_weight_probability) {
+                    differential_weights_new[global_idx] = 2.0*((gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53);
+                } else {
+                    differential_weights_new[global_idx] = differential_weights_old[global_idx];
                 }
-            });
-        }));
+            }
+        });
     });
 }
 
@@ -591,29 +583,26 @@ void gpu_set_mutant_indices(uint64_t* __restrict__ rng_state, size_t* __restrict
 
 void gpu_set_mutant_indices(sycl::queue q, size_t grid_size, uint64_t* __restrict__ rng_state, size_t* __restrict__ mutant_indices, size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t global_idx = index.get_global_id(0);
-                if (global_idx < population_size) {
-                    gpu_set_mutant_indices(rng_state + 4*global_idx, mutant_indices + 3*global_idx, global_idx, population_size);
-                }
-            });
-        }));
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            size_t global_idx = item.get_global_id(0);
+            if (global_idx < population_size) {
+                gpu_set_mutant_indices(rng_state + 4*global_idx, mutant_indices + 3*global_idx, global_idx, population_size);
+            }
+        });
     });
 }
 
 void gpu_set_mutate_indices(sycl::queue q, size_t grid_size, uint64_t* __restrict__ rng_state, bool* __restrict__ mutate_indices, double* __restrict__ crossover_probabilities, size_t population_size, size_t genome_size) {
     q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for_work_group(sycl::range<1>{grid_size}, sycl::range<1>{GPU_BLOCK_SIZE}, ([=](sycl::group<1> wGroup) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            wGroup.parallel_for_work_item([&](sycl::h_item<1> index) {
-                size_t global_idx = index.get_global_id(0);
-                if (global_idx < population_size*genome_size) {
-                    size_t _i = global_idx/genome_size;
-                    mutate_indices[global_idx] = (gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53 < crossover_probabilities[_i];
-                }
-            });
-        }));
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            size_t global_idx = item.get_global_id(0);
+            if (global_idx < population_size*genome_size) {
+                size_t _i = global_idx/genome_size;
+                mutate_indices[global_idx] = (gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53 < crossover_probabilities[_i];
+            }
+        });
     });
 }
-
 #endif
