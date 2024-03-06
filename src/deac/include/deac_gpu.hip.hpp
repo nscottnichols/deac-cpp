@@ -10,9 +10,6 @@
 #define DEAC_GPU_HIP_H
 
 #include "common_gpu.hpp"
-#ifdef DEAC_DEBUG
-    #include <stdio.h>
-#endif
 #include <stdint.h>
 
 
