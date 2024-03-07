@@ -397,8 +397,14 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #endif
     for (size_t i=0; i<genome_size*population_size; i++) {
         population_old_positive_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
+        #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
+            population_old_positive_frequency[i] -= 0.5; 
+        #endif
         #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
             population_old_negative_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
+            #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
+                population_old_negative_frequency[i] -= 0.5; 
+            #endif
         #endif
     }
     #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
@@ -1054,7 +1060,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #endif
 
     #ifdef USE_GPU
-        size_t bytes_rng_state = sizeof(uint64_t)*4*population_size*(genome_size + 1); //FIXME FIXME FIXME might need bigger state for negative frequency space (double check this calculation)
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            size_t bytes_rng_state = sizeof(uint64_t)*8*population_size*(genome_size + 1);
+        #else
+            size_t bytes_rng_state = sizeof(uint64_t)*8*(population_size*(genome_size + 1);
+        #endif
 
         // Generate rng state
         uint64_t* d_rng_state;
@@ -1067,7 +1077,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 xoshiro256p_jump(rng->s);
             }
         }
-        GPU_ASSERT((deac_malloc_device(uint64_t, d_rng_state, 4*population_size*(genome_size + 1), default_stream)); //FIXME FIXME FIXME might need bigger state for negative frequency (double check this calculation)
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            GPU_ASSERT((deac_malloc_device(uint64_t, d_rng_state, 4*population_size*(genome_size + 1), default_stream));
+        #else
+            GPU_ASSERT((deac_malloc_device(uint64_t, d_rng_state, 8*population_size*(genome_size + 1), default_stream));
+        #endif
         GPU_ASSERT(deac_memcpy_host_to_device(d_rng_state, rng_state, bytes_rng_state, default_stream));
         GPU_ASSERT(deac_wait(default_stream));
     #endif
@@ -1105,13 +1119,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
         #ifdef USE_GPU
             size_t grid_size_self_adapting_parameters = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-            gpu_set_crossover_probabilities_new(default_stream, grid_size_self_adapting_parameters, d_rng_state, d_crossover_probabilities_new_positive_frequency, d_crossover_probabilities_old_positive_frequency, self_adapting_crossover_probability, population_size);
-            gpu_set_differential_weights_new(default_stream, grid_size_self_adapting_parameters, d_rng_state + 4*population_size, d_differential_weights_new_positive_frequency, d_differential_weights_old_positive_frequency, self_adapting_differential_weight_probability, population_size);
+            gpu_set_crossover_probabilities_new(stream_array[0], grid_size_self_adapting_parameters, d_rng_state, d_crossover_probabilities_new_positive_frequency, d_crossover_probabilities_old_positive_frequency, self_adapting_crossover_probability, population_size);
+            gpu_set_differential_weights_new(stream_array[1 % MAX_GPU_STREAMS], grid_size_self_adapting_parameters, d_rng_state + 4*population_size, d_differential_weights_new_positive_frequency, d_differential_weights_old_positive_frequency, self_adapting_differential_weight_probability, population_size);
             #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                gpu_set_crossover_probabilities_new(default_stream, grid_size_self_adapting_parameters, d_rng_state, d_crossover_probabilities_new_negative_frequency, d_crossover_probabilities_old_negative_frequency, self_adapting_crossover_probability, population_size);
-                gpu_set_differential_weights_new(default_stream, grid_size_self_adapting_parameters, d_rng_state + 4*population_size, d_differential_weights_new_negative_frequency, d_differential_weights_old_negative_frequency, self_adapting_differential_weight_probability, population_size);
+                gpu_set_crossover_probabilities_new(stream_array[2 % MAX_GPU_STREAMS], grid_size_self_adapting_parameters, d_rng_state + 8*population_size, d_crossover_probabilities_new_negative_frequency, d_crossover_probabilities_old_negative_frequency, self_adapting_crossover_probability, population_size);
+                gpu_set_differential_weights_new(stream_array[3 % MAX_GPU_STREAMS], grid_size_self_adapting_parameters, d_rng_state + 12*population_size, d_differential_weights_new_negative_frequency, d_differential_weights_old_negative_frequency, self_adapting_differential_weight_probability, population_size);
             #endif
-            GPU_ASSERT(deac_wait(default_stream));
+            for (auto& s : stream_array) {
+                GPU_ASSERT(deac_wait(s));
+            }
         #else
             //Set crossover probabilities and differential weights
             for (size_t i=0; i<population_size; i++) {
@@ -1152,12 +1168,14 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #ifdef USE_GPU
             size_t grid_size_set_mutant_indices = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
             size_t grid_size_set_mutate_indices = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-            gpu_set_mutant_indices(default_stream, grid_size_set_mutant_indices, d_rng_state, d_mutant_indices, population_size);
-            gpu_set_mutate_indices(default_stream, grid_size_set_mutate_indices, d_rng_state + 4*population_size, d_mutate_indices_positive_frequency, d_crossover_probabilities_new_positive_frequency, population_size, genome_size);
+            gpu_set_mutant_indices(stream_array[0], grid_size_set_mutant_indices, d_rng_state, d_mutant_indices, population_size);
+            gpu_set_mutate_indices(stream_array[1 % MAX_GPU_STREAMS], grid_size_set_mutate_indices, d_rng_state + 4*population_size, d_mutate_indices_positive_frequency, d_crossover_probabilities_new_positive_frequency, population_size, genome_size);
             #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                gpu_set_mutate_indices(default_stream, grid_size_set_mutate_indices, d_rng_state + 4*population_size, d_mutate_indices_negative_frequency, d_crossover_probabilities_new_negative_frequency, population_size, genome_size);
+                gpu_set_mutate_indices(stream_array[2 % MAX_GPU_STREAMS], grid_size_set_mutate_indices, d_rng_state + 4*population_size + 4*population_size*genome_size, d_mutate_indices_negative_frequency, d_crossover_probabilities_new_negative_frequency, population_size, genome_size);
             #endif
-            GPU_ASSERT(deac_wait(default_stream));
+            for (auto& s : stream_array) {
+                GPU_ASSERT(deac_wait(s));
+            }
         #else
             //Set mutant population and indices 
             for (size_t i=0; i<population_size; i++) {
@@ -1177,11 +1195,14 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
         #ifdef USE_GPU
             size_t grid_size_set_population_new = (population_size*genome_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
-            gpu_set_population_new(default_stream, grid_size_set_population_new, d_population_new_positive_frequency, d_population_old_positive_frequency, d_mutant_indices, d_differential_weights_new_positive_frequency, d_mutate_indices_positive_frequency, population_size, genome_size);
+            gpu_set_population_new(stream_array[0], grid_size_set_population_new, d_population_new_positive_frequency, d_population_old_positive_frequency, d_mutant_indices, d_differential_weights_new_positive_frequency, d_mutate_indices_positive_frequency, population_size, genome_size);
             #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                gpu_set_population_new(default_stream, grid_size_set_population_new, d_population_new_negative_frequency, d_population_old_negative_frequency, d_mutant_indices, d_differential_weights_new_negative_frequency, d_mutate_indices_negative_frequency, population_size, genome_size);
+                gpu_set_population_new(stream_array[1 % MAX_GPU_STREAMS], grid_size_set_population_new, d_population_new_negative_frequency, d_population_old_negative_frequency, d_mutant_indices, d_differential_weights_new_negative_frequency, d_mutate_indices_negative_frequency, population_size, genome_size);
+                #if MAX_GPU_STREAMS > 1
+                    GPU_ASSERT(deac_wait(stream_array[1]));
+                #endif
             #endif
-            GPU_ASSERT(deac_wait(default_stream));
+            GPU_ASSERT(deac_wait(stream_array[0]));
 
             #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                 size_t grid_size_match_population_zero = (population_size + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
@@ -1203,19 +1224,33 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                         bool mutate_negative_frequency = mutate_indices_negative_frequency[i*genome_size + j];
                     #endif
                     if (mutate_positive_frequency) {
-                        population_new_positive_frequency[i*genome_size + j] = fabs( 
-                            population_old_positive_frequency[mutant_index1*genome_size + j] + F_positive_frequency*(
-                                    population_old_positive_frequency[mutant_index2*genome_size + j] -
-                                    population_old_positive_frequency[mutant_index3*genome_size + j]));
+                        #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
+                            population_new_positive_frequency[i*genome_size + j] =
+                                population_old_positive_frequency[mutant_index1*genome_size + j] + F_positive_frequency*(
+                                        population_old_positive_frequency[mutant_index2*genome_size + j] -
+                                        population_old_positive_frequency[mutant_index3*genome_size + j]);
+                        #else
+                            population_new_positive_frequency[i*genome_size + j] = fabs( 
+                                population_old_positive_frequency[mutant_index1*genome_size + j] + F_positive_frequency*(
+                                        population_old_positive_frequency[mutant_index2*genome_size + j] -
+                                        population_old_positive_frequency[mutant_index3*genome_size + j]));
+                        #endif
                     } else {
                         population_new_positive_frequency[i*genome_size + j] = population_old_positive_frequency[i*genome_size + j];
                     }
                     #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                         if (mutate_negative_frequency) {
-                            population_new_negative_frequency[i*genome_size + j] = fabs( 
-                                population_old_negative_frequency[mutant_index1*genome_size + j] + F_negative_frequency*(
-                                        population_old_negative_frequency[mutant_index2*genome_size + j] -
-                                        population_old_negative_frequency[mutant_index3*genome_size + j]));
+                            #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
+                                population_new_negative_frequency[i*genome_size + j] =
+                                    population_old_negative_frequency[mutant_index1*genome_size + j] + F_negative_frequency*(
+                                            population_old_negative_frequency[mutant_index2*genome_size + j] -
+                                            population_old_negative_frequency[mutant_index3*genome_size + j]);
+                            #else
+                                population_new_negative_frequency[i*genome_size + j] = fabs( 
+                                    population_old_negative_frequency[mutant_index1*genome_size + j] + F_negative_frequency*(
+                                            population_old_negative_frequency[mutant_index2*genome_size + j] -
+                                            population_old_negative_frequency[mutant_index3*genome_size + j]));
+                            #endif
                         } else {
                             population_new_negative_frequency[i*genome_size + j] = population_old_negative_frequency[i*genome_size + j];
                         }
@@ -1252,11 +1287,14 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 #endif
 
                 size_t grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
-                gpu_normalize_population(default_stream, grid_size_normalize_population, d_population_new_positive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
+                gpu_normalize_population(stream_array[0], grid_size_normalize_population, d_population_new_positive_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
                 #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                    gpu_normalize_population(default_stream, grid_size_normalize_population, d_population_new_negative_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
+                    gpu_normalize_population(stream_array[1 % MAX_GPU_STREAMS], grid_size_normalize_population, d_population_new_negative_frequency, d_normalization, zeroth_moment, population_size, genome_size); 
+                    #if MAX_GPU_STREAMS > 1
+                        GPU_ASSERT(deac_wait(stream_array[1]));
+                    #endif
                 #endif
-                GPU_ASSERT(deac_wait(default_stream));
+                GPU_ASSERT(deac_wait(stream_array[0]));
             #else
                 for (size_t i=0; i<population_size; i++) {
                     normalization[i] = 0.0;
@@ -1454,16 +1492,31 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             gpu_set_rejection_indices(default_stream, grid_size_set_rejection_indices, d_rejection_indices, d_fitness_new, d_fitness_old, population_size);
             GPU_ASSERT(deac_wait(default_stream));
 
-            gpu_swap_control_parameters(default_stream, grid_size_swap_control_parameters, d_crossover_probabilities_old_positive_frequency, d_crossover_probabilities_new_positive_frequency, d_rejection_indices, population_size);
-            gpu_swap_control_parameters(default_stream, grid_size_swap_control_parameters, d_differential_weights_old_positive_frequency, d_differential_weights_new_positive_frequency, d_rejection_indices, population_size);
-            gpu_swap_populations(default_stream, grid_size_swap_populations, d_population_old_positive_frequency, d_population_new_positive_frequency, d_rejection_indices, population_size, genome_size);
+            gpu_swap_control_parameters(stream_array[0], grid_size_swap_control_parameters, d_crossover_probabilities_old_positive_frequency, d_crossover_probabilities_new_positive_frequency, d_rejection_indices, population_size);
+            gpu_swap_control_parameters(stream_array[1 % MAX_GPU_STREAMS], grid_size_swap_control_parameters, d_differential_weights_old_positive_frequency, d_differential_weights_new_positive_frequency, d_rejection_indices, population_size);
+            gpu_swap_populations(stream_array[2 % MAX_GPU_STREAMS], grid_size_swap_populations, d_population_old_positive_frequency, d_population_new_positive_frequency, d_rejection_indices, population_size, genome_size);
 
             #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                gpu_swap_control_parameters(default_stream, grid_size_swap_control_parameters, d_crossover_probabilities_old_negative_frequency, d_crossover_probabilities_new_negative_frequency, d_rejection_indices, population_size);
-                gpu_swap_control_parameters(default_stream, grid_size_swap_control_parameters, d_differential_weights_old_negative_frequency, d_differential_weights_new_negative_frequency, d_rejection_indices, population_size);
-                gpu_swap_populations(default_stream, grid_size_swap_populations, d_population_old_negative_frequency, d_population_new_negative_frequency, d_rejection_indices, population_size, genome_size);
+                gpu_swap_control_parameters(stream_array[3 % MAX_GPU_STREAMS], grid_size_swap_control_parameters, d_crossover_probabilities_old_negative_frequency, d_crossover_probabilities_new_negative_frequency, d_rejection_indices, population_size);
+                gpu_swap_control_parameters(stream_array[4 % MAX_GPU_STREAMS], grid_size_swap_control_parameters, d_differential_weights_old_negative_frequency, d_differential_weights_new_negative_frequency, d_rejection_indices, population_size);
+                gpu_swap_populations(stream_array[5 % MAX_GPU_STREAMS], grid_size_swap_populations, d_population_old_negative_frequency, d_population_new_negative_frequency, d_rejection_indices, population_size, genome_size);
+                #if MAX_GPU_STREAMS > 5
+                    GPU_ASSERT(deac_wait(stream_array[5]));
+                #endif
+                #if MAX_GPU_STREAMS > 4
+                    GPU_ASSERT(deac_wait(stream_array[4]));
+                #endif
+                #if MAX_GPU_STREAMS > 3
+                    GPU_ASSERT(deac_wait(stream_array[3]));
+                #endif
             #endif
-            GPU_ASSERT(deac_wait(default_stream));
+            #if MAX_GPU_STREAMS > 2
+                GPU_ASSERT(deac_wait(stream_array[2]));
+            #endif
+            #if MAX_GPU_STREAMS > 1
+                GPU_ASSERT(deac_wait(stream_array[1]));
+            #endif
+            GPU_ASSERT(deac_wait(stream_array[0]));
         #else
             for (size_t i=0; i<population_size; i++) {
                 double _fitness = reduced_chi_square_statistic(isf,
@@ -1543,36 +1596,59 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             best_frequency[idx_n] = -f;
         #endif
 
-        double spectra_factor = 1.0; // FIXME FIXME FIXME set spectra_factor based on spectra_type
-
         #ifndef ZEROT
             #ifdef USE_HYPERBOLIC_MODEL
                 #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                      best_dsf[idx_p] = 0.5*population_old_positive_frequency[genome_size*minimum_fitness_idx + i]*exp(0.5*beta*f);
                 #else
-                     best_dsf[idx_p] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i]*(1.0 + exp(-beta*f)); //FIXME this is wrong
-                     best_dsf[idx_n] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i]*(1.0 + exp(beta*f)); //FIXME this is wrong
+                    if (spectra_type == "spbsf") {
+                        best_dsf[idx_p] = -2.0*M_PI*population_old_positive_frequency[genome_size*minimum_fitness_idx + i]*sinh(b*f/2); // 0.5*exp(0.5*beta*f)*(-2.0*M_PI*(1 - exp(-beta*f)))
+                        best_dsf[idx_n] = 2.0*M_PI*population_old_negative_frequency[genome_size*minimum_fitness_idx + i]*sinh(b*f/2);  // 0.5*exp(-0.5*beta*f)*(-2.0*M_PI*(1 - exp(beta*f))) <-- f is negative here
+                    } else if (spectra_type == "spfsf") {
+                        best_dsf[idx_p] = -2.0*M_PI*population_old_positive_frequency[genome_size*minimum_fitness_idx + i]*cosh(b*f/2); // 0.5*exp(0.5*beta*f)*(-2.0*M_PI*(1 + exp(-beta*f)))
+                        best_dsf[idx_n] = -2.0*M_PI*population_old_negative_frequency[genome_size*minimum_fitness_idx + i]*cosh(b*f/2);  // 0.5*exp(-0.5*beta*f)*(-2.0*M_PI*(1 + exp(beta*f))) <-- f is negative here
+                    } else {
+                        best_dsf[idx_p] = 0.5*population_old_positive_frequency[genome_size*minimum_fitness_idx + i]*exp(0.5*beta*f);
+                        best_dsf[idx_n] = 0.5*population_old_negative_frequency[genome_size*minimum_fitness_idx + i]*exp(-0.5*beta*f);
+                    }
                 #endif
             #endif
             #ifdef USE_STANDARD_MODEL
                 #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                     best_dsf[idx_p] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i];
                 #else
-                    best_dsf[idx_p] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i]; //FIXME need to calculate new value
-                    best_dsf[idx_n] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i]; //FIXME need to calculate new value
+                    if (spectra_type == "spbsf") {
+                        best_dsf[idx_p] = -2.0*M_PI*population_old_positive_frequency[genome_size*minimum_fitness_idx + i]*(1.0 - exp(-beta*f)); // *(-2.0*M_PI*(1 - exp(-beta*f)))
+                        best_dsf[idx_n] = -2.0*M_PI*population_old_negative_frequency[genome_size*minimum_fitness_idx + i]*(1.0 - exp(beta*f));  // *(-2.0*M_PI*(1 - exp(beta*f))) <-- f is negative here
+                    } else if (spectra_type == "spfsf") {
+                        best_dsf[idx_p] = -2.0*M_PI*population_old_positive_frequency[genome_size*minimum_fitness_idx + i]*(1.0 + exp(-beta*f)); // *(-2.0*M_PI*(1 + exp(-beta*f)))
+                        best_dsf[idx_n] = -2.0*M_PI*population_old_negative_frequency[genome_size*minimum_fitness_idx + i]*(1.0 + exp(beta*f));  // *(-2.0*M_PI*(1 + exp(beta*f))) <-- f is negative here
+                    } else {
+                        best_dsf[idx_p] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i];
+                        best_dsf[idx_n] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i];
+                    }
                 #endif
             #endif
             #ifdef USE_NORMALIZATION_MODEL
-                best_dsf[idx_p] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i]/(1.0 + exp(-beta*f)); //FIXME this might be wrong when not using bosonic detailed balance condition for isf
-                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                    best_dsf[idx_n] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i]; //FIXME need to calculate new value
+                #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    best_dsf[idx_p] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i]/(1.0 + exp(-beta*f));
+                #else
+                    if (spectra_type == "spbsf") {
+                        best_dsf[idx_p] = -2.0*M_PI*population_old_positive_frequency[genome_size*minimum_fitness_idx + i]*tanh(0.5*beta*f); // (1/(1 + exp(-beta*f)))*(-2.0*M_PI*(1 - exp(-beta*f)))
+                        best_dsf[idx_n] = 2.0*M_PI*population_old_negative_frequency[genome_size*minimum_fitness_idx + i]*tanh(0.5*beta*f);  // (1/(1 + exp(beta*f)))*(-2.0*M_PI*(1 - exp(beta*f))) <-- f is negative here
+                    } else if (spectra_type == "spfsf") {
+                        best_dsf[idx_p] = -2.0*M_PI*population_old_positive_frequency[genome_size*minimum_fitness_idx + i]; // (1/(1 + exp(-beta*f)))*(-2.0*M_PI*(1 + exp(-beta*f)))
+                        best_dsf[idx_n] = -2.0*M_PI*population_old_negative_frequency[genome_size*minimum_fitness_idx + i];  // (1/(1 + exp(-beta*f)))*(-2.0*M_PI*(1 + exp(beta*f))) <-- f is negative here
+                    } else {
+                        best_dsf[idx_p] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i]/(1.0 + exp(-beta*f));
+                        best_dsf[idx_n] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i]/(1.0 + exp(beta*f));
+                    }
                 #endif
             #endif
-        #endif
-        #ifdef ZEROT
-            best_dsf[idx_p] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i]; //FIXME this might be wrong when not using bosonic detailed balance condition for isf
+        #else
+            best_dsf[idx_p] = population_old_positive_frequency[genome_size*minimum_fitness_idx + i];
             #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                best_dsf[idx_n] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i]; //FIXME need to calculate new value
+                best_dsf[idx_n] = population_old_negative_frequency[genome_size*minimum_fitness_idx + i];
             #endif
         #endif
     }
@@ -1700,7 +1776,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     }
     free(isf_model);
     #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-        //FIXME need to add inverse first moment functionality for negative frequency, then can remove this ifdef
+        //FIXME need to add inverse first moment functionality then can remove this ifdef
         if (use_negative_first_moment) {
             free(negative_first_moments_term_positive_frequency);
             free(negative_first_moments);
@@ -1771,7 +1847,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             GPU_ASSERT(deac_free(d_third_moments_term_positive_frequency, stream_array[19 % MAX_GPU_STREAMS]));
         }
         #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-            //FIXME need to add inverse first moment functionality for negative frequency, then can remove this ifdef
+            //FIXME need to add inverse first moment functionality, then can remove this ifdef
             if (use_negative_first_moment) {
                 GPU_ASSERT(deac_free(d_negative_first_moments,                         stream_array[20 % MAX_GPU_STREAMS]));
                 GPU_ASSERT(deac_free(d_negative_first_moments_term_positive_frequency, stream_array[21 % MAX_GPU_STREAMS]));
