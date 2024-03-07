@@ -354,9 +354,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                         double _num = exp(-t*f);
                         double _denom = 1.0 + exp(-beta*f);
                         isf_term_positive_frequency[isf_term_idx] = df*(_num/_denom);
-                        double e_to_mtw_n = exp((tmb*f); // exp(-t*f) with t - beta
+                        double e_to_mtw_n = exp(tmb*f); // exp(-t*f) with t - beta
                         double _denom_n = 1.0 + exp(-beta*f); // 1.0 + exp(beta*f) where f is negative here
-                        isf_term_negative_frequency[isf_term_idx] = periodicity*df*(e_to_mtw_n - e_to_mtw_n/denom_n);
+                        isf_term_negative_frequency[isf_term_idx] = periodicity*df*(e_to_mtw_n - e_to_mtw_n/_denom_n);
                     #endif
                 #endif
             #else
@@ -478,7 +478,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                         normalization_term_positive_frequency[j] = df;
                     #else
                         normalization_term_positive_frequency[j] = df*(1.0/(1.0 + exp(-beta*f)));
-                        double e_to_bf = exp(-beta*f) // exp(beta*f) for negative f
+                        double e_to_bf = exp(-beta*f); // exp(beta*f) for negative f
                         normalization_term_negative_frequency[j] = df*(e_to_bf/(1.0 + e_to_bf));
                     #endif
                 #endif
@@ -604,8 +604,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                         first_moments_term_positive_frequency[j] = df*f*tanh(0.5*beta*f);
                     #else
-                        first_moments_term_positive_frequency[j] = df*f(1.0/(1.0 + exp(-beta*f)));
-                        double e_to_bf = exp(-beta*f) // exp(beta*f) for negative f
+                        first_moments_term_positive_frequency[j] = df*f*(1.0/(1.0 + exp(-beta*f)));
+                        double e_to_bf = exp(-beta*f); // exp(beta*f) for negative f
                         first_moments_term_negative_frequency[j] = -df*f*(e_to_bf/(1.0 + e_to_bf));
                     #endif
                 #endif
@@ -713,8 +713,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                         third_moments_term_positive_frequency[j] = df*pow(f,3)*f*tanh(0.5*beta*f);
                     #else
-                        third_moments_term_positive_frequency[j] = df*pow(f,3)*f(1.0/(1.0 + exp(-beta*f)));
-                        double e_to_bf = exp(-beta*f) // exp(beta*f) for negative f
+                        third_moments_term_positive_frequency[j] = df*pow(f,3)*f*(1.0/(1.0 + exp(-beta*f)));
+                        double e_to_bf = exp(-beta*f); // exp(beta*f) for negative f
                         third_moments_term_negative_frequency[j] = -df*pow(f,3)*f*(e_to_bf/(1.0 + e_to_bf));
                     #endif
                 #endif
@@ -996,7 +996,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             GPU_ASSERT(deac_malloc_device(double, d_differential_weights_new_negative_frequency, population_size, default_stream));
             GPU_ASSERT(deac_memcpy_host_to_device(d_differential_weights_old_negative_frequency, differential_weights_old_negative_frequency, bytes_differential_weights, default_stream));
         #endif
-        q.wait();
+        GPU_ASSERT(deac_wait(default_stream));
     #endif
 
     //Initialize statistics arrays
@@ -2014,7 +2014,7 @@ int main (int argc, char *argv[]) {
     #else
         std::string valid_spectra_type = "spbsf, spfsf, bfull, ffull";
     #endif
-    if !(
+    if (!(
          #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
              (spectra_type == "bdsf")
          #else
@@ -2023,7 +2023,7 @@ int main (int argc, char *argv[]) {
              (spectra_type == "bfull") ||
              (spectra_type == "ffull")
          #endif
-        ) {
+        )) {
         std::cout << "Please choose spectra_type from the following options: " << valid_spectra_type << std::endl;
         exit(1);
     }
