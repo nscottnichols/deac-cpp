@@ -33,6 +33,14 @@
         #define deac_wait(x) hipStreamSynchronize(x)
         #define deac_memset(w, x, y, z) hipMemsetAsync(w, x, y, z)
         #define deac_free(x, y) hipFreeAsync(x, y)
+        #ifdef USE_BLAS
+            #include "hipblas.hpp"
+            typedef hipHandle_t deac_blas_handle_t;
+            #define GPU_BLAS_ASSERT(x) (assert((x)==HIPBLAS_STATUS_SUCCESS))
+            #define deac_create_blas_handle(x) hipblasCreate(&x) 
+            #define deac_destroy_blas_handle(x) hipblasDestroy(x)
+            #define deac_set_stream(x, y) hipblasSetStream(x, y)
+        #endif
     #endif
     #ifdef USE_CUDA
         #include <cuda_runtime.h>
@@ -46,7 +54,14 @@
         #define deac_wait(x) cudaStreamSynchronize(x)
         #define deac_memset(w, x, y, z) cudaMemsetAsync(w, x, y, z)
         #define deac_free(x, y) cudaFreeAsync(x, y)
-
+        #ifdef USE_BLAS
+            #include "cublas_v2.h"
+            typedef cublasHandle_t deac_blas_handle_t;
+            #define GPU_BLAS_ASSERT(x) (assert((x)==CUBLAS_STATUS_SUCCESS))
+            #define deac_create_blas_handle(x) cublasCreate(&x) 
+            #define deac_destroy_blas_handle(x) cublasDestroy(x)
+            #define deac_set_stream(x, y) cublasSetStream(x, y)
+        #endif
     #endif
     #ifdef USE_SYCL
         #include <CL/sycl.hpp>
@@ -69,6 +84,14 @@
         #define deac_wait(x) x.wait()
         #define deac_memset(w, x, y, z) z.memset(w, x, y)
         #define deac_free(x, y) sycl::free(x, y)
+        #ifdef USE_BLAS
+            #include "oneapi/mkl.hpp"
+            typedef sycl::queue deac_blas_handle_t;
+            #define GPU_BLAS_ASSERT(x) x
+            #define deac_create_blas_handle(x) do {} while(0)
+            #define deac_destroy_blas_handle(x) do {} while(0)
+            #define deac_set_stream(x, y) x = y
+        #endif
     #endif
 #endif
 #endif

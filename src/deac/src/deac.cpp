@@ -237,9 +237,22 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         for (size_t i = 0; i < MAX_GPU_STREAMS; i++) {
             GPU_ASSERT(deac_stream_create(stream_array[i]));
         }
-        
+
         // Set up default "stream"
         auto default_stream = stream_array[0];
+        
+        #ifdef USE_BLAS
+            //Create GPU device BLAS handles
+            deac_blas_handle_t blas_handle_array[MAX_GPU_STREAMS];
+            for (size_t i = 0; i < MAX_GPU_STREAMS; i++) {
+                GPU_BLAS_ASSERT(deac_create_blas_handle(blas_handle_array[i]));
+                GPU_BLAS_ASSERT(deac_set_stream(blas_handle_array[i], stream_array[i]));
+            }
+
+            // Set up default BLAS_HANDLE
+            auto default_blas_handle = blas_handle_array[0];
+        #endif USE_BLAS
+
 
         #ifdef USE_SYCL
             //Test for valid subgroup size
@@ -513,21 +526,31 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #ifdef USE_GPU
             GPU_ASSERT(deac_memset(d_normalization, 0, bytes_normalization, default_stream));
             GPU_ASSERT(deac_wait(default_stream));
-            for (size_t i=0; i<population_size; i++) {
-                size_t stream_idx = i % MAX_GPU_STREAMS;
-                gpu_dot(stream_array[stream_idx], d_normalization + i, d_normalization_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
-            }
-            for (auto& s : stream_array) {
-                GPU_ASSERT(deac_wait(s));
-            }
-            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+
+            #ifdef USE_BLAS
+                gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_old_positive_frequency, d_normalization_term_positive_frequency, 0.0, d_normalization);
+                GPU_ASSERT(deac_wait(default_stream));
+                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_old_negative_frequency, d_normalization_term_negative_frequency, 1.0, d_normalization);
+                    GPU_ASSERT(deac_wait(default_stream));
+                #endif
+            #else
                 for (size_t i=0; i<population_size; i++) {
                     size_t stream_idx = i % MAX_GPU_STREAMS;
-                    gpu_dot(stream_array[stream_idx], d_normalization + i, d_normalization_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
+                    gpu_dot(stream_array[stream_idx], d_normalization + i, d_normalization_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
                 }
                 for (auto& s : stream_array) {
                     GPU_ASSERT(deac_wait(s));
                 }
+                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    for (size_t i=0; i<population_size; i++) {
+                        size_t stream_idx = i % MAX_GPU_STREAMS;
+                        gpu_dot(stream_array[stream_idx], d_normalization + i, d_normalization_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
+                    }
+                    for (auto& s : stream_array) {
+                        GPU_ASSERT(deac_wait(s));
+                    }
+                #endif
             #endif
 
             size_t grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
@@ -638,21 +661,30 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
             GPU_ASSERT(deac_memset(d_first_moments, 0, bytes_first_moments, default_stream));
             GPU_ASSERT(deac_wait(default_stream));
-            for (size_t i=0; i<population_size; i++) {
-                size_t stream_idx = i % MAX_GPU_STREAMS;
-                gpu_dot(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
-            }
-            for (auto& s : stream_array) {
-                GPU_ASSERT(deac_wait(s));
-            }
-            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            #ifdef USE_BLAS
+                gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_old_positive_frequency, d_first_moments_term_positive_frequency, 0.0, d_first_moments);
+                GPU_ASSERT(deac_wait(default_stream));
+                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_old_negative_frequency, d_first_moments_term_negative_frequency, 1.0, d_first_moments);
+                    GPU_ASSERT(deac_wait(default_stream));
+                #endif
+            #else
                 for (size_t i=0; i<population_size; i++) {
                     size_t stream_idx = i % MAX_GPU_STREAMS;
-                    gpu_dot(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
+                    gpu_dot(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
                 }
                 for (auto& s : stream_array) {
                     GPU_ASSERT(deac_wait(s));
                 }
+                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    for (size_t i=0; i<population_size; i++) {
+                        size_t stream_idx = i % MAX_GPU_STREAMS;
+                        gpu_dot(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
+                    }
+                    for (auto& s : stream_array) {
+                        GPU_ASSERT(deac_wait(s));
+                    }
+                #endif
             #endif
         #else
             for (size_t i=0; i<population_size; i++) {
@@ -748,21 +780,30 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
             GPU_ASSERT(deac_memset(d_third_moments, 0, bytes_third_moments, default_stream));
             GPU_ASSERT(deac_wait(default_stream));
-            for (size_t i=0; i<population_size; i++) {
-                size_t stream_idx = i % MAX_GPU_STREAMS;
-                gpu_dot(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
-            }
-            for (auto& s : stream_array) {
-                GPU_ASSERT(deac_wait(s));
-            }
-            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            #ifdef USE_BLAS
+                gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_old_positive_frequency, d_third_moments_term_positive_frequency, 0.0, d_third_moments);
+                GPU_ASSERT(deac_wait(default_stream));
+                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_old_negative_frequency, d_third_moments_term_negative_frequency, 1.0, d_third_moments);
+                    GPU_ASSERT(deac_wait(default_stream));
+                #endif
+            #else
                 for (size_t i=0; i<population_size; i++) {
                     size_t stream_idx = i % MAX_GPU_STREAMS;
-                    gpu_dot(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
+                    gpu_dot(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_positive_frequency, d_population_old_positive_frequency + genome_size*i, genome_size);
                 }
                 for (auto& s : stream_array) {
                     GPU_ASSERT(deac_wait(s));
                 }
+                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    for (size_t i=0; i<population_size; i++) {
+                        size_t stream_idx = i % MAX_GPU_STREAMS;
+                        gpu_dot(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_negative_frequency, d_population_old_negative_frequency + genome_size*i, genome_size);
+                    }
+                    for (auto& s : stream_array) {
+                        GPU_ASSERT(deac_wait(s));
+                    }
+                #endif
             #endif
         #else
             for (size_t i=0; i<population_size; i++) {
@@ -789,25 +830,34 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         GPU_ASSERT(deac_wait(default_stream));
         GPU_ASSERT(deac_memset(d_isf_model, 0, bytes_isf_model, default_stream));
         GPU_ASSERT(deac_wait(default_stream));
-        for (size_t i=0; i<population_size*number_of_timeslices; i++) {
-            size_t stream_idx = i % MAX_GPU_STREAMS;
-            size_t _i = i/number_of_timeslices;
-            size_t _j = i - _i*number_of_timeslices;
-            gpu_dot(stream_array[stream_idx], d_isf_model + i, d_population_old_positive_frequency + genome_size*_i, d_isf_term_positive_frequency + genome_size*_j, genome_size);
-        }
-        for (auto& s : stream_array) {
-            GPU_ASSERT(deac_wait(s));
-        }
-        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+        #ifdef USE_BLAS
+            gpu_blas_gemm(default_blas_handle, population_size, number_of_timeslices, genome_size, 1.0, d_population_old_positive_frequency, d_isf_term_positive_frequency, 0.0, d_isf_model);
+            GPU_ASSERT(deac_wait(default_stream));
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                gpu_blas_gemm(default_blas_handle, population_size, number_of_timeslices, genome_size, 1.0, d_population_old_negative_frequency, d_isf_term_negative_frequency, 1.0, d_isf_model);
+                GPU_ASSERT(deac_wait(default_stream));
+            #endif
+        #else
             for (size_t i=0; i<population_size*number_of_timeslices; i++) {
                 size_t stream_idx = i % MAX_GPU_STREAMS;
                 size_t _i = i/number_of_timeslices;
                 size_t _j = i - _i*number_of_timeslices;
-                gpu_dot(stream_array[stream_idx], d_isf_model + i, d_population_old_negative_frequency + genome_size*_i, d_isf_term_negative_frequency + genome_size*_j, genome_size);
+                gpu_dot(stream_array[stream_idx], d_isf_model + i, d_population_old_positive_frequency + genome_size*_i, d_isf_term_positive_frequency + genome_size*_j, genome_size);
             }
             for (auto& s : stream_array) {
                 GPU_ASSERT(deac_wait(s));
             }
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                for (size_t i=0; i<population_size*number_of_timeslices; i++) {
+                    size_t stream_idx = i % MAX_GPU_STREAMS;
+                    size_t _i = i/number_of_timeslices;
+                    size_t _j = i - _i*number_of_timeslices;
+                    gpu_dot(stream_array[stream_idx], d_isf_model + i, d_population_old_negative_frequency + genome_size*_i, d_isf_term_negative_frequency + genome_size*_j, genome_size);
+                }
+                for (auto& s : stream_array) {
+                    GPU_ASSERT(deac_wait(s));
+                }
+            #endif
         #endif
     #else
         for (size_t i=0; i<population_size*number_of_timeslices; i++) {
@@ -860,13 +910,18 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 size_t grid_size_set_negative_first_moments = (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
                 GPU_ASSERT(deac_memset(d_negative_first_moments, 0, bytes_negative_first_moments, default_stream));
                 GPU_ASSERT(deac_wait(default_stream));
-                for (size_t i=0; i<population_size; i++) {
-                    size_t stream_idx = i % MAX_GPU_STREAMS;
-                    gpu_dot(stream_array[stream_idx], d_negative_first_moments + i, d_negative_first_moments_term, d_isf_model + number_of_timeslices*i, number_of_timeslices);
-                }
-                for (auto& s : stream_array) {
-                    GPU_ASSERT(deac_wait(s));
-                }
+                #ifdef USE_BLAS
+                    gpu_blas_gemv(default_blas_handle, population_size, number_of_timeslices, 1.0, d_isf_model, d_negative_first_moments_term, 0.0, d_negative_first_moments);
+                    GPU_ASSERT(deac_wait(default_stream));
+                #else
+                    for (size_t i=0; i<population_size; i++) {
+                        size_t stream_idx = i % MAX_GPU_STREAMS;
+                        gpu_dot(stream_array[stream_idx], d_negative_first_moments + i, d_negative_first_moments_term, d_isf_model + number_of_timeslices*i, number_of_timeslices);
+                    }
+                    for (auto& s : stream_array) {
+                        GPU_ASSERT(deac_wait(s));
+                    }
+                #endif
             #else
                 for (size_t i=0; i<population_size; i++) {
                     negative_first_moments[i] = 0.0;
@@ -1279,21 +1334,30 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #ifdef USE_GPU
                 GPU_ASSERT(deac_memset(d_normalization, 0, bytes_normalization, default_stream));
                 GPU_ASSERT(deac_wait(default_stream));
-                for (size_t i=0; i<population_size; i++) {
-                    size_t stream_idx = i % MAX_GPU_STREAMS;
-                    gpu_dot(stream_array[stream_idx], d_normalization + i, d_normalization_term_positive_frequency, d_population_new_positive_frequency + genome_size*i, genome_size);
-                }
-                for (auto& s : stream_array) {
-                    GPU_ASSERT(deac_wait(s));
-                }
-                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                #ifdef USE_BLAS
+                    gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_new_positive_frequency, d_normalization_term_positive_frequency, 0.0, d_normalization);
+                    GPU_ASSERT(deac_wait(default_stream));
+                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_new_negative_frequency, d_normalization_term_negative_frequency, 1.0, d_normalization);
+                        GPU_ASSERT(deac_wait(default_stream));
+                    #endif
+                #else
                     for (size_t i=0; i<population_size; i++) {
                         size_t stream_idx = i % MAX_GPU_STREAMS;
-                        gpu_dot(stream_array[stream_idx], d_normalization + i, d_normalization_term_negative_frequency, d_population_new_negative_frequency + genome_size*i, genome_size);
+                        gpu_dot(stream_array[stream_idx], d_normalization + i, d_normalization_term_positive_frequency, d_population_new_positive_frequency + genome_size*i, genome_size);
                     }
                     for (auto& s : stream_array) {
                         GPU_ASSERT(deac_wait(s));
                     }
+                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        for (size_t i=0; i<population_size; i++) {
+                            size_t stream_idx = i % MAX_GPU_STREAMS;
+                            gpu_dot(stream_array[stream_idx], d_normalization + i, d_normalization_term_negative_frequency, d_population_new_negative_frequency + genome_size*i, genome_size);
+                        }
+                        for (auto& s : stream_array) {
+                            GPU_ASSERT(deac_wait(s));
+                        }
+                    #endif
                 #endif
 
                 size_t grid_size_normalize_population = (population_size*genome_size + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
@@ -1335,25 +1399,34 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #ifdef USE_GPU
             GPU_ASSERT(deac_memset(d_isf_model, 0, bytes_isf_model, default_stream));
             GPU_ASSERT(deac_wait(default_stream));
-            for (size_t i=0; i<population_size*number_of_timeslices; i++) {
-                size_t stream_idx = i % MAX_GPU_STREAMS;
-                size_t _i = i/number_of_timeslices;
-                size_t _j = i - _i*number_of_timeslices;
-                gpu_dot(stream_array[stream_idx], d_isf_model + i, d_population_new_positive_frequency + genome_size*_i, d_isf_term_positive_frequency + genome_size*_j, genome_size);
-            }
-            for (auto& s : stream_array) {
-                GPU_ASSERT(deac_wait(s));
-            }
-            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            #ifdef USE_BLAS
+                gpu_blas_gemm(default_blas_handle, population_size, number_of_timeslices, genome_size, 1.0, d_population_new_positive_frequency, d_isf_term_positive_frequency, 0.0, d_isf_model);
+                GPU_ASSERT(deac_wait(default_stream));
+                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    gpu_blas_gemm(default_blas_handle, population_size, number_of_timeslices, genome_size, 1.0, d_population_new_negative_frequency, d_isf_term_negative_frequency, 1.0, d_isf_model);
+                    GPU_ASSERT(deac_wait(default_stream));
+                #endif
+            #else
                 for (size_t i=0; i<population_size*number_of_timeslices; i++) {
                     size_t stream_idx = i % MAX_GPU_STREAMS;
                     size_t _i = i/number_of_timeslices;
                     size_t _j = i - _i*number_of_timeslices;
-                    gpu_dot(stream_array[stream_idx], d_isf_model + i, d_population_new_negative_frequency + genome_size*_i, d_isf_term_negative_frequency + genome_size*_j, genome_size);
+                    gpu_dot(stream_array[stream_idx], d_isf_model + i, d_population_new_positive_frequency + genome_size*_i, d_isf_term_positive_frequency + genome_size*_j, genome_size);
                 }
                 for (auto& s : stream_array) {
                     GPU_ASSERT(deac_wait(s));
                 }
+                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                    for (size_t i=0; i<population_size*number_of_timeslices; i++) {
+                        size_t stream_idx = i % MAX_GPU_STREAMS;
+                        size_t _i = i/number_of_timeslices;
+                        size_t _j = i - _i*number_of_timeslices;
+                        gpu_dot(stream_array[stream_idx], d_isf_model + i, d_population_new_negative_frequency + genome_size*_i, d_isf_term_negative_frequency + genome_size*_j, genome_size);
+                    }
+                    for (auto& s : stream_array) {
+                        GPU_ASSERT(deac_wait(s));
+                    }
+                #endif
             #endif
         #else
             for (size_t i=0; i<population_size*number_of_timeslices; i++) {
@@ -1374,13 +1447,18 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     size_t grid_size_set_negative_first_moments = (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
                     GPU_ASSERT(deac_memset(d_negative_first_moments, 0, bytes_negative_first_moments, default_stream));
                     GPU_ASSERT(deac_wait(default_stream));
-                    for (size_t i=0; i<population_size; i++) {
-                        size_t stream_idx = i % MAX_GPU_STREAMS;
-                        gpu_dot(stream_array[stream_idx], d_negative_first_moments + i, d_negative_first_moments_term, d_isf_model + number_of_timeslices*i, number_of_timeslices);
-                    }
-                    for (auto& s : stream_array) {
-                        GPU_ASSERT(deac_wait(s));
-                    }
+                    #ifdef USE_BLAS
+                        gpu_blas_gemv(default_blas_handle, population_size, number_of_timeslices, 1.0, d_isf_model, d_negative_first_moments_term, 0.0, d_negative_first_moments);
+                        GPU_ASSERT(deac_wait(default_stream));
+                    #else
+                        for (size_t i=0; i<population_size; i++) {
+                            size_t stream_idx = i % MAX_GPU_STREAMS;
+                            gpu_dot(stream_array[stream_idx], d_negative_first_moments + i, d_negative_first_moments_term, d_isf_model + number_of_timeslices*i, number_of_timeslices);
+                        }
+                        for (auto& s : stream_array) {
+                            GPU_ASSERT(deac_wait(s));
+                        }
+                    #endif
                 #else
                     for (size_t i=0; i<population_size; i++) {
                         negative_first_moments[i] = 0.0;
@@ -1396,21 +1474,30 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #ifdef USE_GPU
                 GPU_ASSERT(deac_memset(d_first_moments, 0, bytes_first_moments, default_stream));
                 GPU_ASSERT(deac_wait(default_stream));
-                for (size_t i=0; i<population_size; i++) {
-                    size_t stream_idx = i % MAX_GPU_STREAMS;
-                    gpu_dot(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_positive_frequency, d_population_new_positive_frequency + genome_size*i, genome_size);
-                }
-                for (auto& s : stream_array) {
-                    GPU_ASSERT(deac_wait(s));
-                }
-                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                #ifdef USE_BLAS
+                    gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_new_positive_frequency, d_first_moments_term_positive_frequency, 0.0, d_first_moments);
+                    GPU_ASSERT(deac_wait(default_stream));
+                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_new_negative_frequency, d_first_moments_term_negative_frequency, 1.0, d_first_moments);
+                        GPU_ASSERT(deac_wait(default_stream));
+                    #endif
+                #else
                     for (size_t i=0; i<population_size; i++) {
                         size_t stream_idx = i % MAX_GPU_STREAMS;
-                        gpu_dot(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_negative_frequency, d_population_new_negative_frequency + genome_size*i, genome_size);
+                        gpu_dot(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_positive_frequency, d_population_new_positive_frequency + genome_size*i, genome_size);
                     }
                     for (auto& s : stream_array) {
                         GPU_ASSERT(deac_wait(s));
                     }
+                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        for (size_t i=0; i<population_size; i++) {
+                            size_t stream_idx = i % MAX_GPU_STREAMS;
+                            gpu_dot(stream_array[stream_idx], d_first_moments + i, d_first_moments_term_negative_frequency, d_population_new_negative_frequency + genome_size*i, genome_size);
+                        }
+                        for (auto& s : stream_array) {
+                            GPU_ASSERT(deac_wait(s));
+                        }
+                    #endif
                 #endif
             #else
                 for (size_t i=0; i<population_size; i++) {
@@ -1428,21 +1515,30 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #ifdef USE_GPU
                 GPU_ASSERT(deac_memset(d_third_moments, 0, bytes_third_moments, default_stream));
                 GPU_ASSERT(deac_wait(default_stream));
-                for (size_t i=0; i<population_size; i++) {
-                    size_t stream_idx = i % MAX_GPU_STREAMS;
-                    gpu_dot(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_positive_frequency, d_population_new_positive_frequency + genome_size*i, genome_size);
-                }
-                for (auto& s : stream_array) {
-                    GPU_ASSERT(deac_wait(s));
-                }
-                #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                #ifdef USE_BLAS
+                    gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_new_positive_frequency, d_third_moments_term_positive_frequency, 0.0, d_third_moments);
+                    GPU_ASSERT(deac_wait(default_stream));
+                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_new_negative_frequency, d_third_moments_term_negative_frequency, 1.0, d_third_moments);
+                        GPU_ASSERT(deac_wait(default_stream));
+                    #endif
+                #else
                     for (size_t i=0; i<population_size; i++) {
                         size_t stream_idx = i % MAX_GPU_STREAMS;
-                        gpu_dot(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_negative_frequency, d_population_new_negative_frequency + genome_size*i, genome_size);
+                        gpu_dot(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_positive_frequency, d_population_new_positive_frequency + genome_size*i, genome_size);
                     }
                     for (auto& s : stream_array) {
                         GPU_ASSERT(deac_wait(s));
                     }
+                    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                        for (size_t i=0; i<population_size; i++) {
+                            size_t stream_idx = i % MAX_GPU_STREAMS;
+                            gpu_dot(stream_array[stream_idx], d_third_moments + i, d_third_moments_term_negative_frequency, d_population_new_negative_frequency + genome_size*i, genome_size);
+                        }
+                        for (auto& s : stream_array) {
+                            GPU_ASSERT(deac_wait(s));
+                        }
+                    #endif
                 #endif
             #else
                 for (size_t i=0; i<population_size; i++) {
@@ -1896,6 +1992,13 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         for (size_t i = 0; i < MAX_GPU_STREAMS; i++) {
             GPU_ASSERT(deac_stream_destroy(stream_array[i]));
         }
+
+        #ifdef USE_BLAS
+            //Destroy GPU device BLAS handles
+            for (size_t i = 0; i < MAX_GPU_STREAMS; i++) {
+                GPU_BLAS_ASSERT(deac_destroy_blas_handle(blas_handle_array[i]));
+            }
+        #endif USE_BLAS
     #endif
 }
 

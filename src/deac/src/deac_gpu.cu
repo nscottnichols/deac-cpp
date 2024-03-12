@@ -257,7 +257,7 @@ void gpu_dot(double* __restrict__ C, double* __restrict__ B, double* __restrict_
 
     //Set C
     if (local_idx == 0) {
-         C[0] = _c[0];
+         C[0] += _c[0]; //FIXME should do C[0] = _c[0] + scale_factor*C[0] here probably
     }
 }
 
@@ -287,7 +287,7 @@ void gpu_get_minimum(double* __restrict__ minimum, double* __restrict__ array, s
 
     //Set minimum
     if (local_idx == 0) {
-         minimum[0] = _c[0];
+         minimum[0] += _c[0];
     }
 }
 

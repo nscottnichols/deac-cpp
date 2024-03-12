@@ -262,7 +262,7 @@ void gpu_dot(double* __restrict__ C, double* __restrict__ B, double* __restrict_
 
     //Set C
     if (local_idx == 0) {
-         C[0] = _c[0];
+         C[0] += _c[0]; //FIXME should do C[0] = _c[0] + scale_factor*C[0] here probably
     }
 }
 
@@ -636,4 +636,13 @@ void gpu_set_mutate_indices(hipStream_t s, size_t grid_size, uint64_t* __restric
             rng_state, mutate_indices, crossover_probabilities, population_size, genome_size);
 }
 
+#ifdef USE_BLAS
+    void gpu_blas_gemv(hipblasHandle_t handle, int m, int n, double alpha, double* A, double* B, double beta, double* C) {
+        GPU_BLAS_ASSERT(hipblasDgemv(handle, HIPBLAS_OP_N, m, n, &alpha, A, m, B, 1, &beta, C, 1));
+    }
+
+    void gpu_blas_gemm(hipblasHandle_t handle, int m, int n, int k, double alpha, double* A, double* B, double beta, double* C) {
+        GPU_BLAS_ASSERT(hipblasDgemm(handle, HIPBLAS_OP_N, HIPBLAS_OP_N, m, n, k, &alpha, A, m, B, k, &beta, C, m));
+    }
+#endif
 #endif

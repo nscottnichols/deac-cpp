@@ -20,3 +20,13 @@ void gpu_set_crossover_probabilities_new(cudaStream_t s, size_t grid_size, uint6
 void gpu_set_differential_weights_new(cudaStream_t s, size_t grid_size, uint64_t* __restrict__ rng_state, double* __restrict__ differential_weights_new, double* __restrict__ differential_weights_old, double self_adapting_differential_weight_probability, size_t population_size);
 void gpu_set_mutant_indices(cudaStream_t s, size_t grid_size, uint64_t* __restrict__ rng_state, size_t* __restrict__ mutant_indices, size_t population_size);
 void gpu_set_mutate_indices(cudaStream_t s, size_t grid_size, uint64_t* __restrict__ rng_state, bool* __restrict__ mutate_indices, double* __restrict__ crossover_probabilities, size_t population_size, size_t genome_size);
+
+#ifdef USE_BLAS
+    void gpu_blas_gemv(cublasHandle_t handle, int m, int n, double alpha, double* A, double* B, double beta, double* C) {
+        GPU_BLAS_ASSERT(cublasDgemv(handle, CUBLAS_OP_N, m, n, &alpha, A, m, B, 1, &beta, C, 1));
+    }
+
+    void gpu_blas_gemm(cublasHandle_t handle, int m, int n, int k, double alpha, double* A, double* B, double beta, double* C) {
+        GPU_BLAS_ASSERT(cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, A, m, B, k, &beta, C, m));
+    }
+#endif

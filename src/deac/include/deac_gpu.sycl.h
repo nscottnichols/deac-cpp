@@ -275,7 +275,7 @@ void gpu_dot(sycl::queue q, double* __restrict__ C, double* __restrict__ B, doub
 
             //Set C
             if (local_idx == 0) {
-                 C[0] = _c[0];
+                 C[0] += _c[0]; //FIXME should do C[0] = _c[0] + scale_factor*C[0] here probably
             }
         });
     });
@@ -605,4 +605,14 @@ void gpu_set_mutate_indices(sycl::queue q, size_t grid_size, uint64_t* __restric
         });
     });
 }
+
+#ifdef USE_BLAS
+    void gpu_blas_gemv(sycl::queue q, int m, int n, double alpha, double* A, double* B, double beta, double* C) {
+        oneapi::mkl::blas::column_major::gemv(q, oneapi::mkl::transpose::nontrans, m, n, &alpha, A, m, B, 1, &beta, C, 1);
+    }
+
+    void gpu_blas_gemm(hipblasHandle_t handle, int m, int n, int k, double alpha, double* A, double* B, double beta, double* C) {
+        oneapi::mkl::blas::column_major::gemm(q, oneapi::mkl::transpose::nontrans, oneapi::mkl::transpose::nontrans, m, n, k, &alpha, A, m, B, k, &beta, C, m);
+    }
+#endif
 #endif
