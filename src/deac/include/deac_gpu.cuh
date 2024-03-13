@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 void gpu_dot(cudaStream_t s, double* __restrict__ C, double* __restrict__ B, double* __restrict__ A, size_t N);
+void gpu_matmul(cudaStream_t s, int m, int n, int k, double alpha, double* __restrict__ A, double* __restrict__ B, double beta, double* __restrict__ C);
 void gpu_get_minimum(cudaStream_t s, double* __restrict__ minimum, double* __restrict__ array, size_t N);
 void gpu_normalize_population(cudaStream_t s, size_t grid_size, double* __restrict__ population, double* __restrict__ normalization, double zeroth_moment, size_t population_size, size_t genome_size);
 void gpu_set_fitness(cudaStream_t s, double* __restrict__ fitness, double* __restrict__ isf, double* __restrict__ isf_model, double* __restrict__ isf_error, size_t number_of_timeslices);
@@ -22,11 +23,6 @@ void gpu_set_mutant_indices(cudaStream_t s, size_t grid_size, uint64_t* __restri
 void gpu_set_mutate_indices(cudaStream_t s, size_t grid_size, uint64_t* __restrict__ rng_state, bool* __restrict__ mutate_indices, double* __restrict__ crossover_probabilities, size_t population_size, size_t genome_size);
 
 #ifdef USE_BLAS
-    void gpu_blas_gemv(cublasHandle_t handle, int m, int n, double alpha, double* A, double* B, double beta, double* C) {
-        GPU_BLAS_ASSERT(cublasDgemv(handle, CUBLAS_OP_N, m, n, &alpha, A, m, B, 1, &beta, C, 1));
-    }
-
-    void gpu_blas_gemm(cublasHandle_t handle, int m, int n, int k, double alpha, double* A, double* B, double beta, double* C) {
-        GPU_BLAS_ASSERT(cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, A, m, B, k, &beta, C, m));
-    }
+    void gpu_blas_gemv(cublasHandle_t handle, int m, int n, double alpha, double* A, double* B, double beta, double* C);
+    void gpu_blas_gemm(cublasHandle_t handle, int m, int n, int k, double alpha, double* A, double* B, double beta, double* C);
 #endif

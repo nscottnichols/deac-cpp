@@ -261,6 +261,59 @@ void gpu_dot(double* __restrict__ C, double* __restrict__ B, double* __restrict_
     }
 }
 
+__global__ void gpu_matmul_simple(int m, int n, int k, double alpha, double* __restrict__ A, int lda, double* __restrict__ B, int ldb, double beta, double* __restrict__ C, int ldc) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < m && col < n) {
+        double sum = 0.0;
+        for (int e = 0; e < k; e++) {
+            sum += A[row + e * lda] * B[e + col * ldb];
+        }
+        C[row + col * ldc] = alpha * sum + beta * C[row + col * ldc];
+    }
+}
+
+__global__ void gpu_matmul(int m, int n, int k, double alpha, double* __restrict__ A, int lda, double* __restrict__ B, int ldb, double beta, double* __restrict__ C, int ldc) {
+    int bx = blockIdx.x, by = blockIdx.y;
+    int tx = threadIdx.x, ty = threadIdx.y;
+
+    // Identify the row and column of the C element to work on
+    int row = by * TILE_WIDTH + ty;
+    int col = bx * TILE_WIDTH + tx;
+
+    double Cvalue = 0.0;
+
+    // Loop over the A and B tiles required to compute the C element
+    for (int t = 0; t < (k-1)/TILE_WIDTH + 1; ++t) {
+        __shared__ double As[TILE_WIDTH][TILE_WIDTH];
+        __shared__ double Bs[TILE_WIDTH][TILE_WIDTH];
+
+        // Load the matrices from device memory to shared memory; each thread loads one element of each matrix
+        if (row < m && t*TILE_WIDTH+tx < k)
+            As[ty][tx] = A[row + lda * (t*TILE_WIDTH+tx)];
+        else
+            As[ty][tx] = 0.0;
+
+        if (t*TILE_WIDTH+ty < k && col < n)
+            Bs[ty][tx] = B[(t*TILE_WIDTH+ty) + ldb * col];
+        else
+            Bs[ty][tx] = 0.0;
+
+        __syncthreads(); // Make sure the matrices are loaded before starting the computation
+
+        // Multiply the two matrices together; each thread computes one element of the block sub-matrix
+        for (int e = 0; e < TILE_WIDTH; ++e) {
+            Cvalue += As[ty][e] * Bs[e][tx];
+        }
+
+        __syncthreads(); // Make sure that all threads are done computing before loading the next set of tiles
+    }
+
+    if (row < m && col < n)
+        C[row + ldc * col] = alpha * Cvalue + beta * C[row + ldc * col];
+}
+
 __global__
 void gpu_get_minimum(double* __restrict__ minimum, double* __restrict__ array, size_t N) {
     // finds minimum of array with length N
@@ -533,6 +586,10 @@ void gpu_dot(cudaStream_t s, double* __restrict__ C, double* __restrict__ B, dou
     gpu_dot<<<dim3(1), dim3(GPU_BLOCK_SIZE), 0, s>>>(C, B, A, N);
 }
 
+void gpu_matmul(cudaStream_t s, int m, int n, int k, double alpha, double* __restrict__ A, double* __restrict__ B, double beta, double* __restrict__ C) {
+    gpu_matmul<<<dim3((n + TILE_WIDTH - 1) / TILE_WIDTH, (m + TILE_WIDTH - 1) / TILE_WIDTH), dim3(TILE_WIDTH, TILE_WIDTH), 0, s>>>(m, n, k, alpha, A, m, B, k, beta, C, m);
+}
+
 void gpu_get_minimum(cudaStream_t s, double* __restrict__ minimum, double* __restrict__ array, size_t N) {
     gpu_get_minimum<<<dim3(1), dim3(GPU_BLOCK_SIZE), 0, s>>>(minimum, array, N);
 }
@@ -596,3 +653,13 @@ void gpu_set_mutant_indices(cudaStream_t s, size_t grid_size, uint64_t* __restri
 void gpu_set_mutate_indices(cudaStream_t s, size_t grid_size, uint64_t* __restrict__ rng_state, bool* __restrict__ mutate_indices, double* __restrict__ crossover_probabilities, size_t population_size, size_t genome_size) {
     gpu_set_mutate_indices<<<dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s>>>(rng_state, mutate_indices, crossover_probabilities, population_size, genome_size);
 }
+
+#ifdef USE_BLAS
+    void gpu_blas_gemv(cublasHandle_t handle, int m, int n, double alpha, double* A, double* B, double beta, double* C) {
+        GPU_BLAS_ASSERT(cublasDgemv(handle, CUBLAS_OP_N, m, n, &alpha, A, m, B, 1, &beta, C, 1));
+    }
+
+    void gpu_blas_gemm(cublasHandle_t handle, int m, int n, int k, double alpha, double* A, double* B, double beta, double* C) {
+        GPU_BLAS_ASSERT(cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, A, m, B, k, &beta, C, m));
+    }
+#endif

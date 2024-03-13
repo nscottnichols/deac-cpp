@@ -9,6 +9,10 @@
     #ifndef GPU_BLOCK_SIZE
         #define GPU_BLOCK_SIZE 256 ///< number of threads per block
     #endif
+
+    #ifndef TILE_WIDTH
+        #define TILE_WIDTH 32 ///< width of tiles for matmul
+    #endif
     
     #if GPU_BLOCK_SIZE > 2048
         #error "GPU_BLOCK_SIZE > 2048 unsupported"
