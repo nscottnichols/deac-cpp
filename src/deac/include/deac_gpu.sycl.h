@@ -281,6 +281,152 @@ void gpu_dot(sycl::queue q, double* __restrict__ C, double* __restrict__ B, doub
     });
 }
 
+void gpu_matmul_simple(sycl::queue q, int m, int n, int k, double alpha, double* __restrict__ A, int lda, double* __restrict__ B, int ldb, double beta, double* __restrict__ C, int ldc) {
+    q.submit([&](sycl::handler& cgh) {
+        size_t grid_size_x = (n + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+        size_t grid_size_y = (m + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+        cgh.parallel_for(sycl::nd_range<2>(sycl::range<2>(grid_size_x*GPU_BLOCK_SIZE, grid_size_y*GPU_BLOCK_SIZE), sycl::range<2>(GPU_BLOCK_SIZE, GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<2> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            int row = item.get_group_id(1) * item.get_local_range(1) + item.get_local_id(1);
+            int col = item.get_group_id(0) * item.get_local_range(0) + item.get_local_id(0);
+
+            if (row < m && col < n) {
+                double sum = 0.0;
+                for (int e = 0; e < k; e++) {
+                    sum += A[row + e * lda] * B[e + col * ldb];
+                }
+                C[row + col * ldc] = alpha * sum + beta * C[row + col * ldc];
+            }
+        });
+    });
+}
+
+void gpu_matmul(sycl::queue q, int m, int n, int k, double alpha, double* __restrict__ A, int lda, double* __restrict__ B, int ldb, double beta, double* __restrict__ C, int ldc) {
+    q.submit([&](sycl::handler& cgh) {
+        size_t grid_size_x = (n + TILE_WIDTH - 1) / TILE_WIDTH;
+        size_t grid_size_y = (m + TILE_WIDTH - 1) / TILE_WIDTH;
+        sycl::local_accessor<double, 2> As(sycl::range<2>(TILE_WIDTH, TILE_WIDTH), cgh);
+        sycl::local_accessor<double, 2> Bs(sycl::range<2>(TILE_WIDTH, TILE_WIDTH), cgh);
+        cgh.parallel_for(sycl::nd_range<2>(sycl::range<2>(grid_size_x*TILE_WIDTH, grid_size_y*TILE_WIDTH), sycl::range<2>(TILE_WIDTH, TILE_WIDTH)),
+                [=](sycl::nd_item<2> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            int bx = item.get_group_id(0), by = item.get_group_id(1);
+            int tx = item.get_local_id(0), ty = item.get_local_id(1);
+
+            // Identify the row and column of the C element to work on
+            int row = by * TILE_WIDTH + ty;
+            int col = bx * TILE_WIDTH + tx;
+
+            double Cvalue = 0.0;
+
+            // Loop over the A and B tiles required to compute the C element
+            for (int t = 0; t < (k-1)/TILE_WIDTH + 1; ++t) {
+
+                // Load the matrices from device memory to shared memory; each thread loads one element of each matrix
+                if (row < m && t*TILE_WIDTH+tx < k)
+                    As[ty][tx] = A[row + lda * (t*TILE_WIDTH+tx)];
+                else
+                    As[ty][tx] = 0.0;
+
+                if (t*TILE_WIDTH+ty < k && col < n)
+                    Bs[ty][tx] = B[(t*TILE_WIDTH+ty) + ldb * col];
+                else
+                    Bs[ty][tx] = 0.0;
+
+                sycl::group_barrier(item.get_group()); // Make sure the matrices are loaded before starting the computation
+
+                // Multiply the two matrices together; each thread computes one element of the block sub-matrix
+                for (int e = 0; e < TILE_WIDTH; ++e) {
+                    Cvalue += As[ty][e] * Bs[e][tx];
+                }
+
+                sycl::group_barrier(item.get_group()); // Make sure that all threads are done computing before loading the next set of tiles
+            }
+
+            if (row < m && col < n)
+                C[row + ldc * col] = alpha * Cvalue + beta * C[row + ldc * col];
+        });
+    });
+}
+
+void gpu_deac_gemv_simple(sycl::queue q, int m, int n, double alpha, double* __restrict__ A, int lda, double* __restrict__ x, int incx, double beta, double* __restrict__ y, int incy) {
+    q.submit([&](sycl::handler& cgh) {
+        size_t grid_size = (m + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            int row = item.get_group_id(0) * item.get_local_range(0) + item.get_local_id(0);
+            if (row < m) {
+                double sum = 0.0;
+                for (int j = 0; j < n; j++) {
+                    sum += A[row + j*lda] * x[j*incx];
+                }
+                y[row*incy] = alpha * sum + beta * y[row*incy];
+            }
+        });
+    });
+}
+
+void gpu_deac_gemv_atomic(sycl::queue q, int m, int n, double alpha, double* __restrict__ A, int lda, double* __restrict__ x, int incx, double beta, double* __restrict__ y, int incy) {
+    q.submit([&](sycl::handler& cgh) {
+        size_t grid_size = (n + TILE_WIDTH - 1) / TILE_WIDTH;
+        sycl::local_accessor<double, 1> shared_x(sycl::range<1>(TILE_WIDTH), cgh);
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*TILE_WIDTH), sycl::range<1>(TILE_WIDTH)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            int col = item.get_group_id(0) * item.get_local_range(0) + item.get_local_id(0);
+
+            if (col < n) {
+                shared_x[item.get_local_id(0)] = x[col * incx];
+            }
+            sycl::group_barrier(item.get_group());
+
+            if (col < n) {
+                for (int i = 0; i < m; i++) {
+                    double Aval = A[i + col * lda];
+                    sycl::atomic_ref atomicY(y[i * incy]);
+                    atomicY.fetch_add(alpha * Aval * shared_x[item.get_local_id(0)]);
+                }
+            }
+        });
+    });
+}
+
+void gpu_deac_gemv(sycl::queue q, int m, int n, double alpha, double* __restrict__ A, int lda, double* __restrict__ x, int incx, double beta, double* __restrict__ y, int incy) {
+    q.submit([&](sycl::handler& cgh) {
+        size_t grid_size_x = (n + TILE_WIDTH - 1) / TILE_WIDTH;
+        size_t grid_size_y = (m + TILE_WIDTH - 1) / TILE_WIDTH;
+        sycl::local_accessor<double, 2> As(sycl::range<2>(TILE_WIDTH, TILE_WIDTH), cgh);
+        cgh.parallel_for(sycl::nd_range<2>(sycl::range<2>(grid_size_x*TILE_WIDTH, grid_size_y*TILE_WIDTH), sycl::range<2>(TILE_WIDTH, TILE_WIDTH)),
+                [=](sycl::nd_item<2> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            int tx = item.get_local_id(0);
+            int by = item.get_group_id(1), ty = item.get_local_id(1);
+            int row = by * item.get_local_range(1) + ty;
+
+            double sum = 0.0;
+            if (row < m) {
+                for (int i = 0; i < (n + TILE_WIDTH - 1) / TILE_WIDTH; ++i) {
+                    if (i*TILE_WIDTH + tx < n && row < m) {
+                        As[ty][tx] = A[row + (i*TILE_WIDTH + tx) * lda];
+                    } else {
+                        As[ty][tx] = 0.0;
+                    }
+                    sycl::group_barrier(item.get_group());
+
+                    for (int k = 0; k < TILE_WIDTH; ++k) {
+                        if (i*TILE_WIDTH + k < n) {
+                            sum += As[ty][k] * x[(i*TILE_WIDTH + k)*incx];
+                        }
+                    }
+                    sycl::group_barrier(item.get_group());
+                }
+                if (beta == 0.0) {
+                    y[row * incy] = alpha * sum;
+                } else {
+                    y[row * incy] = alpha * sum + beta * y[row * incy];
+                }
+            }
+        });
+    });
+}
+
 void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __restrict__ array, size_t N) {
     // finds minimum of array with length N
     q.submit([&](sycl::handler& cgh) {

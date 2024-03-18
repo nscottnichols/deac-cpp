@@ -646,13 +646,14 @@ void gpu_dot(cudaStream_t s, double* __restrict__ C, double* __restrict__ B, dou
 }
 
 void gpu_matmul(cudaStream_t s, int m, int n, int k, double alpha, double* __restrict__ A, double* __restrict__ B, double beta, double* __restrict__ C) {
+    //gpu_matmul_simple<<<dim3((n + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE, (m + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE), dim3(GPU_BLOCK_SIZE, GPU_BLOCK_SIZE), 0, s>>>(m, n, k, alpha, A, m, B, k, beta, C, m);
     gpu_matmul<<<dim3((n + TILE_WIDTH - 1) / TILE_WIDTH, (m + TILE_WIDTH - 1) / TILE_WIDTH), dim3(TILE_WIDTH, TILE_WIDTH), 0, s>>>(m, n, k, alpha, A, m, B, k, beta, C, m);
 }
 
 void gpu_deac_gemv(cudaStream_t s, int m, int n, double alpha, double* __restrict__ A, double* __restrict__ x, double beta, double* __restrict__ y) {
     //gpu_deac_gemv_simple<<<dim3((m + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE), dim3(GPU_BLOCK_SIZE), 0, s>>>(m, n, alpha, A, m, x, 1, beta, y, 1);
     //gpu_deac_gemv_atomic<<<dim3((n + TILE_WIDTH - 1) / TILE_WIDTH), dim3(TILE_WIDTH), 0, s>>>(m, n, alpha, A, m, x, 1, beta, y, 1);
-    gpu_deac_gemv<<<dim3((n + TILE_WIDTH - 1) / TILE_WIDTH, (n + TILE_WIDTH - 1) / TILE_WIDTH), dim3(TILE_WIDTH, TILE_WIDTH), 0, s>>>(m, n, alpha, A, m, x, 1, beta, y, 1);
+    gpu_deac_gemv<<<dim3((n + TILE_WIDTH - 1) / TILE_WIDTH, (m + TILE_WIDTH - 1) / TILE_WIDTH), dim3(TILE_WIDTH, TILE_WIDTH), 0, s>>>(m, n, alpha, A, m, x, 1, beta, y, 1);
 }
 
 void gpu_get_minimum(cudaStream_t s, double* __restrict__ minimum, double* __restrict__ array, size_t N) {
