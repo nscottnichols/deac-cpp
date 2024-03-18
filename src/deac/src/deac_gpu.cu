@@ -314,6 +314,65 @@ __global__ void gpu_matmul(int m, int n, int k, double alpha, double* __restrict
         C[row + ldc * col] = alpha * Cvalue + beta * C[row + ldc * col];
 }
 
+__global__ void gpu_deac_gemv_simple(int m, int n, double alpha, double* __restrict__ A, int lda, double* __restrict__ x, int incx, double beta, double* __restrict__ y, int incy) {
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row < m) {
+        double sum = 0.0;
+        for (int j = 0; j < n; j++) {
+            sum += A[row + j*lda] * x[j*incx];
+        }
+        y[row*incy] = alpha * sum + beta * y[row*incy];
+    }
+}
+
+__global__ void gpu_deac_gemv_atomic(int m, int n, double alpha, double* __restrict__ A, int lda, double* __restrict__ x, int incx, double beta, double* __restrict__ y, int incy) {
+    __shared__ double shared_x[TILE_WIDTH];
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (col < n) {
+        shared_x[threadIdx.x] = x[col * incx];
+    }
+    __syncthreads();
+
+    if (col < n) {
+        for (int i = 0; i < m; i++) {
+            double Aval = A[i + col * lda];
+            atomicAdd(&y[i * incy], alpha * Aval * shared_x[threadIdx.x]);
+        }
+    }
+}
+
+__global__ void gpu_deac_gemv(int m, int n, double alpha, double* __restrict__ A, int lda, double* __restrict__ x, int incx, double beta, double* __restrict__ y, int incy) {
+    __shared__ double As[TILE_WIDTH][TILE_WIDTH];
+    int tx = threadIdx.x;
+    int by = blockIdx.y, ty = threadIdx.y;
+    int row = by * blockDim.y + ty;
+
+    double sum = 0.0;
+    if (row < m) {
+        for (int i = 0; i < (n + TILE_WIDTH - 1) / TILE_WIDTH; ++i) {
+            if (i*TILE_WIDTH + tx < n && row < m) {
+                As[ty][tx] = A[row + (i*TILE_WIDTH + tx) * lda];
+            } else {
+                As[ty][tx] = 0.0;
+            }
+            __syncthreads();
+
+            for (int k = 0; k < TILE_WIDTH; ++k) {
+                if (i*TILE_WIDTH + k < n) {
+                    sum += As[ty][k] * x[(i*TILE_WIDTH + k)*incx];
+                }
+            }
+            __syncthreads();
+        }
+        if (beta == 0.0) {
+            y[row * incy] = alpha * sum;
+        } else {
+            y[row * incy] = alpha * sum + beta * y[row * incy];
+        }
+    }
+}
+
 __global__
 void gpu_get_minimum(double* __restrict__ minimum, double* __restrict__ array, size_t N) {
     // finds minimum of array with length N
@@ -588,6 +647,12 @@ void gpu_dot(cudaStream_t s, double* __restrict__ C, double* __restrict__ B, dou
 
 void gpu_matmul(cudaStream_t s, int m, int n, int k, double alpha, double* __restrict__ A, double* __restrict__ B, double beta, double* __restrict__ C) {
     gpu_matmul<<<dim3((n + TILE_WIDTH - 1) / TILE_WIDTH, (m + TILE_WIDTH - 1) / TILE_WIDTH), dim3(TILE_WIDTH, TILE_WIDTH), 0, s>>>(m, n, k, alpha, A, m, B, k, beta, C, m);
+}
+
+void gpu_deac_gemv(cudaStream_t s, int m, int n, double alpha, double* __restrict__ A, double* __restrict__ x, double beta, double* __restrict__ y) {
+    //gpu_deac_gemv_simple<<<dim3((m + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE), dim3(GPU_BLOCK_SIZE), 0, s>>>(m, n, alpha, A, m, x, 1, beta, y, 1);
+    //gpu_deac_gemv_atomic<<<dim3((n + TILE_WIDTH - 1) / TILE_WIDTH), dim3(TILE_WIDTH), 0, s>>>(m, n, alpha, A, m, x, 1, beta, y, 1);
+    gpu_deac_gemv<<<dim3((n + TILE_WIDTH - 1) / TILE_WIDTH, (n + TILE_WIDTH - 1) / TILE_WIDTH), dim3(TILE_WIDTH, TILE_WIDTH), 0, s>>>(m, n, alpha, A, m, x, 1, beta, y, 1);
 }
 
 void gpu_get_minimum(cudaStream_t s, double* __restrict__ minimum, double* __restrict__ array, size_t N) {
