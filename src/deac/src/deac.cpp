@@ -340,7 +340,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             } else {
                 df = 0.5*(frequency[j+1] - frequency[j-1]);
             }
-            size_t isf_term_idx = i*genome_size + j;
+            //size_t isf_term_idx = i*genome_size + j; //row-major storage
+            size_t isf_term_idx = j*number_of_timeslices + i; //column-major storage
             #ifndef ZEROT
                 #ifdef USE_HYPERBOLIC_MODEL
                     #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
