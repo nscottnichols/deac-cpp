@@ -461,13 +461,18 @@ void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __rest
     });
 }
 
-void gpu_normalize_population(sycl::queue q, size_t grid_size, double* __restrict__ population, double* __restrict__ normalization, double zeroth_moment, size_t population_size, size_t genome_size) {
+void gpu_deac_dgmmDiv1D(sycl::queue q, double* __restrict__ matrix, double* __restrict__ vector, size_t rows, size_t cols) {
     q.submit([&](sycl::handler& cgh) {
+        size_t grid_size = (rows*cols + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
         cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
                 [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            size_t global_idx = item.get_global_id(0);
-            if (global_idx < population_size*genome_size) {
-                population[global_idx] *= zeroth_moment/normalization[global_idx/genome_size];
+            size_t idx = item.get_global_id(0); // 1D index for the entire matrix
+            if (idx < rows * cols) { // Ensure we do not go out of bounds
+                size_t row = idx % rows; // Calculate the row index
+                //size_t col = idx / rows; // Calculate the column index, assuming column-major order
+                // Perform the division operation
+                double reciprocal = 1.0/vector[row];
+                matrix[idx] *= reciprocal;
             }
         });
     });

@@ -403,11 +403,14 @@ void gpu_get_minimum(double* __restrict__ minimum, double* __restrict__ array, s
     }
 }
 
-__global__
-void gpu_normalize_population(double* __restrict__ population, double* __restrict__ normalization, double zeroth_moment, size_t population_size, size_t genome_size) {
-    size_t global_idx = blockDim.x*blockIdx.x + threadIdx.x;
-    if (global_idx < population_size*genome_size) {
-        population[global_idx] *= zeroth_moment/normalization[global_idx/genome_size];
+__global__ void gpu_deac_dgmmDiv1D(double* __restrict__ matrix, double* __restrict__ vector, size_t rows, size_t cols) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x; // 1D index for the entire matrix
+    if (idx < rows * cols) { // Ensure we do not go out of bounds
+        size_t row = idx % rows; // Calculate the row index
+        //size_t col = idx / rows; // Calculate the column index, assuming column-major order
+        double reciprocal = 1.0/vector[row];
+        // Perform the division operation
+        matrix[idx] *= reciprocal;
     }
 }
 
@@ -660,8 +663,8 @@ void gpu_get_minimum(cudaStream_t s, double* __restrict__ minimum, double* __res
     gpu_get_minimum<<<dim3(1), dim3(GPU_BLOCK_SIZE), 0, s>>>(minimum, array, N);
 }
 
-void gpu_normalize_population(cudaStream_t s, size_t grid_size, double* __restrict__ population, double* __restrict__ normalization, double zeroth_moment, size_t population_size, size_t genome_size) {
-    gpu_normalize_population<<<dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s>>>(population, normalization, zeroth_moment, population_size, genome_size);
+void gpu_deac_dgmmDiv1D(cudaStream_t s, double* __restrict__ matrix, double* __restrict__ vector, size_t rows, size_t cols) {
+    gpu_deac_dgmmDiv1D<<<dim3((rows*cols + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE), dim3(GPU_BLOCK_SIZE), 0, s>>>(matrix, vector, rows, cols);
 }
 
 void gpu_set_fitness(cudaStream_t s, double* __restrict__ fitness, double* __restrict__ isf, double* __restrict__ isf_model, double* __restrict__ isf_error, size_t number_of_timeslices) {
