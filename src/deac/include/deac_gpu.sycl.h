@@ -478,57 +478,39 @@ void gpu_deac_dgmmDiv1D(sycl::queue q, double* __restrict__ matrix, double* __re
     });
 }
 
-void gpu_set_fitness(sycl::queue q, double* __restrict__ fitness, double* __restrict__ isf, double* __restrict__ isf_model, double* __restrict__ isf_error, size_t number_of_timeslices) {
+void gpu_deac_reduced_chi_squared(const double* __restrict__ calculated_data, const double* __restrict__ observed_data, const double* __restrict__ standard_deviations, double* __restrict__ reduced_chi_squared, size_t m, size_t n, size_t ddof, double beta) {
     q.submit([&](sycl::handler& cgh) {
-        sycl::local_accessor<double, 1> _f(sycl::range<1>(GPU_BLOCK_SIZE), cgh);
-        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+        sycl::local_accessor<double, 1> sdata(sycl::range<1>(GPU_BLOCK_SIZE), cgh); // Use static shared memory for reduction
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(m*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
                 [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            // Set shared local memory _f
-            size_t local_idx = item.get_local_id(0);
-            if (local_idx < number_of_timeslices) {
-                _f[local_idx] = sycl::pown((isf[local_idx] - isf_model[local_idx])/isf_error[local_idx], 2);
-            } else {
-                _f[local_idx] = 0.0;
+            size_t row = item.get_group(0);
+            size_t tid = item.get_local_id(0);
+            double sum = 0.0;
+
+            // Loop over all elements assigned to this thread
+            for (size_t idx = tid; idx < n; idx += item.get_local_range(0)) {
+                double O = observed_data[idx];
+                double E = calculated_data[row + idx * m]; // Access pattern for column-major storage
+                double sigma = standard_deviations[idx];
+                double term = (O - E) / sigma;
+                sum += term * term;
             }
 
-            for (size_t i = 1; i < (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
-                size_t j = GPU_BLOCK_SIZE*i + local_idx;
-                if (j < number_of_timeslices) {
-                    _f[local_idx] += sycl::pown((isf[j] - isf_model[j])/isf_error[j], 2);
-                }
-            }
+            // Load the thread's sum into shared memory and synchronize
+            sdata[tid] = sum;
             sycl::group_barrier(item.get_group());
 
-            // Reduce _f (using shared local memory)
-            gpu_reduce_add(_f.get_pointer(), item);
-
-            //Set fitness
-            if (local_idx == 0) {
-                 fitness[0] += _f[0]/number_of_timeslices;
+            // Perform reduction in shared memory
+            for (size_t s = item.get_local_range(0) / 2; s > 0; s >>= 1) {
+                if (tid < s) {
+                    sdata[tid] += sdata[tid + s];
+                }
+                sycl::group_barrier(item.get_group());
             }
-        });
-    });
-}
 
-void gpu_set_fitness_moments_reduced_chi_squared(sycl::queue q, size_t grid_size, double* __restrict__ fitness, double* __restrict__ moments, double moment, double moment_error, size_t population_size) {
-    q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
-                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            size_t global_idx = item.get_global_id(0);
-            if (global_idx < population_size) {
-                fitness[global_idx] += sycl::pown((moment - moments[global_idx])/moment_error, 2);
-            }
-        });
-    });
-}
-
-void gpu_set_fitness_moments_chi_squared(sycl::queue q, size_t grid_size, double* __restrict__ fitness, double* __restrict__ moments, double moment, size_t population_size) {
-    q.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
-                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            size_t global_idx = item.get_global_id(0);
-            if (global_idx < population_size) {
-                fitness[global_idx] += sycl::pown(moment - moments[global_idx], 2);
+            // Have the first thread in the block write the result for this row to global memory
+            if (tid == 0) {
+                reduced_chi_squared[row] = sdata[0]/(n - ddof) + beta*reduced_chi_squared[row];
             }
         });
     });
@@ -604,8 +586,8 @@ void gpu_set_population_new(sycl::queue q, size_t grid_size, double* __restrict_
                 [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             size_t global_idx = item.get_global_id(0);
             if (global_idx < population_size*genome_size) {
-                size_t _i = global_idx/genome_size;
-                size_t _j = global_idx - _i*genome_size;
+                //size_t _i = global_idx/genome_size;
+                //size_t _j = global_idx - _i*genome_size;
                 double F = differential_weights_new[_i];
                 size_t mutant_index1 = mutant_indices[3*_i];
                 size_t mutant_index2 = mutant_indices[3*_i + 1];
@@ -613,9 +595,11 @@ void gpu_set_population_new(sycl::queue q, size_t grid_size, double* __restrict_
                 bool mutate = mutate_indices[global_idx];
                 if (mutate) {
                     #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
-                        population_new[global_idx] = population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]);
+                        //population_new[global_idx] = population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]);
+                        population_new[global_idx] = population_old[population_size*_j + mutant_index1] + F*(population_old[population_size*_j + mutant_index2] - population_old[population_size*_j + mutant_index3]);
                     #else
-                        population_new[global_idx] = sycl::fabs(population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]));
+                        //population_new[global_idx] = sycl::fabs(population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]));
+                        population_new[global_idx] = sycl::fabs(population_old[population_size*_j + mutant_index1] + F*(population_old[population_size*_j + mutant_index2] - population_old[population_size*_j + mutant_index3]));
                     #endif
                 } else {
                     population_new[global_idx] = population_old[global_idx];
@@ -631,7 +615,8 @@ void gpu_match_population_zero(sycl::queue q, size_t grid_size, double* __restri
                 [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             size_t global_idx = item.get_global_id(0);
             if (global_idx < population_size) {
-                population_negative_frequency[global_idx*genome_size] = population_positive_frequency[global_idx*genome_size];
+                //population_negative_frequency[global_idx*genome_size] = population_positive_frequency[global_idx*genome_size];
+                population_negative_frequency[global_idx] = population_positive_frequency[global_idx]; // Column-major
             }
         });
     });
@@ -750,7 +735,8 @@ void gpu_set_mutate_indices(sycl::queue q, size_t grid_size, uint64_t* __restric
                 [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             size_t global_idx = item.get_global_id(0);
             if (global_idx < population_size*genome_size) {
-                size_t _i = global_idx/genome_size;
+                //size_t _i = global_idx/genome_size;
+                size_t _i = global_idx % population_size;
                 mutate_indices[global_idx] = (gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53 < crossover_probabilities[_i];
             }
         });

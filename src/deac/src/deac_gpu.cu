@@ -414,51 +414,36 @@ __global__ void gpu_deac_dgmmDiv1D(double* __restrict__ matrix, double* __restri
     }
 }
 
-__global__
-void gpu_set_fitness(double* __restrict__ fitness, double* __restrict__ isf, double* __restrict__ isf_model, double* __restrict__ isf_error, size_t number_of_timeslices) {
-    __shared__ double _f[GPU_BLOCK_SIZE];
-    // Set shared local memory _f
-    size_t local_idx = threadIdx.x;
-    if (local_idx < number_of_timeslices) {
-        double __f = (isf[local_idx] - isf_model[local_idx])/isf_error[local_idx];
-        _f[local_idx] = __f*__f;
-    } else {
-        _f[local_idx] = 0.0;
+__global__ void gpu_deac_reduced_chi_squared(const double* __restrict__ calculated_data, const double* __restrict__ observed_data, const double* __restrict__ standard_deviations, double* __restrict__ reduced_chi_squared, size_t m, size_t n, size_t ddof, double beta) {
+    __shared__ double sdata[GPU_BLOCK_SIZE]; // Use static shared memory for reduction
+    size_t row = blockIdx.x;
+    size_t tid = threadIdx.x;
+    double sum = 0.0;
+
+    // Loop over all elements assigned to this thread
+    for (size_t idx = tid; idx < n; idx += blockDim.x) {
+        double O = observed_data[idx];
+        double E = calculated_data[row + idx * m]; // Access pattern for column-major storage
+        double sigma = standard_deviations[idx];
+        double term = (O - E) / sigma;
+        sum += term * term;
     }
 
-    for (size_t i = 1; i < (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE; i++) {
-        size_t j = GPU_BLOCK_SIZE*i + local_idx;
-        if (j < number_of_timeslices) {
-            double __f = (isf[j] - isf_model[j])/isf_error[j];
-            _f[local_idx] += __f*__f;
-        }
-    }
+    // Load the thread's sum into shared memory and synchronize
+    sdata[tid] = sum;
     __syncthreads();
 
-    // Reduce _f (using shared local memory)
-    gpu_reduce_add(_f);
-
-    //Set fitness
-    if (local_idx == 0) {
-         fitness[0] += _f[0]/number_of_timeslices;
+    // Perform reduction in shared memory
+    for (size_t s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            sdata[tid] += sdata[tid + s];
+        }
+        __syncthreads();
     }
-}
 
-__global__
-void gpu_set_fitness_moments_reduced_chi_squared(double* __restrict__ fitness, double* __restrict__ moments, double moment, double moment_error, size_t population_size) {
-    size_t global_idx = blockDim.x*blockIdx.x + threadIdx.x;
-    if (global_idx < population_size) {
-        double __f = (moment - moments[global_idx])/moment_error;
-        fitness[global_idx] += __f*__f;
-    }
-}
-
-__global__
-void gpu_set_fitness_moments_chi_squared(double* __restrict__ fitness, double* __restrict__ moments, double moment, size_t population_size) {
-    size_t global_idx = blockDim.x*blockIdx.x + threadIdx.x;
-    if (global_idx < population_size) {
-        double __f = moment - moments[global_idx];
-        fitness[global_idx] += __f*__f;
+    // Have the first thread in the block write the result for this row to global memory
+    if (tid == 0) {
+        reduced_chi_squared[row] = sdata[0]/(n - ddof) + beta*reduced_chi_squared[row];
     }
 }
 
@@ -522,8 +507,10 @@ __global__
 void gpu_set_population_new(double* __restrict__ population_new, double* __restrict__ population_old, size_t* __restrict__ mutant_indices, double* __restrict__ differential_weights_new, bool* __restrict__ mutate_indices, size_t population_size, size_t genome_size) {
     size_t global_idx = blockDim.x*blockIdx.x + threadIdx.x;
     if (global_idx < population_size*genome_size) {
-        size_t _i = global_idx/genome_size;
-        size_t _j = global_idx - _i*genome_size;
+        //size_t _i = global_idx/genome_size;
+        //size_t _j = global_idx - _i*genome_size;
+        size_t _i = global_idx % population_size; // row
+        size_t _j = global_idx / population_size; // col
         double F = differential_weights_new[_i];
         size_t mutant_index1 = mutant_indices[3*_i];
         size_t mutant_index2 = mutant_indices[3*_i + 1];
@@ -531,9 +518,11 @@ void gpu_set_population_new(double* __restrict__ population_new, double* __restr
         bool mutate = mutate_indices[global_idx];
         if (mutate) {
             #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
-                population_new[global_idx] = population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]);
+                //population_new[global_idx] = population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]);
+                population_new[global_idx] = population_old[population_size*_j + mutant_index1] + F*(population_old[population_size*_j + mutant_index2] - population_old[population_size*_j + mutant_index3]);
             #else
-                population_new[global_idx] = fabs(population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]));
+                //population_new[global_idx] = fabs(population_old[mutant_index1*genome_size + _j] + F*(population_old[mutant_index2*genome_size + _j] - population_old[mutant_index3*genome_size + _j]));
+                population_new[global_idx] = fabs(population_old[population_size*_j + mutant_index1] + F*(population_old[population_size*_j + mutant_index2] - population_old[population_size*_j + mutant_index3]));
             #endif
         } else {
             population_new[global_idx] = population_old[global_idx];
@@ -546,7 +535,8 @@ __global__
 void gpu_match_population_zero(double* __restrict__ population_negative_frequency, double* __restrict__ population_positive_frequency, size_t population_size, size_t genome_size) {
     size_t global_idx = blockDim.x*blockIdx.x + threadIdx.x;
     if (global_idx < population_size) {
-        population_negative_frequency[global_idx*genome_size] = population_positive_frequency[global_idx*genome_size];
+        //population_negative_frequency[global_idx*genome_size] = population_positive_frequency[global_idx*genome_size];
+        population_negative_frequency[global_idx] = population_positive_frequency[global_idx]; // Column-major
     }
 }
 
@@ -638,7 +628,8 @@ __global__
 void gpu_set_mutate_indices(uint64_t* __restrict__ rng_state, bool* __restrict__ mutate_indices, double* __restrict__ crossover_probabilities, size_t population_size, size_t genome_size) {
     size_t global_idx = blockDim.x*blockIdx.x + threadIdx.x;
     if (global_idx < population_size*genome_size) {
-        size_t _i = global_idx/genome_size;
+        //size_t _i = global_idx/genome_size;
+        size_t _i = global_idx % population_size;
         mutate_indices[global_idx] = (gpu_xoshiro256p_next(rng_state + 4*global_idx) >> 11) * 0x1.0p-53 < crossover_probabilities[_i];
     }
 }
@@ -667,16 +658,8 @@ void gpu_deac_dgmmDiv1D(cudaStream_t s, double* __restrict__ matrix, double* __r
     gpu_deac_dgmmDiv1D<<<dim3((rows*cols + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE), dim3(GPU_BLOCK_SIZE), 0, s>>>(matrix, vector, rows, cols);
 }
 
-void gpu_set_fitness(cudaStream_t s, double* __restrict__ fitness, double* __restrict__ isf, double* __restrict__ isf_model, double* __restrict__ isf_error, size_t number_of_timeslices) {
-    gpu_set_fitness<<<dim3(1), dim3(GPU_BLOCK_SIZE), 0, s>>>(fitness, isf, isf_model, isf_error, number_of_timeslices);
-}
-
-void gpu_set_fitness_moments_reduced_chi_squared(cudaStream_t s, size_t grid_size, double* __restrict__ fitness, double* __restrict__ moments, double moment, double moment_error, size_t population_size) {
-    gpu_set_fitness_moments_reduced_chi_squared<<<dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s>>>(fitness, moments, moment, moment_error, population_size);
-}
-
-void gpu_set_fitness_moments_chi_squared(cudaStream_t s, size_t grid_size, double* __restrict__ fitness, double* __restrict__ moments, double moment, size_t population_size) {
-    gpu_set_fitness_moments_chi_squared<<<dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s>>>(fitness, moments, moment, population_size);
+void gpu_deac_reduced_chi_squared(cudaStream_t s, const double* __restrict__ calculated_data, const double* __restrict__ observed_data, const double* __restrict__ standard_deviations, double* __restrict__ reduced_chi_squared, size_t m, size_t n, size_t ddof, double beta) {
+    gpu_deac_reduced_chi_squared<<<dim3(m), dim3(GPU_BLOCK_SIZE), 0, s>>>(calculated_data, observed_data, standard_deviations, reduced_chi_squared, m, n, ddof, beta);
 }
 
 void gpu_set_fitness_mean(cudaStream_t s, double* __restrict__ fitness_mean, double* __restrict__ fitness, size_t population_size) {
