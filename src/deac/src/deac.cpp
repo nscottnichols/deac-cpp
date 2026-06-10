@@ -6,6 +6,7 @@
 #include <argparse.hpp>
 #include <sstream> // 
 #include <algorithm> // std::none_of
+#include <cmath>
 #include <rng.hpp>
 #include <memory> // string_format
 #include <string> // string_format
@@ -29,6 +30,11 @@ void write_to_logfile(fs::path filename, std::string log_message ) {
     std::ofstream ofs(filename.c_str(), std::ios_base::out | std::ios_base::app );
     ofs << log_message << std::endl;
     ofs.close();
+}
+
+void fail_with_error(const std::string& error_message) {
+    std::cerr << error_message << std::endl;
+    exit(1);
 }
 
 template<typename ... Args>
@@ -66,16 +72,25 @@ std::tuple <double*, size_t> load_numpy_array(std::string data_file) {
     fseek(input_file , 0 , SEEK_END);
     file_size_bytes = ftell(input_file);
     rewind(input_file);
+
+    if ((file_size_bytes < 0) || (file_size_bytes % sizeof(double) != 0)) {
+        fclose(input_file);
+        fail_with_error(string_format("File error: %s does not contain a whole number of doubles", data_file.c_str()));
+    }
     
     size_t number_of_elements = static_cast<size_t> (file_size_bytes/sizeof(double));
+    if (number_of_elements == 0) {
+        fclose(input_file);
+        fail_with_error(string_format("File error: %s is empty", data_file.c_str()));
+    }
   
     // allocate memory to contain the whole file:
-    buffer = (double*) malloc(sizeof(char)*file_size_bytes);
+    buffer = (double*) malloc(sizeof(double)*number_of_elements);
     if (buffer == NULL) {fputs("Memory error",stderr); exit(2);}
   
     // copy the file into the buffer:
-    result = fread(buffer,1,file_size_bytes,input_file);
-    if (result != file_size_bytes) {fputs("Reading error",stderr); exit(3);}
+    result = fread(buffer, 1, static_cast<size_t>(file_size_bytes), input_file);
+    if (result != static_cast<size_t>(file_size_bytes)) {fputs("Reading error",stderr); exit(3);}
   
     /* the whole file is now loaded in the memory buffer. */
     fclose (input_file);
@@ -332,6 +347,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #endif
         for (size_t j=0; j<genome_size; j++) {
             double f = frequency[j];
+            (void) f;
             double df;
             if (j==0) {
                 df = 0.5*(frequency[j+1] - frequency[j]);
@@ -454,9 +470,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     // Normalize population
     size_t bytes_normalization = sizeof(double)*population_size;
     size_t bytes_normalization_term = sizeof(double)*genome_size;
-    double * normalization;
-    double * normalization_term_positive_frequency;
-    double * normalization_term_negative_frequency;
+    double * normalization = nullptr;
+    double * normalization_term_positive_frequency = nullptr;
+    double * normalization_term_negative_frequency = nullptr;
     #ifdef USE_GPU
         double* d_normalization;
         double* d_normalization_term_positive_frequency;
@@ -470,6 +486,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #endif
         for (size_t j=0; j<genome_size; j++) {
             double f = frequency[j];
+            (void) f;
             double df;
             if (j==0) {
                 df = 0.5*(frequency[j+1] - frequency[j]);
@@ -581,10 +598,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     size_t bytes_first_moments_term = sizeof(double)*genome_size;
     size_t bytes_first_moments = sizeof(double)*population_size;
 
-    double * first_moments;
-    double * first_moments_term_positive_frequency;
+    double * first_moments = nullptr;
+    double * first_moments_term_positive_frequency = nullptr;
     #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-        double * first_moments_term_negative_frequency;
+        double * first_moments_term_negative_frequency = nullptr;
     #endif
     #ifdef USE_GPU
         double* d_first_moments;
@@ -596,8 +613,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
     //FIXME it doesn't make sense for first moment term to have no error. If there was no error, it should have infinite importance in the fitness function. Setting error to 1.0 here.
     double first_moment_error = 1.0;
+    #ifndef USE_GPU
+        (void) first_moment_error;
+    #endif
     if (use_first_moment) {
-        std::cout << "WARNING: setting first_moment_error to 1.0." << generation << std::endl;
+        std::cout << "WARNING: setting first_moment_error to 1.0." << std::endl;
         first_moments_term_positive_frequency = (double*) malloc(bytes_first_moments_term);
         #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
             first_moments_term_negative_frequency = (double*) malloc(bytes_first_moments_term);
@@ -693,10 +713,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     size_t bytes_third_moments_term = sizeof(double)*genome_size;
     size_t bytes_third_moments = sizeof(double)*population_size;
 
-    double * third_moments;
-    double * third_moments_term_positive_frequency;
+    double * third_moments = nullptr;
+    double * third_moments_term_positive_frequency = nullptr;
     #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-        double * third_moments_term_negative_frequency;
+        double * third_moments_term_negative_frequency = nullptr;
     #endif
     #ifdef USE_GPU
         double* d_third_moments;
@@ -911,18 +931,18 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
         #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
             if (use_negative_first_moment) {
-                gpu_deac_reduced_chi_squared(default_stream, d_negative_first_moments, &negative_first_moment, &negative_first_moment_error, d_fitness_old, population_size, 1, 0, 1.0);
+                gpu_deac_add_scalar_reduced_chi_squared(default_stream, d_negative_first_moments, negative_first_moment, negative_first_moment_error, d_fitness_old, population_size);
                 GPU_ASSERT(deac_wait(default_stream));
             }
         #else
             //FIXME inverse first moment not implemented
         #endif
         if (use_first_moment) {
-            gpu_deac_reduced_chi_squared(default_stream, d_first_moments, &first_moment, &first_moment_error, d_fitness_old, population_size, 1, 0, 1.0);
+            gpu_deac_add_scalar_reduced_chi_squared(default_stream, d_first_moments, first_moment, first_moment_error, d_fitness_old, population_size);
             GPU_ASSERT(deac_wait(default_stream));
         }
         if (use_third_moment) {
-            gpu_deac_reduced_chi_squared(default_stream, d_third_moments, &third_moment, &third_moment_error, d_fitness_old, population_size, 1, 0, 1.0);
+            gpu_deac_add_scalar_reduced_chi_squared(default_stream, d_third_moments, third_moment, third_moment_error, d_fitness_old, population_size);
             GPU_ASSERT(deac_wait(default_stream));
         }
     #else
@@ -1022,9 +1042,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #endif
 
     //Initialize statistics arrays
-    double* fitness_mean;
-    double* fitness_minimum;
-    double* fitness_squared_mean;
+    double* fitness_mean = nullptr;
+    double* fitness_minimum = nullptr;
+    double* fitness_squared_mean = nullptr;
     #ifdef USE_GPU
         double* d_fitness_mean;
         double* d_fitness_squared_mean;
@@ -1106,7 +1126,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         GPU_ASSERT(deac_wait(default_stream));
     #endif
     
-    size_t generation;
+    size_t generation = 0;
     for (size_t ii=0; ii < number_of_generations - 1; ii++) {
         generation = ii;
         #ifdef USE_GPU
@@ -1455,18 +1475,18 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
             #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                 if (use_negative_first_moment) {
-                    gpu_deac_reduced_chi_squared(default_stream, d_negative_first_moments, &negative_first_moment, &negative_first_moment_error, d_fitness_new, population_size, 1, 0, 1.0);
+                    gpu_deac_add_scalar_reduced_chi_squared(default_stream, d_negative_first_moments, negative_first_moment, negative_first_moment_error, d_fitness_new, population_size);
                     GPU_ASSERT(deac_wait(default_stream));
                 }
             #else
                 //FIXME inverse first moment not implemented
             #endif
             if (use_first_moment) {
-                gpu_deac_reduced_chi_squared(default_stream, d_first_moments, &first_moment, &first_moment_error, d_fitness_new, population_size, 1, 0, 1.0);
+                gpu_deac_add_scalar_reduced_chi_squared(default_stream, d_first_moments, first_moment, first_moment_error, d_fitness_new, population_size);
                 GPU_ASSERT(deac_wait(default_stream));
             }
             if (use_third_moment) {
-                gpu_deac_reduced_chi_squared(default_stream, d_third_moments, &third_moment, &third_moment_error, d_fitness_new, population_size, 1, 0, 1.0);
+                gpu_deac_add_scalar_reduced_chi_squared(default_stream, d_third_moments, third_moment, third_moment_error, d_fitness_new, population_size);
                 GPU_ASSERT(deac_wait(default_stream));
             }
         #else
@@ -1680,9 +1700,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         std::string fitness_mean_filename_str = string_format("%s_stats_fitness-mean_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
         std::string fitness_minimum_filename_str = string_format("%s_stats_fitness-minimum_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
         std::string fitness_squared_mean_filename_str = string_format("%s_stats_fitness-squared-mean_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
-        fs::path fitness_mean_filename = save_directory / fitness_mean_filename_str;
-        fs::path fitness_minimum_filename = save_directory / fitness_minimum_filename_str;
-        fs::path fitness_squared_mean_filename = save_directory / fitness_squared_mean_filename_str;
+        fitness_mean_filename = save_directory / fitness_mean_filename_str;
+        fitness_minimum_filename = save_directory / fitness_minimum_filename_str;
+        fitness_squared_mean_filename = save_directory / fitness_squared_mean_filename_str;
         write_array(fitness_mean_filename, fitness_mean, generation + 1);
         write_array(fitness_minimum_filename, fitness_minimum, generation + 1);
         write_array(fitness_squared_mean_filename, fitness_squared_mean, generation + 1);
@@ -1902,15 +1922,15 @@ int main (int argc, char *argv[]) {
         .action([](const std::string& value) { return std::stod(value); });
     program.add_argument("-N", "--number_of_generations")
         .help("Number of generations before genetic algorithm quits.")
-        .default_value(100000)
+        .default_value(100000UL)
         .action([](const std::string& value) { return std::stoul(value); });
     program.add_argument("-P","--population_size")
         .help("Size of initial population")
-        .default_value(512)
+        .default_value(512UL)
         .action([](const std::string& value) { return std::stoul(value); });
     program.add_argument("-M","--genome_size")
         .help("Size of genome.")
-        .default_value(512)
+        .default_value(512UL)
         .action([](const std::string& value) { return std::stoul(value); });
     program.add_argument("--omega_max")
         .help("Maximum frequency to explore.")
@@ -1968,7 +1988,7 @@ int main (int argc, char *argv[]) {
         .action([](const std::string& value) { return std::stod(value); });
     program.add_argument("--seed")
         .help("Seed to pass to random number generator.")
-        .default_value(0)
+        .default_value(0UL)
         .action([](const std::string& value) { return std::stoul(value); });
     program.add_argument("--uuid")
         .help("UUID for run. If empty will be set to `seed`.")
@@ -2033,11 +2053,25 @@ int main (int argc, char *argv[]) {
     double* numpy_data;
     std::string isf_file = program.get<std::string>("isf_file");
     std::tie(numpy_data, number_of_elements) = load_numpy_array(isf_file);
+    if (number_of_elements % 3 != 0) {
+        fail_with_error("ISF input file must contain tau, isf, and error arrays of equal length");
+    }
     size_t number_of_timeslices = number_of_elements/3;
+    if (number_of_timeslices < 2) {
+        fail_with_error("ISF input file must contain at least two timeslices");
+    }
 
     double * const imaginary_time = numpy_data;
     double * const isf = numpy_data + number_of_timeslices;
     double * const isf_error = numpy_data + 2*number_of_timeslices;
+    for (size_t i=0; i<number_of_timeslices; i++) {
+        if (!std::isfinite(imaginary_time[i]) || !std::isfinite(isf[i]) || !std::isfinite(isf_error[i])) {
+            fail_with_error("ISF input file contains non-finite values");
+        }
+        if (isf_error[i] <= 0.0) {
+            fail_with_error("ISF input errors must be positive");
+        }
+    }
 
     uint64_t seed = 1407513600 + static_cast<uint64_t>(program.get<unsigned long>("--seed"));
     uint64_t seed_int = static_cast<uint64_t>(program.get<unsigned long>("--seed"));
@@ -2045,10 +2079,18 @@ int main (int argc, char *argv[]) {
 
     double temperature = program.get<double>("--temperature");
     #ifndef ZEROT
-        assert(temperature > 0.0);
+        if (!std::isfinite(temperature) || temperature <= 0.0) {
+            fail_with_error("temperature must be positive for non-ZeroT builds");
+        }
     #endif
     size_t number_of_generations = static_cast<size_t>(program.get<unsigned long>("--number_of_generations"));
     size_t population_size = static_cast<size_t>(program.get<unsigned long>("--population_size"));
+    if (number_of_generations < 2) {
+        fail_with_error("number_of_generations must be at least 2");
+    }
+    if (population_size < 4) {
+        fail_with_error("population_size must be at least 4");
+    }
 
     size_t genome_size;
     double * frequency;
@@ -2057,11 +2099,28 @@ int main (int argc, char *argv[]) {
     } else{
         genome_size = static_cast<size_t>(program.get<unsigned long>("--genome_size"));
         double max_frequency = program.get<double>("--omega_max");
+        if (genome_size < 2) {
+            fail_with_error("genome_size must be at least 2");
+        }
+        if (!std::isfinite(max_frequency) || max_frequency <= 0.0) {
+            fail_with_error("omega_max must be positive");
+        }
 
         frequency = (double*) malloc(sizeof(double)*genome_size);
         double dfrequency = max_frequency/(genome_size - 1);
         for (size_t i=0; i<genome_size; i++) {
             frequency[i] = i*dfrequency;
+        }
+    }
+    if (genome_size < 2) {
+        fail_with_error("frequency_file must contain at least two frequencies");
+    }
+    for (size_t i=0; i<genome_size; i++) {
+        if (!std::isfinite(frequency[i]) || frequency[i] < 0.0) {
+            fail_with_error("frequencies must be finite and non-negative");
+        }
+        if ((i > 0) && (frequency[i] < frequency[i - 1])) {
+            fail_with_error("frequencies must be sorted in non-decreasing order");
         }
     }
 
@@ -2070,6 +2129,15 @@ int main (int argc, char *argv[]) {
     double first_moment = program.get<double>("--first_moment");
     double third_moment = program.get<double>("--third_moment");
     double third_moment_error = program.get<double>("--third_moment_error");
+    if (!std::isfinite(first_moment)) {
+        fail_with_error("first_moment must be finite");
+    }
+    if (!std::isfinite(third_moment)) {
+        fail_with_error("third_moment must be finite");
+    }
+    if ((third_moment >= 0.0) && (!std::isfinite(third_moment_error) || third_moment_error <= 0.0)) {
+        fail_with_error("third_moment_error must be positive when third_moment is used");
+    }
 
     double crossover_probability = program.get<double>("--crossover_probability");
     double self_adapting_crossover_probability = program.get<double>("--self_adapting_crossover_probability");

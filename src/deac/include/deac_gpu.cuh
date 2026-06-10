@@ -9,6 +9,7 @@ void gpu_deac_gemv(cudaStream_t s, int m, int n, double alpha, double* __restric
 void gpu_get_minimum(cudaStream_t s, double* __restrict__ minimum, double* __restrict__ array, size_t N);
 void gpu_deac_dgmmDiv1D(cudaStream_t s, double* __restrict__ matrix, double* __restrict__ vector, size_t rows, size_t cols);
 void gpu_deac_reduced_chi_squared(cudaStream_t s, const double* __restrict__ calculated_data, const double* __restrict__ observed_data, const double* __restrict__ standard_deviations, double* __restrict__ reduced_chi_squared, size_t m, size_t n, size_t ddof, double beta);
+void gpu_deac_add_scalar_reduced_chi_squared(cudaStream_t s, const double* __restrict__ calculated_data, double observed_data, double standard_deviation, double* __restrict__ reduced_chi_squared, size_t m);
 void gpu_set_fitness_mean(cudaStream_t s, double* __restrict__ fitness_mean, double* __restrict__ fitness, size_t population_size);
 void gpu_set_fitness_squared_mean(cudaStream_t s, double* __restrict__ fitness_squared_mean, double* __restrict__ fitness, size_t population_size);
 void gpu_set_population_new(cudaStream_t s, size_t grid_size, double* __restrict__ population_new, double* __restrict__ population_old, size_t* __restrict__ mutant_indices, double* __restrict__ differential_weights_new, bool* __restrict__ mutate_indices, size_t population_size, size_t genome_size);

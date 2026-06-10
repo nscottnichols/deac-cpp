@@ -38,10 +38,10 @@
         #define deac_memset(w, x, y, z) hipMemsetAsync(w, x, y, z)
         #define deac_free(x, y) hipFreeAsync(x, y)
         #ifdef USE_BLAS
-            #include "hipblas.hpp"
-            typedef hipHandle_t deac_blas_handle_t;
+            #include <hipblas/hipblas.h>
+            typedef hipblasHandle_t deac_blas_handle_t;
             #define GPU_BLAS_ASSERT(x) (assert((x)==HIPBLAS_STATUS_SUCCESS))
-            #define deac_create_blas_handle(x) hipblasCreate(&x) 
+            #define deac_create_blas_handle(x) hipblasCreate(&x)
             #define deac_destroy_blas_handle(x) hipblasDestroy(x)
             #define deac_set_stream(x, y) hipblasSetStream(x, y)
         #endif
@@ -62,13 +62,17 @@
             #include "cublas_v2.h"
             typedef cublasHandle_t deac_blas_handle_t;
             #define GPU_BLAS_ASSERT(x) (assert((x)==CUBLAS_STATUS_SUCCESS))
-            #define deac_create_blas_handle(x) cublasCreate(&x) 
+            #define deac_create_blas_handle(x) cublasCreate(&x)
             #define deac_destroy_blas_handle(x) cublasDestroy(x)
             #define deac_set_stream(x, y) cublasSetStream(x, y)
         #endif
     #endif
     #ifdef USE_SYCL
-        #include <CL/sycl.hpp>
+        #if __has_include(<sycl/sycl.hpp>)
+            #include <sycl/sycl.hpp>
+        #else
+            #include <CL/sycl.hpp>
+        #endif
         #define GPU_ASSERT(x) x
         #ifndef SUB_GROUP_SIZE
             #define SUB_GROUP_SIZE 8 ///< number of threads per subgroup

@@ -453,6 +453,14 @@ __global__ void gpu_deac_reduced_chi_squared(const double* __restrict__ calculat
     }
 }
 
+__global__ void gpu_deac_add_scalar_reduced_chi_squared(const double* __restrict__ calculated_data, double observed_data, double standard_deviation, double* __restrict__ reduced_chi_squared, size_t m) {
+    size_t idx = hipBlockDim_x*hipBlockIdx_x + hipThreadIdx_x;
+    if (idx < m) {
+        double term = (observed_data - calculated_data[idx])/standard_deviation;
+        reduced_chi_squared[idx] += term*term;
+    }
+}
+
 __global__
 void gpu_set_fitness_mean(double* __restrict__ fitness_mean, double* __restrict__ fitness, size_t population_size) {
     __shared__ double _fm[GPU_BLOCK_SIZE];
@@ -572,7 +580,7 @@ __global__
 void gpu_swap_populations(double* __restrict__ population_old, double* __restrict__ population_new, bool* __restrict__ rejection_indices, size_t population_size, size_t genome_size) {
     size_t global_idx = hipBlockDim_x*hipBlockIdx_x + hipThreadIdx_x;
     if (global_idx < population_size*genome_size) {
-        size_t _i = global_idx/genome_size;
+        size_t _i = global_idx % population_size;
         if (rejection_indices[_i]) {
             population_old[global_idx] = population_new[global_idx];
         }
@@ -670,6 +678,10 @@ void gpu_deac_dgmmDiv1D(hipStream_t s, double* __restrict__ matrix, double* __re
 
 void gpu_deac_reduced_chi_squared(hipStream_t s, const double* __restrict__ calculated_data, const double* __restrict__ observed_data, const double* __restrict__ standard_deviations, double* __restrict__ reduced_chi_squared, size_t m, size_t n, size_t ddof, double beta) {
     hipLaunchKernelGGL(gpu_deac_reduced_chi_squared, dim3(m), dim3(GPU_BLOCK_SIZE), 0, s, calculated_data, observed_data, standard_deviations, reduced_chi_squared, m, n, ddof, beta);
+}
+
+void gpu_deac_add_scalar_reduced_chi_squared(hipStream_t s, const double* __restrict__ calculated_data, double observed_data, double standard_deviation, double* __restrict__ reduced_chi_squared, size_t m) {
+    hipLaunchKernelGGL(gpu_deac_add_scalar_reduced_chi_squared, dim3((m + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE), dim3(GPU_BLOCK_SIZE), 0, s, calculated_data, observed_data, standard_deviation, reduced_chi_squared, m);
 }
 
 void gpu_set_fitness_mean(hipStream_t s, double* __restrict__ fitness_mean, double* __restrict__ fitness, size_t population_size) {

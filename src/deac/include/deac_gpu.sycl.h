@@ -287,8 +287,8 @@ void gpu_matmul_simple(sycl::queue q, int m, int n, int k, double alpha, double*
         size_t grid_size_y = (m + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
         cgh.parallel_for(sycl::nd_range<2>(sycl::range<2>(grid_size_x*GPU_BLOCK_SIZE, grid_size_y*GPU_BLOCK_SIZE), sycl::range<2>(GPU_BLOCK_SIZE, GPU_BLOCK_SIZE)),
                 [=](sycl::nd_item<2> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            int row = item.get_group_id(1) * item.get_local_range(1) + item.get_local_id(1);
-            int col = item.get_group_id(0) * item.get_local_range(0) + item.get_local_id(0);
+            int row = item.get_group(1) * item.get_local_range(1) + item.get_local_id(1);
+            int col = item.get_group(0) * item.get_local_range(0) + item.get_local_id(0);
 
             if (row < m && col < n) {
                 double sum = 0.0;
@@ -309,7 +309,7 @@ void gpu_matmul(sycl::queue q, int m, int n, int k, double alpha, double* __rest
         sycl::local_accessor<double, 2> Bs(sycl::range<2>(TILE_WIDTH, TILE_WIDTH), cgh);
         cgh.parallel_for(sycl::nd_range<2>(sycl::range<2>(grid_size_x*TILE_WIDTH, grid_size_y*TILE_WIDTH), sycl::range<2>(TILE_WIDTH, TILE_WIDTH)),
                 [=](sycl::nd_item<2> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            int bx = item.get_group_id(0), by = item.get_group_id(1);
+            int bx = item.get_group(0), by = item.get_group(1);
             int tx = item.get_local_id(0), ty = item.get_local_id(1);
 
             // Identify the row and column of the C element to work on
@@ -353,7 +353,7 @@ void gpu_deac_gemv_simple(sycl::queue q, int m, int n, double alpha, double* __r
         size_t grid_size = (m + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
         cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
                 [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            int row = item.get_group_id(0) * item.get_local_range(0) + item.get_local_id(0);
+            int row = item.get_group(0) * item.get_local_range(0) + item.get_local_id(0);
             if (row < m) {
                 double sum = 0.0;
                 for (int j = 0; j < n; j++) {
@@ -371,7 +371,7 @@ void gpu_deac_gemv_atomic(sycl::queue q, int m, int n, double alpha, double* __r
         sycl::local_accessor<double, 1> shared_x(sycl::range<1>(TILE_WIDTH), cgh);
         cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*TILE_WIDTH), sycl::range<1>(TILE_WIDTH)),
                 [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            int col = item.get_group_id(0) * item.get_local_range(0) + item.get_local_id(0);
+            int col = item.get_group(0) * item.get_local_range(0) + item.get_local_id(0);
 
             if (col < n) {
                 shared_x[item.get_local_id(0)] = x[col * incx];
@@ -381,7 +381,7 @@ void gpu_deac_gemv_atomic(sycl::queue q, int m, int n, double alpha, double* __r
             if (col < n) {
                 for (int i = 0; i < m; i++) {
                     double Aval = A[i + col * lda];
-                    sycl::atomic_ref atomicY(y[i * incy]);
+                    sycl::atomic_ref<double, sycl::memory_order::relaxed, sycl::memory_scope::device, sycl::access::address_space::global_space> atomicY(y[i * incy]);
                     atomicY.fetch_add(alpha * Aval * shared_x[item.get_local_id(0)]);
                 }
             }
@@ -397,7 +397,7 @@ void gpu_deac_gemv(sycl::queue q, int m, int n, double alpha, double* __restrict
         cgh.parallel_for(sycl::nd_range<2>(sycl::range<2>(grid_size_x*TILE_WIDTH, grid_size_y*TILE_WIDTH), sycl::range<2>(TILE_WIDTH, TILE_WIDTH)),
                 [=](sycl::nd_item<2> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             int tx = item.get_local_id(0);
-            int by = item.get_group_id(1), ty = item.get_local_id(1);
+            int by = item.get_group(1), ty = item.get_local_id(1);
             int row = by * item.get_local_range(1) + ty;
 
             double sum = 0.0;
@@ -425,6 +425,14 @@ void gpu_deac_gemv(sycl::queue q, int m, int n, double alpha, double* __restrict
             }
         });
     });
+}
+
+void gpu_matmul(sycl::queue q, int m, int n, int k, double alpha, double* __restrict__ A, double* __restrict__ B, double beta, double* __restrict__ C) {
+    gpu_matmul(q, m, n, k, alpha, A, m, B, k, beta, C, m);
+}
+
+void gpu_deac_gemv(sycl::queue q, int m, int n, double alpha, double* __restrict__ A, double* __restrict__ x, double beta, double* __restrict__ y) {
+    gpu_deac_gemv(q, m, n, alpha, A, m, x, 1, beta, y, 1);
 }
 
 void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __restrict__ array, size_t N) {
@@ -478,7 +486,7 @@ void gpu_deac_dgmmDiv1D(sycl::queue q, double* __restrict__ matrix, double* __re
     });
 }
 
-void gpu_deac_reduced_chi_squared(const double* __restrict__ calculated_data, const double* __restrict__ observed_data, const double* __restrict__ standard_deviations, double* __restrict__ reduced_chi_squared, size_t m, size_t n, size_t ddof, double beta) {
+void gpu_deac_reduced_chi_squared(sycl::queue q, const double* __restrict__ calculated_data, const double* __restrict__ observed_data, const double* __restrict__ standard_deviations, double* __restrict__ reduced_chi_squared, size_t m, size_t n, size_t ddof, double beta) {
     q.submit([&](sycl::handler& cgh) {
         sycl::local_accessor<double, 1> sdata(sycl::range<1>(GPU_BLOCK_SIZE), cgh); // Use static shared memory for reduction
         cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(m*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
@@ -511,6 +519,20 @@ void gpu_deac_reduced_chi_squared(const double* __restrict__ calculated_data, co
             // Have the first thread in the block write the result for this row to global memory
             if (tid == 0) {
                 reduced_chi_squared[row] = sdata[0]/(n - ddof) + beta*reduced_chi_squared[row];
+            }
+        });
+    });
+}
+
+void gpu_deac_add_scalar_reduced_chi_squared(sycl::queue q, const double* __restrict__ calculated_data, double observed_data, double standard_deviation, double* __restrict__ reduced_chi_squared, size_t m) {
+    q.submit([&](sycl::handler& cgh) {
+        size_t grid_size = (m + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            size_t idx = item.get_global_id(0);
+            if (idx < m) {
+                double term = (observed_data - calculated_data[idx])/standard_deviation;
+                reduced_chi_squared[idx] += term*term;
             }
         });
     });
@@ -586,8 +608,8 @@ void gpu_set_population_new(sycl::queue q, size_t grid_size, double* __restrict_
                 [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             size_t global_idx = item.get_global_id(0);
             if (global_idx < population_size*genome_size) {
-                //size_t _i = global_idx/genome_size;
-                //size_t _j = global_idx - _i*genome_size;
+                size_t _i = global_idx % population_size;
+                size_t _j = global_idx / population_size;
                 double F = differential_weights_new[_i];
                 size_t mutant_index1 = mutant_indices[3*_i];
                 size_t mutant_index2 = mutant_indices[3*_i + 1];
@@ -658,7 +680,7 @@ void gpu_swap_populations(sycl::queue q, size_t grid_size, double* __restrict__ 
                 [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             size_t global_idx = item.get_global_id(0);
             if (global_idx < population_size*genome_size) {
-                size_t _i = global_idx/genome_size;
+                size_t _i = global_idx % population_size;
                 if (rejection_indices[_i]) {
                     population_old[global_idx] = population_new[global_idx];
                 }
@@ -745,11 +767,11 @@ void gpu_set_mutate_indices(sycl::queue q, size_t grid_size, uint64_t* __restric
 
 #ifdef USE_BLAS
     void gpu_blas_gemv(sycl::queue q, int m, int n, double alpha, double* A, double* B, double beta, double* C) {
-        oneapi::mkl::blas::column_major::gemv(q, oneapi::mkl::transpose::nontrans, m, n, &alpha, A, m, B, 1, &beta, C, 1);
+        oneapi::mkl::blas::column_major::gemv(q, oneapi::mkl::transpose::nontrans, m, n, alpha, A, m, B, 1, beta, C, 1);
     }
 
-    void gpu_blas_gemm(hipblasHandle_t handle, int m, int n, int k, double alpha, double* A, double* B, double beta, double* C) {
-        oneapi::mkl::blas::column_major::gemm(q, oneapi::mkl::transpose::nontrans, oneapi::mkl::transpose::nontrans, m, n, k, &alpha, A, m, B, k, &beta, C, m);
+    void gpu_blas_gemm(sycl::queue q, int m, int n, int k, double alpha, double* A, double* B, double beta, double* C) {
+        oneapi::mkl::blas::column_major::gemm(q, oneapi::mkl::transpose::nontrans, oneapi::mkl::transpose::nontrans, m, n, k, alpha, A, m, B, k, beta, C, m);
     }
 #endif
 #endif
