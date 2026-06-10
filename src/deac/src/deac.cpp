@@ -2068,6 +2068,11 @@ int main (int argc, char *argv[]) {
         if (!std::isfinite(imaginary_time[i]) || !std::isfinite(isf[i]) || !std::isfinite(isf_error[i])) {
             fail_with_error("ISF input file contains non-finite values");
         }
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            if (((spectra_type == "spbsf") || (spectra_type == "spfsf")) && (isf[i] > 0.0)) {
+                fail_with_error("positive ISF values are not supported for single-particle spectra");
+            }
+        #endif
         if (isf_error[i] <= 0.0) {
             fail_with_error("ISF input errors must be positive");
         }
