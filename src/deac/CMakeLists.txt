@@ -272,6 +272,7 @@ export(TARGETS ${exe} FILE ${exe}Config.cmake)
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     set(DEAC_SMOKE_TEST "${CMAKE_SOURCE_DIR}/../test/deac_smoke_test.py")
+    set(DEAC_PARITY_TEST "${CMAKE_SOURCE_DIR}/../test/deac_parity_test.py")
     foreach(test_case
             help
             bad_spectra
@@ -304,6 +305,18 @@ if(Python3_Interpreter_FOUND)
                 --case ${test_case}
         )
     endforeach()
+    set(DEAC_PARITY_REFERENCE_EXE "" CACHE FILEPATH "Reference deac executable for backend parity tests.")
+    if(NOT "${DEAC_PARITY_REFERENCE_EXE}" STREQUAL "")
+        add_test(
+            NAME deac_parity_reference
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${DEAC_PARITY_TEST}
+                --reference-exe ${DEAC_PARITY_REFERENCE_EXE}
+                --candidate-exe $<TARGET_FILE:${exe}>
+                --workdir ${CMAKE_CURRENT_BINARY_DIR}/parity/reference
+        )
+    endif()
 else()
     message(WARNING "Python3 interpreter not found; deac smoke tests will not be registered.")
 endif()
