@@ -356,11 +356,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             } else {
                 df = 0.5*(frequency[j+1] - frequency[j-1]);
             }
-            #ifdef USE_GPU
-                size_t isf_term_idx = j*number_of_timeslices + i; //column-major storage
-            #else
-                size_t isf_term_idx = i*genome_size + j; //row-major storage
-            #endif
+            size_t isf_term_idx = i*genome_size + j;
             #ifndef ZEROT
                 #ifdef USE_HYPERBOLIC_MODEL
                     #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
@@ -431,21 +427,33 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         population_old_negative_frequency = (double*) malloc(bytes_population);
         population_new_negative_frequency = (double*) malloc(bytes_population);
     #endif
-    for (size_t i=0; i<genome_size*population_size; i++) {
-        population_old_positive_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
-        #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
-            population_old_positive_frequency[i] -= 0.5; 
-        #endif
-        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-            population_old_negative_frequency[i] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
-            #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
-                population_old_negative_frequency[i] -= 0.5; 
+    for (size_t i=0; i<population_size; i++) {
+        for (size_t j=0; j<genome_size; j++) {
+            #ifdef USE_GPU
+                size_t population_idx = j*population_size + i;
+            #else
+                size_t population_idx = i*genome_size + j;
             #endif
-        #endif
+            population_old_positive_frequency[population_idx] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
+            #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
+                population_old_positive_frequency[population_idx] -= 0.5;
+            #endif
+            #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                population_old_negative_frequency[population_idx] = (xoshiro256p(rng) >> 11) * 0x1.0p-53; // to_double2
+                #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
+                    population_old_negative_frequency[population_idx] -= 0.5;
+                #endif
+            #endif
+        }
     }
     #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
         for (size_t i=0; i<population_size; i++) {
-            population_new_negative_frequency[i*genome_size] = population_new_positive_frequency[i*genome_size]; // Match up zero (always take value from positive result)
+            #ifdef USE_GPU
+                size_t zero_frequency_idx = i;
+            #else
+                size_t zero_frequency_idx = i*genome_size;
+            #endif
+            population_old_negative_frequency[zero_frequency_idx] = population_old_positive_frequency[zero_frequency_idx]; // Match up zero (always take value from positive result)
         }
     #endif
 
@@ -841,7 +849,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             gpu_matmul(default_stream, population_size, number_of_timeslices, genome_size, 1.0, d_population_old_positive_frequency, d_isf_term_positive_frequency, 0.0, d_isf_model);
             GPU_ASSERT(deac_wait(default_stream));
             #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                gpu_matmul(default_stream, population_size, number_of_timeslices, genome_size, 1.0, d_population_old_negative_frequency, d_isf_term_negative_frequency, 0.0, d_isf_model);
+                gpu_matmul(default_stream, population_size, number_of_timeslices, genome_size, 1.0, d_population_old_negative_frequency, d_isf_term_negative_frequency, 1.0, d_isf_model);
                 GPU_ASSERT(deac_wait(default_stream));
             #endif
         #endif
@@ -1370,7 +1378,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 gpu_matmul(default_stream, population_size, number_of_timeslices, genome_size, 1.0, d_population_new_positive_frequency, d_isf_term_positive_frequency, 0.0, d_isf_model);
                 GPU_ASSERT(deac_wait(default_stream));
                 #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                    gpu_matmul(default_stream, population_size, number_of_timeslices, genome_size, 1.0, d_population_new_negative_frequency, d_isf_term_negative_frequency, 0.0, d_isf_model);
+                    gpu_matmul(default_stream, population_size, number_of_timeslices, genome_size, 1.0, d_population_new_negative_frequency, d_isf_term_negative_frequency, 1.0, d_isf_model);
                     GPU_ASSERT(deac_wait(default_stream));
                 #endif
             #endif
