@@ -272,7 +272,28 @@ export(TARGETS ${exe} FILE ${exe}Config.cmake)
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     set(DEAC_SMOKE_TEST "${CMAKE_SOURCE_DIR}/../test/deac_smoke_test.py")
-    foreach(test_case help bad_spectra default normalize first_moment track_stats)
+    foreach(test_case
+            help
+            bad_spectra
+            default
+            normalize
+            first_moment
+            track_stats
+            bad_isf_byte_length
+            empty_isf
+            uneven_isf_arrays
+            too_few_timeslices
+            nonfinite_isf
+            positive_isf_single_particle
+            bad_third_moment_error
+            too_few_generations
+            too_small_population
+            too_small_genome
+            bad_omega_max
+            short_frequency_file
+            nonfinite_frequency
+            negative_frequency
+            unsorted_frequency)
         add_test(
             NAME deac_smoke_${test_case}
             COMMAND
