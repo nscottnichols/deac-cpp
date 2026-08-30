@@ -302,6 +302,14 @@ add_test(
     NAME deac_unit_result_io
     COMMAND deac_result_io_test)
 
+add_executable(deac_zero_temperature_kernel_test
+    ${CMAKE_SOURCE_DIR}/../test/zero_temperature_kernel_test.cpp)
+target_include_directories(deac_zero_temperature_kernel_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+add_test(
+    NAME deac_unit_zero_temperature_kernel
+    COMMAND deac_zero_temperature_kernel_test)
+
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     set(DEAC_SMOKE_TEST "${CMAKE_SOURCE_DIR}/../test/deac_smoke_test.py")
@@ -309,6 +317,9 @@ if(Python3_Interpreter_FOUND)
     set(DEAC_SMOKE_VARIANT_ARGS)
     if(USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF)
         list(APPEND DEAC_SMOKE_VARIANT_ARGS --detailed-balance)
+    endif()
+    if(CMAKE_BUILD_TYPE MATCHES "^ZeroT")
+        list(APPEND DEAC_SMOKE_VARIANT_ARGS --zero-temperature)
     endif()
     set(DEAC_SMOKE_CASES
             help
@@ -320,6 +331,7 @@ if(Python3_Interpreter_FOUND)
             normalize
             normalize_large_population
             first_moment
+            third_moment
             track_stats
             bad_isf_byte_length
             empty_isf
