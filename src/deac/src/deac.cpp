@@ -236,14 +236,16 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         use_negative_first_moment = false; //FIXME disabling inverse first moment for zero temperature (needs further investigation)
         temperature = 0.0;
     #else
-        //Use beta periodicity in imaginary time to reduce numerical instabilities
-        double periodicity = 1.0; // Periodic for bosnonic systems
-        if (
-            (spectra_type == "spfsf") ||
-            (spectra_type == "ffull")
-           ) {
-           periodicity = -1.0; // Antiperiodic for fermionic systems
-        }
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            //Use beta periodicity in imaginary time to reduce numerical instabilities
+            double periodicity = 1.0; // Periodic for bosnonic systems
+            if (
+                (spectra_type == "spfsf") ||
+                (spectra_type == "ffull")
+               ) {
+               periodicity = -1.0; // Antiperiodic for fermionic systems
+            }
+        #endif
     #endif
 
     #ifdef USE_GPU
@@ -480,11 +482,15 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     size_t bytes_normalization_term = sizeof(double)*genome_size;
     double * normalization = nullptr;
     double * normalization_term_positive_frequency = nullptr;
-    double * normalization_term_negative_frequency = nullptr;
+    #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+        double * normalization_term_negative_frequency = nullptr;
+    #endif
     #ifdef USE_GPU
         double* d_normalization;
         double* d_normalization_term_positive_frequency;
-        double* d_normalization_term_negative_frequency;
+        #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            double* d_normalization_term_negative_frequency;
+        #endif
     #endif
     if (normalize) {
         normalization = (double*) malloc(bytes_normalization);
@@ -889,7 +895,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 }
                 negative_first_moments_term[j] = dt;
                 negative_first_moment += isf[j]*dt;
-                negative_first_moment_error = pow(isf_error[j],2) * pow(dt,2);
+                negative_first_moment_error += pow(isf_error[j],2) * pow(dt,2);
             }
             negative_first_moment_error = sqrt(negative_first_moment_error);
 
@@ -901,14 +907,13 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 GPU_ASSERT(deac_memcpy_host_to_device(d_negative_first_moments_term, negative_first_moments_term, bytes_negative_first_moments_term, default_stream));
                 GPU_ASSERT(deac_wait(default_stream));
 
-                size_t grid_size_set_negative_first_moments = (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
                 GPU_ASSERT(deac_memset(d_negative_first_moments, 0, bytes_negative_first_moments, default_stream));
                 GPU_ASSERT(deac_wait(default_stream));
                 #ifdef USE_BLAS
                     gpu_blas_gemv(default_blas_handle, population_size, number_of_timeslices, 1.0, d_isf_model, d_negative_first_moments_term, 0.0, d_negative_first_moments);
                     GPU_ASSERT(deac_wait(default_stream));
                 #else
-                    gpu_deac_gemv(default_stream, population_size, number_of_timeslices, 1.0, d_population_old_positive_frequency, d_negative_first_moments_term_positive_frequency, 0.0, d_negative_first_moments);
+                    gpu_deac_gemv(default_stream, population_size, number_of_timeslices, 1.0, d_isf_model, d_negative_first_moments_term, 0.0, d_negative_first_moments);
                     GPU_ASSERT(deac_wait(default_stream));
                 #endif
             #else
@@ -1398,12 +1403,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         if (use_negative_first_moment) {
             #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                 #ifdef USE_GPU
-                    size_t grid_size_set_negative_first_moments = (number_of_timeslices + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
                     #ifdef USE_BLAS
                         gpu_blas_gemv(default_blas_handle, population_size, number_of_timeslices, 1.0, d_isf_model, d_negative_first_moments_term, 0.0, d_negative_first_moments);
                         GPU_ASSERT(deac_wait(default_stream));
                     #else
-                        gpu_deac_gemv(default_stream, population_size, number_of_timeslices, 1.0, d_population_new_positive_frequency, d_negative_first_moments_term_positive_frequency, 0.0, d_negative_first_moments);
+                        gpu_deac_gemv(default_stream, population_size, number_of_timeslices, 1.0, d_isf_model, d_negative_first_moments_term, 0.0, d_negative_first_moments);
                         GPU_ASSERT(deac_wait(default_stream));
                     #endif
                 #else
@@ -1623,11 +1627,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                      best_dsf[idx_p] = 0.5*population_old_positive_frequency[idx_dsf]*exp(0.5*beta*f);
                 #else
                     if (spectra_type == "spbsf") {
-                        best_dsf[idx_p] = -2.0*M_PI*population_old_positive_frequency[idx_dsf]*sinh(b*f/2); // 0.5*exp(0.5*beta*f)*(-2.0*M_PI*(1 - exp(-beta*f)))
-                        best_dsf[idx_n] = 2.0*M_PI*population_old_negative_frequency[idx_dsf]*sinh(b*f/2);  // 0.5*exp(-0.5*beta*f)*(-2.0*M_PI*(1 - exp(beta*f))) <-- f is negative here
+                        best_dsf[idx_p] = -2.0*M_PI*population_old_positive_frequency[idx_dsf]*sinh(beta*f/2); // 0.5*exp(0.5*beta*f)*(-2.0*M_PI*(1 - exp(-beta*f)))
+                        best_dsf[idx_n] = 2.0*M_PI*population_old_negative_frequency[idx_dsf]*sinh(beta*f/2);  // 0.5*exp(-0.5*beta*f)*(-2.0*M_PI*(1 - exp(beta*f))) <-- f is negative here
                     } else if (spectra_type == "spfsf") {
-                        best_dsf[idx_p] = -2.0*M_PI*population_old_positive_frequency[idx_dsf]*cosh(b*f/2); // 0.5*exp(0.5*beta*f)*(-2.0*M_PI*(1 + exp(-beta*f)))
-                        best_dsf[idx_n] = -2.0*M_PI*population_old_negative_frequency[idx_dsf]*cosh(b*f/2);  // 0.5*exp(-0.5*beta*f)*(-2.0*M_PI*(1 + exp(beta*f))) <-- f is negative here
+                        best_dsf[idx_p] = -2.0*M_PI*population_old_positive_frequency[idx_dsf]*cosh(beta*f/2); // 0.5*exp(0.5*beta*f)*(-2.0*M_PI*(1 + exp(-beta*f)))
+                        best_dsf[idx_n] = -2.0*M_PI*population_old_negative_frequency[idx_dsf]*cosh(beta*f/2);  // 0.5*exp(-0.5*beta*f)*(-2.0*M_PI*(1 + exp(beta*f))) <-- f is negative here
                     } else {
                         best_dsf[idx_p] = 0.5*population_old_positive_frequency[idx_dsf]*exp(0.5*beta*f);
                         best_dsf[idx_n] = 0.5*population_old_negative_frequency[idx_dsf]*exp(-0.5*beta*f);
@@ -1741,6 +1745,12 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     log_ofs << "genome_size: " << genome_size << std::endl;
     log_ofs << "normalize: " << normalize << std::endl;
     log_ofs << "use_negative_first_moment: " << use_negative_first_moment << std::endl;
+    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+        if (use_negative_first_moment) {
+            log_ofs << "negative_first_moment: " << negative_first_moment << std::endl;
+            log_ofs << "negative_first_moment_error: " << negative_first_moment_error << std::endl;
+        }
+    #endif
     log_ofs << "first_moment: " << first_moment << std::endl;
     log_ofs << "third_moment: " << third_moment << std::endl;
     log_ofs << "third_moment_error: " << third_moment_error << std::endl;
@@ -1799,7 +1809,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
         //FIXME need to add inverse first moment functionality then can remove this ifdef
         if (use_negative_first_moment) {
-            free(negative_first_moments_term_positive_frequency);
+            free(negative_first_moments_term);
             free(negative_first_moments);
         }
     #endif
@@ -1871,7 +1881,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             //FIXME need to add inverse first moment functionality, then can remove this ifdef
             if (use_negative_first_moment) {
                 GPU_ASSERT(deac_free(d_negative_first_moments,                         stream_array[20 % MAX_GPU_STREAMS]));
-                GPU_ASSERT(deac_free(d_negative_first_moments_term_positive_frequency, stream_array[21 % MAX_GPU_STREAMS]));
+                GPU_ASSERT(deac_free(d_negative_first_moments_term, stream_array[21 % MAX_GPU_STREAMS]));
             }
         #endif
         GPU_ASSERT(deac_free(d_crossover_probabilities_old_positive_frequency, stream_array[22 % MAX_GPU_STREAMS]));
@@ -2139,6 +2149,13 @@ int main (int argc, char *argv[]) {
 
     bool normalize = program.get<bool>("--normalize");
     bool use_negative_first_moment = program.get<bool>("--use_negative_first_moment");
+    #if !defined(USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF) || defined(ZEROT)
+        if (use_negative_first_moment) {
+            fail_with_error(
+                    "use_negative_first_moment requires a finite-temperature "
+                    "bosonic detailed-balance build");
+        }
+    #endif
     double first_moment = program.get<double>("--first_moment");
     double third_moment = program.get<double>("--third_moment");
     double third_moment_error = program.get<double>("--third_moment_error");
