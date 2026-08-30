@@ -327,6 +327,14 @@ if(NOT "${GPU_BACKEND}" STREQUAL "none")
         COMMAND deac_gpu_normalization_test)
 endif()
 
+add_executable(deac_moment_fitness_test
+    ${CMAKE_SOURCE_DIR}/../test/moment_fitness_test.cpp)
+target_include_directories(deac_moment_fitness_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+add_test(
+    NAME deac_unit_moment_fitness
+    COMMAND deac_moment_fitness_test)
+
 add_executable(deac_population_projection_test
     ${CMAKE_SOURCE_DIR}/../test/population_projection_test.cpp)
 target_include_directories(deac_population_projection_test PRIVATE
@@ -503,6 +511,16 @@ if(Python3_Interpreter_FOUND)
                 ${DEAC_SMOKE_VARIANT_ARGS}
         )
     endif()
+
+    add_test(
+        NAME deac_first_moment_fitness
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/../test/deac_first_moment_fitness_test.py
+            --exe $<TARGET_FILE:${exe}>
+            --workdir ${CMAKE_CURRENT_BINARY_DIR}/first-moment-fitness
+            ${DEAC_SMOKE_VARIANT_ARGS}
+    )
     set(DEAC_PARITY_REFERENCE_EXE "" CACHE FILEPATH "Reference deac executable for backend parity tests.")
     if(NOT "${DEAC_PARITY_REFERENCE_EXE}" STREQUAL "")
         add_test(

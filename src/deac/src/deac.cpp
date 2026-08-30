@@ -14,6 +14,7 @@
 #include <vector>
 #include <rng.hpp>
 #include "evolution_controls.hpp"
+#include "moment_fitness.hpp"
 #include "normalization.hpp"
 #include "population_projection.hpp"
 #include "result_io.hpp"
@@ -569,11 +570,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #endif
     #endif
 
-    //FIXME it doesn't make sense for first moment term to have no error. If there was no error, it should have infinite importance in the fitness function. Setting error to 1.0 here.
-    double first_moment_error = 1.0;
-    #ifndef USE_GPU
-        (void) first_moment_error;
-    #endif
+    // The CLI does not yet expose an uncertainty for the first moment. Use a
+    // unit standard deviation consistently on every backend until it does.
+    constexpr double first_moment_error = 1.0;
     if (use_first_moment) {
         std::cout << "WARNING: setting first_moment_error to 1.0." << std::endl;
         first_moments_term_positive_frequency = (double*) malloc(bytes_first_moments_term);
@@ -896,7 +895,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 //FIXME inverse first moment not implemented
             #endif
             if (use_first_moment) {
-                _fitness += pow(first_moments[i] - first_moment,2)/first_moment;
+                _fitness += deac_numerics::scalar_chi_square_penalty(
+                        first_moments[i], first_moment, first_moment_error);
             }
             if (use_third_moment) {
                 _fitness += pow((third_moment - third_moments[i])/third_moment_error,2);
@@ -1549,7 +1549,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     //FIXME inverse first moment not implemented
                 #endif
                 if (use_first_moment) {
-                    _fitness += pow(first_moments[i] - first_moment,2)/first_moment;
+                    _fitness += deac_numerics::scalar_chi_square_penalty(
+                            first_moments[i], first_moment, first_moment_error);
                 }
                 if (use_third_moment) {
                     _fitness += pow((third_moment - third_moments[i])/third_moment_error,2);
@@ -1780,6 +1781,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             }
         #endif
         log << "first_moment: " << first_moment << std::endl;
+        if (use_first_moment) {
+            log << "first_moment_error: " << first_moment_error << std::endl;
+        }
         log << "third_moment: " << third_moment << std::endl;
         log << "third_moment_error: " << third_moment_error << std::endl;
         log << "crossover_probability: " << crossover_probability << std::endl;
