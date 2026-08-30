@@ -273,11 +273,16 @@ find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     set(DEAC_SMOKE_TEST "${CMAKE_SOURCE_DIR}/../test/deac_smoke_test.py")
     set(DEAC_PARITY_TEST "${CMAKE_SOURCE_DIR}/../test/deac_parity_test.py")
-    foreach(test_case
+    set(DEAC_SMOKE_VARIANT_ARGS)
+    if(USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF)
+        list(APPEND DEAC_SMOKE_VARIANT_ARGS --detailed-balance)
+    endif()
+    set(DEAC_SMOKE_CASES
             help
             bad_spectra
             default
             normalize
+            normalize_large_population
             first_moment
             track_stats
             bad_isf_byte_length
@@ -295,6 +300,12 @@ if(Python3_Interpreter_FOUND)
             nonfinite_frequency
             negative_frequency
             unsorted_frequency)
+    if(USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF)
+        list(APPEND DEAC_SMOKE_CASES negative_first_moment)
+    else()
+        list(APPEND DEAC_SMOKE_CASES unsupported_negative_first_moment)
+    endif()
+    foreach(test_case IN LISTS DEAC_SMOKE_CASES)
         add_test(
             NAME deac_smoke_${test_case}
             COMMAND
@@ -303,6 +314,7 @@ if(Python3_Interpreter_FOUND)
                 --exe $<TARGET_FILE:${exe}>
                 --workdir ${CMAKE_CURRENT_BINARY_DIR}/smoke/${test_case}
                 --case ${test_case}
+                ${DEAC_SMOKE_VARIANT_ARGS}
         )
     endforeach()
     set(DEAC_PARITY_REFERENCE_EXE "" CACHE FILEPATH "Reference deac executable for backend parity tests.")
@@ -315,6 +327,7 @@ if(Python3_Interpreter_FOUND)
                 --reference-exe ${DEAC_PARITY_REFERENCE_EXE}
                 --candidate-exe $<TARGET_FILE:${exe}>
                 --workdir ${CMAKE_CURRENT_BINARY_DIR}/parity/reference
+                ${DEAC_SMOKE_VARIANT_ARGS}
         )
     endif()
 else()

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import math
 import shutil
 import struct
 import subprocess
@@ -11,7 +12,9 @@ SMOKE_CASES = [
     "bad_spectra",
     "default",
     "normalize",
+    "normalize_large_population",
     "first_moment",
+    "negative_first_moment",
     "track_stats",
 ]
 
@@ -31,6 +34,7 @@ VALIDATION_CASES = [
     "nonfinite_frequency",
     "negative_frequency",
     "unsorted_frequency",
+    "unsupported_negative_first_moment",
 ]
 
 
@@ -125,23 +129,30 @@ def assert_file_size(path, expected_size):
         )
 
 
-def run_deac_case(exe, workdir, case_name):
+def run_deac_case(exe, workdir, case_name, detailed_balance=False):
     fixture = workdir / "tiny-isf.bin"
     write_fixture(fixture)
     save_dir = workdir / "results"
     seed = {
         "default": "1",
         "normalize": "2",
+        "normalize_large_population": "6",
         "first_moment": "3",
+        "negative_first_moment": "5",
         "track_stats": "4",
     }[case_name]
 
     extra_args = []
     number_of_generations = "2"
-    if case_name == "normalize":
+    population_size = "8"
+    if case_name in ("normalize", "normalize_large_population"):
         extra_args.append("--normalize")
+        if case_name == "normalize_large_population":
+            population_size = "1028"
     elif case_name == "first_moment":
         extra_args.extend(["--first_moment", "0.5"])
+    elif case_name == "negative_first_moment":
+        extra_args.append("--use_negative_first_moment")
     elif case_name == "track_stats":
         number_of_generations = "3"
         extra_args.append("--track_stats")
@@ -150,14 +161,15 @@ def run_deac_case(exe, workdir, case_name):
         workdir,
         fixture,
         number_of_generations=number_of_generations,
+        population_size=population_size,
         seed=seed,
         extra_args=extra_args,
     )
 
     run_command(command, workdir, expected_output="minimum_fitness:")
 
-    expected_spectrum_bytes = (2 * 8 - 1) * 8
-    prefix = f"deac-spfsf"
+    expected_spectrum_bytes = (8 if detailed_balance else 2 * 8 - 1) * 8
+    prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
     assert_file_size(save_dir / f"{prefix}_dsf_{seed}.bin", expected_spectrum_bytes)
     assert_file_size(save_dir / f"{prefix}_frequency_{seed}.bin", expected_spectrum_bytes)
 
@@ -168,6 +180,29 @@ def run_deac_case(exe, workdir, case_name):
     if "minimum_fitness:" not in log_text:
         raise AssertionError(f"expected {log_path} to contain minimum_fitness")
 
+    if detailed_balance and case_name == "negative_first_moment":
+        error_line = next(
+            (
+                line
+                for line in log_text.splitlines()
+                if line.startswith("negative_first_moment_error: ")
+            ),
+            None,
+        )
+        if error_line is None:
+            raise AssertionError(
+                f"expected {log_path} to contain negative_first_moment_error"
+            )
+        actual_error = float(error_line.split(": ", 1)[1])
+        # Trapezoid weights for tau=[0.0, 0.2, 0.4, 0.6] are
+        # [0.1, 0.2, 0.2, 0.1].  Every sample has sigma=0.05.
+        expected_error = 0.05 * math.sqrt(0.1**2 + 0.2**2 + 0.2**2 + 0.1**2)
+        if not math.isclose(actual_error, expected_error, rel_tol=1e-5):
+            raise AssertionError(
+                f"expected accumulated negative first-moment error "
+                f"{expected_error}, got {actual_error}"
+            )
+
     if case_name == "track_stats":
         expected_stats_bytes = 3 * 8
         assert_file_size(save_dir / f"{prefix}_stats_fitness-mean_{seed}.bin", expected_stats_bytes)
@@ -177,11 +212,12 @@ def run_deac_case(exe, workdir, case_name):
             raise AssertionError("tracked-stat filenames were not written to the log")
 
 
-def run_validation_case(exe, workdir, case_name):
+def run_validation_case(exe, workdir, case_name, detailed_balance=False):
     fixture = workdir / "invalid-isf.bin"
     frequency_file = workdir / "frequency.bin"
     command_options = {}
     extra_args = None
+    expected_returncode = 1
 
     if case_name == "bad_isf_byte_length":
         fixture.write_bytes(b"not-a-double")
@@ -200,7 +236,11 @@ def run_validation_case(exe, workdir, case_name):
         expected_output = "ISF input file contains non-finite values"
     elif case_name == "positive_isf_single_particle":
         write_positive_fixture(fixture)
-        expected_output = "positive ISF values are not supported for single-particle spectra"
+        if detailed_balance:
+            expected_returncode = 0
+            expected_output = "minimum_fitness:"
+        else:
+            expected_output = "positive ISF values are not supported for single-particle spectra"
     elif case_name == "bad_third_moment_error":
         write_fixture(fixture)
         extra_args = ["--third_moment", "1.0", "--third_moment_error", "0.0"]
@@ -241,6 +281,13 @@ def run_validation_case(exe, workdir, case_name):
         write_doubles(frequency_file, [0.0, 2.0, 1.0])
         extra_args = ["--frequency_file", str(frequency_file)]
         expected_output = "frequencies must be sorted in non-decreasing order"
+    elif case_name == "unsupported_negative_first_moment":
+        write_fixture(fixture)
+        extra_args = ["--use_negative_first_moment"]
+        expected_output = (
+            "use_negative_first_moment requires a finite-temperature "
+            "bosonic detailed-balance build"
+        )
     else:
         raise AssertionError(f"unknown validation case {case_name}")
 
@@ -254,7 +301,7 @@ def run_validation_case(exe, workdir, case_name):
     run_command(
         command,
         workdir,
-        expected_returncode=1,
+        expected_returncode=expected_returncode,
         expected_output=expected_output,
     )
 
@@ -263,6 +310,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", required=True)
     parser.add_argument("--workdir", required=True)
+    parser.add_argument("--detailed-balance", action="store_true")
     parser.add_argument(
         "--case",
         required=True,
@@ -295,9 +343,9 @@ def main():
             expected_output="Please choose spectra_type",
         )
     elif args.case in VALIDATION_CASES:
-        run_validation_case(exe, workdir, args.case)
+        run_validation_case(exe, workdir, args.case, args.detailed_balance)
     else:
-        run_deac_case(exe, workdir, args.case)
+        run_deac_case(exe, workdir, args.case, args.detailed_balance)
 
 
 if __name__ == "__main__":

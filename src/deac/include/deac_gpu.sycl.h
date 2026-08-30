@@ -271,7 +271,8 @@ void gpu_dot(sycl::queue q, double* __restrict__ C, double* __restrict__ B, doub
             sycl::group_barrier(item.get_group());
 
             // Reduce _c (using shared local memory)
-            gpu_reduce_add(_c.get_pointer(), item);
+            gpu_reduce_add(
+                    _c.template get_multi_ptr<sycl::access::decorated::no>().get(), item);
 
             //Set C
             if (local_idx == 0) {
@@ -359,7 +360,11 @@ void gpu_deac_gemv_simple(sycl::queue q, int m, int n, double alpha, double* __r
                 for (int j = 0; j < n; j++) {
                     sum += A[row + j*lda] * x[j*incx];
                 }
-                y[row*incy] = alpha * sum + beta * y[row*incy];
+                if (beta == 0.0) {
+                    y[row*incy] = alpha * sum;
+                } else {
+                    y[row*incy] = alpha * sum + beta * y[row*incy];
+                }
             }
         });
     });
@@ -390,41 +395,12 @@ void gpu_deac_gemv_atomic(sycl::queue q, int m, int n, double alpha, double* __r
 }
 
 void gpu_deac_gemv(sycl::queue q, int m, int n, double alpha, double* __restrict__ A, int lda, double* __restrict__ x, int incx, double beta, double* __restrict__ y, int incy) {
-    q.submit([&](sycl::handler& cgh) {
-        size_t grid_size_x = (n + TILE_WIDTH - 1) / TILE_WIDTH;
-        size_t grid_size_y = (m + TILE_WIDTH - 1) / TILE_WIDTH;
-        sycl::local_accessor<double, 2> As(sycl::range<2>(TILE_WIDTH, TILE_WIDTH), cgh);
-        cgh.parallel_for(sycl::nd_range<2>(sycl::range<2>(grid_size_x*TILE_WIDTH, grid_size_y*TILE_WIDTH), sycl::range<2>(TILE_WIDTH, TILE_WIDTH)),
-                [=](sycl::nd_item<2> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            int tx = item.get_local_id(0);
-            int by = item.get_group(1), ty = item.get_local_id(1);
-            int row = by * item.get_local_range(1) + ty;
-
-            double sum = 0.0;
-            if (row < m) {
-                for (int i = 0; i < (n + TILE_WIDTH - 1) / TILE_WIDTH; ++i) {
-                    if (i*TILE_WIDTH + tx < n && row < m) {
-                        As[ty][tx] = A[row + (i*TILE_WIDTH + tx) * lda];
-                    } else {
-                        As[ty][tx] = 0.0;
-                    }
-                    sycl::group_barrier(item.get_group());
-
-                    for (int k = 0; k < TILE_WIDTH; ++k) {
-                        if (i*TILE_WIDTH + k < n) {
-                            sum += As[ty][k] * x[(i*TILE_WIDTH + k)*incx];
-                        }
-                    }
-                    sycl::group_barrier(item.get_group());
-                }
-                if (beta == 0.0) {
-                    y[row * incy] = alpha * sum;
-                } else {
-                    y[row * incy] = alpha * sum + beta * y[row * incy];
-                }
-            }
-        });
-    });
+    // One work-item owns each output row.  The former tiled implementation
+    // placed work-group barriers inside `row < m`; a partial final row group
+    // therefore deadlocked because only some work-items reached the barriers.
+    // It also launched an unused x dimension whose work-items raced to write
+    // the same output row.  The row-wise kernel has neither hazard.
+    gpu_deac_gemv_simple(q, m, n, alpha, A, lda, x, incx, beta, y, incy);
 }
 
 void gpu_matmul(sycl::queue q, int m, int n, int k, double alpha, double* __restrict__ A, double* __restrict__ B, double beta, double* __restrict__ C) {
@@ -459,7 +435,8 @@ void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __rest
             sycl::group_barrier(item.get_group());
 
             // Reduce _c (using shared local memory)
-            gpu_reduce_min(_c.get_pointer(), item);
+            gpu_reduce_min(
+                    _c.template get_multi_ptr<sycl::access::decorated::no>().get(), item);
 
             //Set minimum
             if (local_idx == 0) {
@@ -560,7 +537,8 @@ void gpu_set_fitness_mean(sycl::queue q, double* __restrict__ fitness_mean, doub
             sycl::group_barrier(item.get_group());
             
             // Reduce _fm (using shared local memory)
-            gpu_reduce_add(_fm.get_pointer(), item);
+            gpu_reduce_add(
+                    _fm.template get_multi_ptr<sycl::access::decorated::no>().get(), item);
 
             //Set fitness_mean
             if (local_idx == 0) {
@@ -592,7 +570,8 @@ void gpu_set_fitness_squared_mean(sycl::queue q, double* __restrict__ fitness_sq
             sycl::group_barrier(item.get_group());
             
             // Reduce _fsm (using shared local memory)
-            gpu_reduce_add(_fsm.get_pointer(), item);
+            gpu_reduce_add(
+                    _fsm.template get_multi_ptr<sycl::access::decorated::no>().get(), item);
 
             //Set fitness_squared_mean
             if (local_idx == 0) {

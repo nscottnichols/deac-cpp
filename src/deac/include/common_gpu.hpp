@@ -89,7 +89,7 @@
         #define deac_malloc_device(T, x, y, z) x = sycl::malloc_device< T >( y, z )
         #define deac_memcpy_host_to_device(w, x, y, z) z.memcpy(w, x, y)
         #define deac_memcpy_device_to_host(w, x, y, z) z.memcpy(w, x, y)
-        #define deac_wait(x) x.wait()
+        #define deac_wait(x) x.wait_and_throw()
         #define deac_memset(w, x, y, z) z.memset(w, x, y)
         #define deac_free(x, y) sycl::free(x, y)
         #ifdef USE_BLAS
