@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import argparse
 import math
+import os
 import shutil
+import stat
 import struct
 import subprocess
 from pathlib import Path
@@ -19,6 +21,7 @@ SMOKE_CASES = [
     "first_moment",
     "negative_first_moment",
     "track_stats",
+    "nested_output",
 ]
 
 VALIDATION_CASES = [
@@ -27,6 +30,7 @@ VALIDATION_CASES = [
     "uneven_isf_arrays",
     "too_few_timeslices",
     "nonfinite_isf",
+    "missing_isf",
     "positive_isf_single_particle",
     "bad_third_moment_error",
     "bad_crossover_probability",
@@ -38,10 +42,15 @@ VALIDATION_CASES = [
     "too_small_population",
     "too_small_genome",
     "bad_omega_max",
+    "missing_frequency",
     "short_frequency_file",
     "nonfinite_frequency",
     "negative_frequency",
     "unsorted_frequency",
+    "save_directory_is_file",
+    "unwritable_save_directory",
+    "log_destination_is_directory",
+    "result_destination_is_directory",
     "unsupported_negative_first_moment",
 ]
 
@@ -103,7 +112,11 @@ def deac_command(
     omega_max="4.0",
     seed="7",
     extra_args=None,
+    save_directory=None,
+    uuid=None,
 ):
+    if save_directory is None:
+        save_directory = workdir / "results"
     command = [
         exe,
         "-T",
@@ -117,10 +130,12 @@ def deac_command(
         "--omega_max",
         omega_max,
         "--save_directory",
-        str(workdir / "results"),
+        str(save_directory),
         "--seed",
         seed,
     ]
+    if uuid is not None:
+        command.extend(["--uuid", uuid])
     if extra_args:
         command.extend(extra_args)
     command.append(str(fixture))
@@ -140,7 +155,11 @@ def assert_file_size(path, expected_size):
 def run_deac_case(exe, workdir, case_name, detailed_balance=False):
     fixture = workdir / "tiny-isf.bin"
     write_fixture(fixture)
-    save_dir = workdir / "results"
+    save_dir = (
+        workdir / "nested" / "result" / "directory"
+        if case_name == "nested_output"
+        else workdir / "results"
+    )
     seed = {
         "default": "1",
         "evolution_control_lower_boundaries": "8",
@@ -150,6 +169,7 @@ def run_deac_case(exe, workdir, case_name, detailed_balance=False):
         "first_moment": "3",
         "negative_first_moment": "5",
         "track_stats": "4",
+        "nested_output": "10",
     }[case_name]
 
     extra_args = []
@@ -200,6 +220,7 @@ def run_deac_case(exe, workdir, case_name, detailed_balance=False):
         population_size=population_size,
         seed=seed,
         extra_args=extra_args,
+        save_directory=save_dir,
     )
 
     run_command(command, workdir, expected_output="minimum_fitness:")
@@ -253,6 +274,9 @@ def run_validation_case(exe, workdir, case_name, detailed_balance=False):
     frequency_file = workdir / "frequency.bin"
     command_options = {}
     extra_args = None
+    save_directory = None
+    uuid = None
+    permission_restore = None
     expected_returncode = 1
 
     if case_name == "bad_isf_byte_length":
@@ -270,6 +294,8 @@ def run_validation_case(exe, workdir, case_name, detailed_balance=False):
     elif case_name == "nonfinite_isf":
         write_fixture(fixture, isf=[-1.0, float("nan"), -0.72, -0.61])
         expected_output = "ISF input file contains non-finite values"
+    elif case_name == "missing_isf":
+        expected_output = "could not open binary input"
     elif case_name == "positive_isf_single_particle":
         write_positive_fixture(fixture)
         if detailed_balance:
@@ -323,6 +349,10 @@ def run_validation_case(exe, workdir, case_name, detailed_balance=False):
         write_fixture(fixture)
         command_options["omega_max"] = "0.0"
         expected_output = "omega_max must be positive"
+    elif case_name == "missing_frequency":
+        write_fixture(fixture)
+        extra_args = ["--frequency_file", str(frequency_file)]
+        expected_output = "could not open binary input"
     elif case_name == "short_frequency_file":
         write_fixture(fixture)
         write_doubles(frequency_file, [0.0])
@@ -343,6 +373,42 @@ def run_validation_case(exe, workdir, case_name, detailed_balance=False):
         write_doubles(frequency_file, [0.0, 2.0, 1.0])
         extra_args = ["--frequency_file", str(frequency_file)]
         expected_output = "frequencies must be sorted in non-decreasing order"
+    elif case_name == "save_directory_is_file":
+        write_fixture(fixture)
+        save_directory = workdir / "result-path-is-a-file"
+        save_directory.write_text("not a directory")
+        expected_output = "exists but is not a directory"
+    elif case_name == "unwritable_save_directory":
+        write_fixture(fixture)
+        if hasattr(os, "geteuid") and os.geteuid() == 0 and Path("/proc").is_dir():
+            save_directory = Path("/proc") / "deac-cpp-result-io-test" / "nested"
+        elif os.name == "posix":
+            read_only_parent = workdir / "read-only"
+            read_only_parent.mkdir()
+            read_only_parent.chmod(stat.S_IRUSR | stat.S_IXUSR)
+            permission_restore = read_only_parent
+            save_directory = read_only_parent / "nested"
+        else:
+            blocked_parent = workdir / "blocked-parent"
+            blocked_parent.write_text("not a directory")
+            save_directory = blocked_parent / "nested"
+        expected_output = "could not create result directory"
+    elif case_name == "log_destination_is_directory":
+        write_fixture(fixture)
+        uuid = "log-destination"
+        save_directory = workdir / "results"
+        save_directory.mkdir()
+        prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
+        (save_directory / f"{prefix}_log_{uuid}.dat").mkdir()
+        expected_output = "could not open log file"
+    elif case_name == "result_destination_is_directory":
+        write_fixture(fixture)
+        uuid = "result-destination"
+        save_directory = workdir / "results"
+        save_directory.mkdir()
+        prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
+        (save_directory / f"{prefix}_dsf_{uuid}.bin").mkdir()
+        expected_output = "could not open binary output"
     elif case_name == "unsupported_negative_first_moment":
         write_fixture(fixture)
         extra_args = ["--use_negative_first_moment"]
@@ -358,19 +424,36 @@ def run_validation_case(exe, workdir, case_name, detailed_balance=False):
         workdir,
         fixture,
         extra_args=extra_args,
+        save_directory=save_directory,
+        uuid=uuid,
         **command_options,
     )
-    save_dir = workdir / "results"
+    save_dir = save_directory if save_directory is not None else workdir / "results"
     if case_name == "bad_stop_minimum_fitness":
         # Exercise the no-log guarantee independently of the no-directory
         # guarantee covered by the other invalid evolution controls.
         save_dir.mkdir()
-    run_command(
-        command,
-        workdir,
-        expected_returncode=expected_returncode,
-        expected_output=expected_output,
-    )
+    try:
+        result = run_command(
+            command,
+            workdir,
+            expected_returncode=expected_returncode,
+            expected_output=expected_output,
+        )
+    finally:
+        if permission_restore is not None:
+            permission_restore.chmod(stat.S_IRWXU)
+
+    if case_name == "log_destination_is_directory":
+        if "minimum_fitness:" in result.stdout:
+            raise AssertionError("evolution started despite an invalid initial log destination")
+        prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
+        if (save_dir / f"{prefix}_dsf_{uuid}.bin").exists():
+            raise AssertionError("invalid initial log destination produced a spectrum")
+    elif case_name == "result_destination_is_directory":
+        prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
+        if (save_dir / f"{prefix}_frequency_{uuid}.bin").exists():
+            raise AssertionError("solver continued writing after the first result I/O failure")
     if case_name.startswith("bad_") and case_name in {
         "bad_crossover_probability",
         "bad_self_adapting_crossover_probability",
