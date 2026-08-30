@@ -11,6 +11,7 @@
 #include <span>
 #include <vector>
 #include <rng.hpp>
+#include "evolution_controls.hpp"
 #include "trapezoidal_weights.hpp"
 #include <memory> // string_format
 #include <string> // string_format
@@ -1972,19 +1973,19 @@ int main (int argc, char *argv[]) {
         .default_value(0.0)
         .action([](const std::string& value) { return std::stod(value); });
     program.add_argument("-r","--crossover_probability")
-        .help("Initial probability for parent gene to become mutant vector gene.")
+        .help("Initial probability for parent gene to become mutant vector gene. Must be finite and in [0, 1].")
         .default_value(0.9)
         .action([](const std::string& value) { return std::stod(value); });
     program.add_argument("-u","--self_adapting_crossover_probability")
-        .help("Probability for `crossover_probability` to mutate.")
+        .help("Probability for `crossover_probability` to mutate. Must be finite and in [0, 1].")
         .default_value(0.1)
         .action([](const std::string& value) { return std::stod(value); });
     program.add_argument("-F","--differential_weight")
-        .help("Initial weight factor when creating mutant vector.")
+        .help("Initial weight factor when creating mutant vector. Must be finite and in [0, 2].")
         .default_value(0.9)
         .action([](const std::string& value) { return std::stod(value); });
-    program.add_argument("-v","--self_adapting_differential_weight_probability")
-        .help("Probability for `differential_weight` to mutate.")
+    program.add_argument("--self_adapting_differential_weight_probability")
+        .help("Probability for `differential_weight` to mutate. Must be finite and in [0, 1].")
         .default_value(0.1)
         .action([](const std::string& value) { return std::stod(value); });
     program.add_argument("-l","--self_adapting_differential_weight_shift")
@@ -1996,7 +1997,7 @@ int main (int argc, char *argv[]) {
         .default_value(0.9)
         .action([](const std::string& value) { return std::stod(value); });
     program.add_argument("--stop_minimum_fitness")
-        .help("Stopping criteria, if minimum fitness is below `stop_minimum_fitness` stop evolving.")
+        .help("Stop evolving when minimum fitness is at or below this finite value. Negative values are allowed.")
         .default_value(1.0)
         .action([](const std::string& value) { return std::stod(value); });
     program.add_argument("--seed")
@@ -2034,6 +2035,22 @@ int main (int argc, char *argv[]) {
         std::cout << err.what() << std::endl;
         std::cout << program << std::endl;
         exit(1);
+    }
+
+    double crossover_probability = program.get<double>("--crossover_probability");
+    double self_adapting_crossover_probability = program.get<double>("--self_adapting_crossover_probability");
+    double differential_weight = program.get<double>("--differential_weight");
+    double self_adapting_differential_weight_probability = program.get<double>("--self_adapting_differential_weight_probability");
+    double stop_minimum_fitness = program.get<double>("--stop_minimum_fitness");
+    try {
+        deac_configuration::validate_evolution_controls({
+                crossover_probability,
+                self_adapting_crossover_probability,
+                differential_weight,
+                self_adapting_differential_weight_probability,
+                stop_minimum_fitness});
+    } catch (const std::invalid_argument& error) {
+        fail_with_error(error.what());
     }
 
     std::string uuid_str = program.get<std::string>("--uuid");
@@ -2164,14 +2181,8 @@ int main (int argc, char *argv[]) {
         fail_with_error("third_moment_error must be positive when third_moment is used");
     }
 
-    double crossover_probability = program.get<double>("--crossover_probability");
-    double self_adapting_crossover_probability = program.get<double>("--self_adapting_crossover_probability");
-    double differential_weight = program.get<double>("--differential_weight");
-    double self_adapting_differential_weight_probability = program.get<double>("--self_adapting_differential_weight_probability");
     double self_adapting_differential_weight_shift = program.get<double>("--self_adapting_differential_weight_shift");
     double self_adapting_differential_weight = program.get<double>("--self_adapting_differential_weight");
-    
-    double stop_minimum_fitness = program.get<double>("--stop_minimum_fitness");
 
     bool track_stats = program.get<bool>("--track_stats");
     std::string save_directory_str = program.get<std::string>("--save_directory");

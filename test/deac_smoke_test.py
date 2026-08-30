@@ -9,8 +9,11 @@ from pathlib import Path
 
 SMOKE_CASES = [
     "help",
+    "version",
     "bad_spectra",
     "default",
+    "evolution_control_lower_boundaries",
+    "evolution_control_upper_boundaries",
     "normalize",
     "normalize_large_population",
     "first_moment",
@@ -26,6 +29,11 @@ VALIDATION_CASES = [
     "nonfinite_isf",
     "positive_isf_single_particle",
     "bad_third_moment_error",
+    "bad_crossover_probability",
+    "bad_self_adapting_crossover_probability",
+    "bad_differential_weight",
+    "bad_self_adapting_differential_weight_probability",
+    "bad_stop_minimum_fitness",
     "too_few_generations",
     "too_small_population",
     "too_small_genome",
@@ -135,6 +143,8 @@ def run_deac_case(exe, workdir, case_name, detailed_balance=False):
     save_dir = workdir / "results"
     seed = {
         "default": "1",
+        "evolution_control_lower_boundaries": "8",
+        "evolution_control_upper_boundaries": "9",
         "normalize": "2",
         "normalize_large_population": "6",
         "first_moment": "3",
@@ -156,6 +166,32 @@ def run_deac_case(exe, workdir, case_name, detailed_balance=False):
     elif case_name == "track_stats":
         number_of_generations = "3"
         extra_args.append("--track_stats")
+    elif case_name in (
+        "evolution_control_lower_boundaries",
+        "evolution_control_upper_boundaries",
+    ):
+        if case_name == "evolution_control_lower_boundaries":
+            probability = "0"
+            differential_weight = "0"
+            stop_minimum_fitness = "-1"
+        else:
+            probability = "1"
+            differential_weight = "2"
+            stop_minimum_fitness = "1"
+        extra_args.extend(
+            [
+                "--crossover_probability",
+                probability,
+                "--self_adapting_crossover_probability",
+                probability,
+                "--differential_weight",
+                differential_weight,
+                "--self_adapting_differential_weight_probability",
+                probability,
+                "--stop_minimum_fitness",
+                stop_minimum_fitness,
+            ]
+        )
     command = deac_command(
         exe,
         workdir,
@@ -245,6 +281,32 @@ def run_validation_case(exe, workdir, case_name, detailed_balance=False):
         write_fixture(fixture)
         extra_args = ["--third_moment", "1.0", "--third_moment_error", "0.0"]
         expected_output = "third_moment_error must be positive when third_moment is used"
+    elif case_name == "bad_crossover_probability":
+        write_fixture(fixture)
+        extra_args = ["--crossover_probability", "1.01"]
+        expected_output = "crossover_probability must be finite and in [0, 1]"
+    elif case_name == "bad_self_adapting_crossover_probability":
+        write_fixture(fixture)
+        extra_args = ["--self_adapting_crossover_probability", "-0.01"]
+        expected_output = (
+            "self_adapting_crossover_probability must be finite and in "
+            "[0, 1]"
+        )
+    elif case_name == "bad_differential_weight":
+        write_fixture(fixture)
+        extra_args = ["--differential_weight", "2.01"]
+        expected_output = "differential_weight must be finite and in [0, 2]"
+    elif case_name == "bad_self_adapting_differential_weight_probability":
+        write_fixture(fixture)
+        extra_args = ["--self_adapting_differential_weight_probability", "nan"]
+        expected_output = (
+            "self_adapting_differential_weight_probability must be finite and in "
+            "[0, 1]"
+        )
+    elif case_name == "bad_stop_minimum_fitness":
+        write_fixture(fixture)
+        extra_args = ["--stop_minimum_fitness", "inf"]
+        expected_output = "stop_minimum_fitness must be finite"
     elif case_name == "too_few_generations":
         write_fixture(fixture)
         command_options["number_of_generations"] = "1"
@@ -298,12 +360,33 @@ def run_validation_case(exe, workdir, case_name, detailed_balance=False):
         extra_args=extra_args,
         **command_options,
     )
+    save_dir = workdir / "results"
+    if case_name == "bad_stop_minimum_fitness":
+        # Exercise the no-log guarantee independently of the no-directory
+        # guarantee covered by the other invalid evolution controls.
+        save_dir.mkdir()
     run_command(
         command,
         workdir,
         expected_returncode=expected_returncode,
         expected_output=expected_output,
     )
+    if case_name.startswith("bad_") and case_name in {
+        "bad_crossover_probability",
+        "bad_self_adapting_crossover_probability",
+        "bad_differential_weight",
+        "bad_self_adapting_differential_weight_probability",
+        "bad_stop_minimum_fitness",
+    }:
+        if case_name == "bad_stop_minimum_fitness":
+            if any(save_dir.iterdir()):
+                raise AssertionError(
+                    f"invalid evolution controls wrote output under {save_dir}"
+                )
+        elif save_dir.exists():
+            raise AssertionError(
+                f"invalid evolution controls created output directory {save_dir}"
+            )
 
 
 def main():
@@ -325,7 +408,25 @@ def main():
 
     exe = str(Path(args.exe))
     if args.case == "help":
-        run_command([exe, "--help"], workdir, expected_output="Usage: deac-cpp")
+        result = run_command(
+            [exe, "--help"], workdir, expected_output="Usage: deac-cpp"
+        )
+        for expected_output in (
+            "--self_adapting_differential_weight_probability",
+            "Must be finite and in [0, 2].",
+            "Negative values are allowed.",
+        ):
+            if expected_output not in result.stdout:
+                raise AssertionError(
+                    f"expected --help to contain {expected_output!r}\n"
+                    f"output:\n{result.stdout}"
+                )
+    elif args.case == "version":
+        result = run_command([exe, "-v"], workdir)
+        if result.stdout.strip() != "2.0.0-rc1":
+            raise AssertionError(
+                f"expected -v to print only the version, got {result.stdout!r}"
+            )
     elif args.case == "bad_spectra":
         fixture = workdir / "tiny-isf.bin"
         write_fixture(fixture)
