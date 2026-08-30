@@ -19,6 +19,7 @@
 #include "normalization.hpp"
 #include "population_projection.hpp"
 #include "result_io.hpp"
+#include "trial_population.hpp"
 #include "zero_temperature_kernel.hpp"
 #include "trapezoidal_weights.hpp"
 #include "build_identity.hpp"
@@ -1194,6 +1195,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 GPU_ASSERT(deac_wait(default_stream));
             #endif
         #else
+            #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
+                constexpr bool allow_negative_spectral_weight = true;
+            #else
+                constexpr bool allow_negative_spectral_weight = false;
+            #endif
             for (size_t i=0; i<population_size; i++) {
                 double F_positive_frequency = differential_weights_new_positive_frequency[i];
                 #ifdef DEAC_TWO_SIDED_POPULATION
@@ -1202,48 +1208,31 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 size_t mutant_index1 = mutant_indices[3*i];
                 size_t mutant_index2 = mutant_indices[3*i + 1];
                 size_t mutant_index3 = mutant_indices[3*i + 2];
-                for (size_t j=0; j<genome_size; j++) {
-                    bool mutate_positive_frequency = mutate_indices_positive_frequency[i*genome_size + j];
-                    #ifdef DEAC_TWO_SIDED_POPULATION
-                        bool mutate_negative_frequency = mutate_indices_negative_frequency[i*genome_size + j];
-                    #endif
-                    if (mutate_positive_frequency) {
-                        #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
-                            population_new_positive_frequency[i*genome_size + j] =
-                                population_old_positive_frequency[mutant_index1*genome_size + j] + F_positive_frequency*(
-                                        population_old_positive_frequency[mutant_index2*genome_size + j] -
-                                        population_old_positive_frequency[mutant_index3*genome_size + j]);
-                        #else
-                            population_new_positive_frequency[i*genome_size + j] = fabs( 
-                                population_old_positive_frequency[mutant_index1*genome_size + j] + F_positive_frequency*(
-                                        population_old_positive_frequency[mutant_index2*genome_size + j] -
-                                        population_old_positive_frequency[mutant_index3*genome_size + j]));
-                        #endif
-                    } else {
-                        population_new_positive_frequency[i*genome_size + j] = population_old_positive_frequency[i*genome_size + j];
-                    }
-                    #ifdef DEAC_TWO_SIDED_POPULATION
-                        if (mutate_negative_frequency) {
-                            #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
-                                population_new_negative_frequency[i*genome_size + j] =
-                                    population_old_negative_frequency[mutant_index1*genome_size + j] + F_negative_frequency*(
-                                            population_old_negative_frequency[mutant_index2*genome_size + j] -
-                                            population_old_negative_frequency[mutant_index3*genome_size + j]);
-                            #else
-                                population_new_negative_frequency[i*genome_size + j] = fabs( 
-                                    population_old_negative_frequency[mutant_index1*genome_size + j] + F_negative_frequency*(
-                                            population_old_negative_frequency[mutant_index2*genome_size + j] -
-                                            population_old_negative_frequency[mutant_index3*genome_size + j]));
-                            #endif
-                        } else {
-                            population_new_negative_frequency[i*genome_size + j] = population_old_negative_frequency[i*genome_size + j];
-                        }
-                        if (j == 0) {
-                            // Set zero frequency to same value
-                            population_new_negative_frequency[i*genome_size + j] = population_new_positive_frequency[i*genome_size + j];
-                        }
-                    #endif
-                }
+                deac_numerics::form_trial_population_row<
+                        allow_negative_spectral_weight>(
+                        population_new_positive_frequency + i*genome_size,
+                        population_old_positive_frequency + i*genome_size,
+                        population_old_positive_frequency + mutant_index1*genome_size,
+                        population_old_positive_frequency + mutant_index2*genome_size,
+                        population_old_positive_frequency + mutant_index3*genome_size,
+                        mutate_indices_positive_frequency + i*genome_size,
+                        F_positive_frequency,
+                        genome_size);
+                #ifdef DEAC_TWO_SIDED_POPULATION
+                    deac_numerics::form_trial_population_row<
+                            allow_negative_spectral_weight>(
+                            population_new_negative_frequency + i*genome_size,
+                            population_old_negative_frequency + i*genome_size,
+                            population_old_negative_frequency + mutant_index1*genome_size,
+                            population_old_negative_frequency + mutant_index2*genome_size,
+                            population_old_negative_frequency + mutant_index3*genome_size,
+                            mutate_indices_negative_frequency + i*genome_size,
+                            F_negative_frequency,
+                            genome_size);
+                    deac_numerics::couple_trial_population_zero(
+                            population_new_negative_frequency + i*genome_size,
+                            population_new_positive_frequency + i*genome_size);
+                #endif
             }
         #endif
 
