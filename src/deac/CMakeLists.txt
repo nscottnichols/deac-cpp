@@ -134,24 +134,24 @@ elseif(CMAKE_BUILD_TYPE MATCHES Debug)
     set(exe deacd.e)
 endif()
 
-# Generate an executable identity and a matching build-tree receipt.  The
-# helper also registers the source and Git metadata that must trigger CMake
-# regeneration during an ordinary build.
+# Generate a dedicated identity object and matching build-tree receipt.  Its
+# symbolic refresh dependency deliberately recompiles this tiny object and
+# relinks the executable on every ordinary build, avoiding timestamp races.
 include("${CMAKE_SOURCE_DIR}/cmake/DeacBuildIdentity.cmake")
-set(DEAC_BUILD_IDENTITY_HEADER
-    "${CMAKE_CURRENT_BINARY_DIR}/generated/deac_build_identity.hpp")
-set(DEAC_BUILD_IDENTITY_RECEIPT
-    "${CMAKE_CURRENT_BINARY_DIR}/deac-build-identity.json")
-deac_configure_build_identity(
+deac_add_build_identity(
     SOURCE_ROOT "${CMAKE_SOURCE_DIR}/.."
-    OUTPUT_HEADER "${DEAC_BUILD_IDENTITY_HEADER}"
-    OUTPUT_RECEIPT "${DEAC_BUILD_IDENTITY_RECEIPT}")
+    GENERATED_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    IDENTITY_NAME deac
+    RECEIPT "${CMAKE_CURRENT_BINARY_DIR}/deac-build-identity.json")
 
 # Find source files ( better to list explicitly https://stackoverflow.com/questions/1027247/specify-source-files-globally-with-glob )
 file(GLOB DEAC_SRC CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
+list(REMOVE_ITEM DEAC_SRC "${DEAC_BUILD_IDENTITY_IMPLEMENTATION_SOURCE}")
 if ("${GPU_BACKEND}" STREQUAL "cuda")
     file( GLOB DEAC_CUDA ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cu )
-    add_executable(${exe} ${DEAC_SRC} ${DEAC_CUDA})
+    add_executable(${exe}
+        ${DEAC_SRC}
+        ${DEAC_CUDA})
     set_target_properties( ${exe} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
     #if(APPLE)
@@ -165,13 +165,14 @@ else()
     add_executable(${exe} ${DEAC_SRC})
 endif()
 
+deac_target_add_build_identity(${exe})
+
 # Define headers for target
 target_include_directories(${exe} PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
     PRIVATE
-        src
-        "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        src)
 
 if(USE_BLAS AND "${GPU_BACKEND}" STREQUAL "cuda")
     target_link_libraries(${exe} CUDA::cublas)
@@ -390,6 +391,8 @@ if(NOT USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT)
         add_executable(deac_invalid_normalization_evolution_test_exe
             ${DEAC_SRC})
     endif()
+    deac_target_add_build_identity(
+        deac_invalid_normalization_evolution_test_exe)
     target_compile_definitions(
         deac_invalid_normalization_evolution_test_exe PRIVATE
         DEAC_TEST_FORCE_INVALID_NORMALIZATION_TRIALS=1)
@@ -530,16 +533,15 @@ if(Python3_Interpreter_FOUND)
         )
     endif()
 
-    if(DEAC_BUILD_IDENTITY_SOURCE_SHA_AVAILABLE)
-        set(DEAC_BUILD_IDENTITY_EXPECTED_SHA
-            "${DEAC_BUILD_IDENTITY_SOURCE_SHA}")
-    else()
-        set(DEAC_BUILD_IDENTITY_EXPECTED_SHA "null")
-    endif()
     set(DEAC_BUILD_IDENTITY_GIT_ARGS)
     if(Git_FOUND)
         list(APPEND DEAC_BUILD_IDENTITY_GIT_ARGS
             --git "${GIT_EXECUTABLE}")
+    endif()
+    set(DEAC_BUILD_IDENTITY_CONFIG_ARGS)
+    if(CMAKE_CONFIGURATION_TYPES)
+        list(APPEND DEAC_BUILD_IDENTITY_CONFIG_ARGS
+            --build-config $<CONFIG>)
     endif()
     add_test(
         NAME deac_build_identity
@@ -548,13 +550,15 @@ if(Python3_Interpreter_FOUND)
             ${DEAC_BUILD_IDENTITY_TEST}
             --exe $<TARGET_FILE:${exe}>
             --receipt ${DEAC_BUILD_IDENTITY_RECEIPT}
+            --source-root ${CMAKE_SOURCE_DIR}/..
             --workdir ${CMAKE_CURRENT_BINARY_DIR}/build-identity-test
             --identity-module
                 ${CMAKE_SOURCE_DIR}/cmake/DeacBuildIdentity.cmake
             --cmake ${CMAKE_COMMAND}
-            --expected-version ${DEAC_BUILD_IDENTITY_SEMANTIC_VERSION}
-            --expected-sha ${DEAC_BUILD_IDENTITY_EXPECTED_SHA}
-            --expected-state ${DEAC_BUILD_IDENTITY_SOURCE_STATE}
+            --cxx-compiler ${CMAKE_CXX_COMPILER}
+            --generator ${CMAKE_GENERATOR}
+            --make-program ${CMAKE_MAKE_PROGRAM}
+            ${DEAC_BUILD_IDENTITY_CONFIG_ARGS}
             ${DEAC_BUILD_IDENTITY_GIT_ARGS}
     )
     add_test(

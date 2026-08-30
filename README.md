@@ -76,11 +76,17 @@ archive with no matching repository metadata reports `source_sha: null` and
 `source_state: "unavailable"`; it never borrows the SHA of an enclosing Git
 checkout.
 
-CMake writes the same canonical object to
-`build/deac/deac-build-identity.json`. A normal `cmake --build build` watches
-the relevant source files plus worktree-aware Git HEAD, index, and ref paths,
-so editing, reverting, committing, or checking out source refreshes the
-embedded identity without a manually repeated configure command.
+CMake writes the same canonical bytes to
+`build/deac/deac-build-identity.json`. Each ordinary `cmake --build build`
+runs a small identity refresh, recompiles its tiny identity-only source, and
+relinks the executable, while also watching the relevant source files plus
+worktree-aware Git HEAD, index, packed refs, and loose refs. This intentional
+identity rebuild avoids filesystem-timestamp races, so
+editing, staging, reverting, committing (including an empty commit after
+`git pack-refs`), or checking out source updates the executable and receipt in
+that same build without a manually repeated configure command. Git identity
+probes ignore inherited repository-redirection environment variables; archive
+builds therefore cannot be assigned metadata from an unrelated checkout.
 
 ### Zero-temperature mode
 

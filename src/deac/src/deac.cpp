@@ -21,7 +21,7 @@
 #include "result_io.hpp"
 #include "zero_temperature_kernel.hpp"
 #include "trapezoidal_weights.hpp"
-#include "deac_build_identity.hpp"
+#include "build_identity.hpp"
 #include <memory> // string_format
 #include <string> // string_format
 #include <stdexcept> // throw
@@ -51,19 +51,7 @@
 }
 
 void print_build_identity(std::ostream& output) {
-    // Every substituted string is validated by DeacBuildIdentity.cmake before
-    // reaching this JSON object, so no run-time escaping is required.
-    output << "{\"schema_version\":" << deac_build_identity::schema_version
-           << ",\"semantic_version\":\""
-           << deac_build_identity::semantic_version
-           << "\",\"source_sha\":";
-    if (deac_build_identity::source_sha_available) {
-        output << "\"" << deac_build_identity::source_sha << "\"";
-    } else {
-        output << "null";
-    }
-    output << ",\"source_state\":\"" << deac_build_identity::source_state
-           << "\"}" << std::endl;
+    output << deac_build_identity::canonical_json() << std::endl;
 }
 
 template<typename ... Args>
@@ -1992,7 +1980,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
 int deac_main (int argc, char *argv[]) {
     argparse::ArgumentParser program(
-        "deac-cpp", deac_build_identity::semantic_version);
+        "deac-cpp", std::string(deac_build_identity::semantic_version()));
     program.add_argument("--build-identity")
         .action([](const auto&) {
             print_build_identity(std::cout);
