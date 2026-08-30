@@ -56,9 +56,32 @@ As above, and with further details below, but you should consider using the foll
 Executables will be installed to `CMAKE_INSTALL_PREFIX` location or, if the install is skipped, they will be located in `build/deac`.
 Executables produced are `deac.e`, `deacd.e`, `deac-zT.e`, and `deac-zTd.e` for `CMAKE_BUILD_TYPE=Release|Debug|ZeroT|ZeroTDebug` respectively.
 
-A typical `cmake` line for building deac in zero temperature mode with GPU acceleration using CUDA on a Tesla V100 device with an undetected CUDA architecture is:
+### Zero-temperature mode
 
-`cmake -DGPU_BACKEND=cuda -DGPU_BLOCK_SIZE=1024 -DCMAKE_CUDA_ARCHITECTURES=70 -DCMAKE_BUILD_TYPE=ZeroT ../src`
+`ZeroT` and `ZeroTDebug` restore the original zero-temperature problem: one
+non-negative-frequency population represents `S(omega)` on the supplied
+frequency grid, and the forward model is the one-sided Laplace transform
+
+`F(tau) = integral_0^infinity exp(-tau*omega) S(omega) d omega`.
+
+There is no independently evolved negative-frequency population, no beta or
+finite-temperature periodicity factor, and the frequency and spectrum outputs
+each contain exactly `genome_size` doubles. The fixed `--spectra_type positive`
+value is the default, `--temperature` is ignored and recorded as zero, and
+result filenames retain the historical `deac-zT_*` prefix.
+
+The supported ZeroT configuration is currently the CPU backend:
+
+```bash
+cmake -S src -B build-zerot \
+  -DCMAKE_BUILD_TYPE=ZeroT -DGPU_BACKEND=none
+cmake --build build-zerot --parallel
+ctest --test-dir build-zerot --output-on-failure
+```
+
+The CUDA, HIP, and SYCL ZeroT combinations are not release-tested and are not
+claimed as supported by this documentation. Their finite-temperature support
+is independent of the CPU ZeroT mode.
 
 If you run into problems, failures with linking etc., common errors may include
 not properly setting your `LD_LIBRARY_PATH` or `LIBRARY_PATH` and not starting from a clean build

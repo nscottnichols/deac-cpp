@@ -19,6 +19,7 @@ SMOKE_CASES = [
     "normalize",
     "normalize_large_population",
     "first_moment",
+    "third_moment",
     "negative_first_moment",
     "track_stats",
     "nested_output",
@@ -58,6 +59,13 @@ VALIDATION_CASES = [
 
 def write_doubles(path, values):
     path.write_bytes(struct.pack("<" + "d" * len(values), *values))
+
+
+def read_doubles(path):
+    data = path.read_bytes()
+    if len(data) % 8 != 0:
+        raise AssertionError(f"{path} does not contain a whole number of doubles")
+    return struct.unpack("<" + "d" * (len(data) // 8), data)
 
 
 def write_fixture(path, tau=None, isf=None, error=None):
@@ -115,13 +123,14 @@ def deac_command(
     extra_args=None,
     save_directory=None,
     uuid=None,
+    zero_temperature=False,
 ):
     if save_directory is None:
         save_directory = workdir / "results"
     command = [
         exe,
         "-T",
-        "1.0",
+        "0.0" if zero_temperature else "1.0",
         "-N",
         number_of_generations,
         "-P",
@@ -153,9 +162,14 @@ def assert_file_size(path, expected_size):
         )
 
 
-def run_deac_case(exe, workdir, case_name, detailed_balance=False):
+def run_deac_case(
+    exe, workdir, case_name, detailed_balance=False, zero_temperature=False
+):
     fixture = workdir / "tiny-isf.bin"
-    write_fixture(fixture)
+    if zero_temperature:
+        write_positive_fixture(fixture)
+    else:
+        write_fixture(fixture)
     save_dir = (
         workdir / "nested" / "result" / "directory"
         if case_name == "nested_output"
@@ -168,6 +182,7 @@ def run_deac_case(exe, workdir, case_name, detailed_balance=False):
         "normalize": "2",
         "normalize_large_population": "6",
         "first_moment": "3",
+        "third_moment": "11",
         "negative_first_moment": "5",
         "track_stats": "4",
         "nested_output": "10",
@@ -182,6 +197,10 @@ def run_deac_case(exe, workdir, case_name, detailed_balance=False):
             population_size = "1028"
     elif case_name == "first_moment":
         extra_args.extend(["--first_moment", "0.5"])
+    elif case_name == "third_moment":
+        extra_args.extend(
+            ["--third_moment", "0.5", "--third_moment_error", "0.1"]
+        )
     elif case_name == "negative_first_moment":
         extra_args.append("--use_negative_first_moment")
     elif case_name == "track_stats":
@@ -222,14 +241,28 @@ def run_deac_case(exe, workdir, case_name, detailed_balance=False):
         seed=seed,
         extra_args=extra_args,
         save_directory=save_dir,
+        zero_temperature=zero_temperature,
     )
 
     run_command(command, workdir, expected_output="minimum_fitness:")
 
-    expected_spectrum_bytes = (8 if detailed_balance else 2 * 8 - 1) * 8
-    prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
+    expected_spectrum_bytes = (
+        8 if detailed_balance or zero_temperature else 2 * 8 - 1
+    ) * 8
+    if zero_temperature:
+        prefix = "deac-zT"
+    else:
+        prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
     assert_file_size(save_dir / f"{prefix}_dsf_{seed}.bin", expected_spectrum_bytes)
     assert_file_size(save_dir / f"{prefix}_frequency_{seed}.bin", expected_spectrum_bytes)
+
+    if zero_temperature:
+        frequencies = read_doubles(save_dir / f"{prefix}_frequency_{seed}.bin")
+        if len(frequencies) != 8 or any(frequency < 0.0 for frequency in frequencies):
+            raise AssertionError(
+                "expected ZeroT output to contain only the eight non-negative "
+                f"input-grid frequencies, got {frequencies}"
+            )
 
     log_path = save_dir / f"{prefix}_log_{seed}.dat"
     if not log_path.exists():
@@ -237,6 +270,13 @@ def run_deac_case(exe, workdir, case_name, detailed_balance=False):
     log_text = log_path.read_text()
     if "minimum_fitness:" not in log_text:
         raise AssertionError(f"expected {log_path} to contain minimum_fitness")
+    if zero_temperature:
+        if "kernel: zero-temperature-positive-laplace" not in log_text:
+            raise AssertionError(
+                f"expected {log_path} to identify the ZeroT Laplace kernel"
+            )
+        if "temperature: 0" not in log_text:
+            raise AssertionError(f"expected {log_path} to record zero temperature")
 
     if detailed_balance and case_name == "negative_first_moment":
         error_line = next(
@@ -270,7 +310,9 @@ def run_deac_case(exe, workdir, case_name, detailed_balance=False):
             raise AssertionError("tracked-stat filenames were not written to the log")
 
 
-def run_validation_case(exe, workdir, case_name, detailed_balance=False):
+def run_validation_case(
+    exe, workdir, case_name, detailed_balance=False, zero_temperature=False
+):
     fixture = workdir / "invalid-isf.bin"
     frequency_file = workdir / "frequency.bin"
     command_options = {}
@@ -299,7 +341,7 @@ def run_validation_case(exe, workdir, case_name, detailed_balance=False):
         expected_output = "could not open binary input"
     elif case_name == "positive_isf_single_particle":
         write_positive_fixture(fixture)
-        if detailed_balance:
+        if detailed_balance or zero_temperature:
             expected_returncode = 0
             expected_output = "minimum_fitness:"
         else:
@@ -349,6 +391,7 @@ def run_validation_case(exe, workdir, case_name, detailed_balance=False):
                 workdir,
                 fixture,
                 extra_args=inactive_option,
+                zero_temperature=zero_temperature,
             )
             run_command(
                 command,
@@ -426,7 +469,10 @@ def run_validation_case(exe, workdir, case_name, detailed_balance=False):
         uuid = "log-destination"
         save_directory = workdir / "results"
         save_directory.mkdir()
-        prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
+        if zero_temperature:
+            prefix = "deac-zT"
+        else:
+            prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
         (save_directory / f"{prefix}_log_{uuid}.dat").mkdir()
         expected_output = "could not open log file"
     elif case_name == "result_destination_is_directory":
@@ -434,7 +480,10 @@ def run_validation_case(exe, workdir, case_name, detailed_balance=False):
         uuid = "result-destination"
         save_directory = workdir / "results"
         save_directory.mkdir()
-        prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
+        if zero_temperature:
+            prefix = "deac-zT"
+        else:
+            prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
         (save_directory / f"{prefix}_dsf_{uuid}.bin").mkdir()
         expected_output = "could not open binary output"
     elif case_name == "unsupported_negative_first_moment":
@@ -454,6 +503,7 @@ def run_validation_case(exe, workdir, case_name, detailed_balance=False):
         extra_args=extra_args,
         save_directory=save_directory,
         uuid=uuid,
+        zero_temperature=zero_temperature,
         **command_options,
     )
     save_dir = save_directory if save_directory is not None else workdir / "results"
@@ -475,11 +525,17 @@ def run_validation_case(exe, workdir, case_name, detailed_balance=False):
     if case_name == "log_destination_is_directory":
         if "minimum_fitness:" in result.stdout:
             raise AssertionError("evolution started despite an invalid initial log destination")
-        prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
+        if zero_temperature:
+            prefix = "deac-zT"
+        else:
+            prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
         if (save_dir / f"{prefix}_dsf_{uuid}.bin").exists():
             raise AssertionError("invalid initial log destination produced a spectrum")
     elif case_name == "result_destination_is_directory":
-        prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
+        if zero_temperature:
+            prefix = "deac-zT"
+        else:
+            prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
         if (save_dir / f"{prefix}_frequency_{uuid}.bin").exists():
             raise AssertionError("solver continued writing after the first result I/O failure")
     if case_name.startswith("bad_") and case_name in {
@@ -505,6 +561,7 @@ def main():
     parser.add_argument("--exe", required=True)
     parser.add_argument("--workdir", required=True)
     parser.add_argument("--detailed-balance", action="store_true")
+    parser.add_argument("--zero-temperature", action="store_true")
     parser.add_argument(
         "--case",
         required=True,
@@ -549,6 +606,16 @@ def main():
                 "expected --help to omit inactive differential-weight range option\n"
                 f"output:\n{result.stdout}"
             )
+        if args.zero_temperature:
+            for expected_output in (
+                "temperature is fixed to zero",
+                "one-sided positive-frequency Laplace kernel",
+            ):
+                if expected_output not in result.stdout:
+                    raise AssertionError(
+                        f"expected ZeroT --help to contain {expected_output!r}\n"
+                        f"output:\n{result.stdout}"
+                    )
     elif args.case == "version":
         result = run_command([exe, "-v"], workdir)
         if result.stdout.strip() != "2.0.0-rc1":
@@ -572,9 +639,21 @@ def main():
             expected_output="Please choose spectra_type",
         )
     elif args.case in VALIDATION_CASES:
-        run_validation_case(exe, workdir, args.case, args.detailed_balance)
+        run_validation_case(
+            exe,
+            workdir,
+            args.case,
+            args.detailed_balance,
+            args.zero_temperature,
+        )
     else:
-        run_deac_case(exe, workdir, args.case, args.detailed_balance)
+        run_deac_case(
+            exe,
+            workdir,
+            args.case,
+            args.detailed_balance,
+            args.zero_temperature,
+        )
 
 
 if __name__ == "__main__":
