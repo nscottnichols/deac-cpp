@@ -359,6 +359,14 @@ add_test(
     NAME deac_unit_population_projection
     COMMAND deac_population_projection_test)
 
+add_executable(deac_trial_population_test
+    ${CMAKE_SOURCE_DIR}/../test/trial_population_test.cpp)
+target_include_directories(deac_trial_population_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+add_test(
+    NAME deac_unit_trial_population
+    COMMAND deac_trial_population_test)
+
 add_executable(deac_result_io_test
     ${CMAKE_SOURCE_DIR}/../test/result_io_test.cpp)
 target_include_directories(deac_result_io_test PRIVATE
