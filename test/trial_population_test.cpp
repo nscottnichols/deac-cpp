@@ -170,6 +170,8 @@ bool check_inactive_lane_bits() {
     }
 
     std::feclearexcept(FE_ALL_EXCEPT);
+    const double inactive_differential_weight = std::bit_cast<double>(
+            UINT64_C(0x7ff0000000000043));
     deac_numerics::form_trial_population_row<false>(
             actual.data(),
             current.data(),
@@ -177,7 +179,7 @@ bool check_inactive_lane_bits() {
             mutant2.data(),
             mutant3.data(),
             mask.data(),
-            2.0,
+            inactive_differential_weight,
             actual.size());
 
     if (std::fetestexcept(FE_ALL_EXCEPT) != 0) {

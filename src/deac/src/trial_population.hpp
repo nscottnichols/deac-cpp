@@ -43,6 +43,44 @@ DEAC_NOINLINE void form_trial_population_row(
                 _mm512_set1_pd(differential_weight);
         const __m512i magnitude_mask = _mm512_set1_epi64(
                 static_cast<long long>(UINT64_C(0x7fffffffffffffff)));
+        const auto form_vector_chunk = [=](
+                std::size_t chunk_index,
+                __mmask8 lane_mask,
+                __mmask8 valid_mask) {
+            // Sanitize every arithmetic input before exposing it to the
+            // compiler's contraction policy. The boundary makes all lanes of
+            // these vectors observable, so inactive values must remain benign
+            // zeros even when later arithmetic is emitted without predicates.
+            __m512d mutant_values1 = _mm512_maskz_loadu_pd(
+                    lane_mask, mutant_row1 + chunk_index);
+            __m512d mutant_values2 = _mm512_maskz_loadu_pd(
+                    lane_mask, mutant_row2 + chunk_index);
+            __m512d mutant_values3 = _mm512_maskz_loadu_pd(
+                    lane_mask, mutant_row3 + chunk_index);
+            __m512d differential_weights = _mm512_maskz_mov_pd(
+                    lane_mask, differential_weight_vector);
+            __asm__ volatile(
+                    ""
+                    : "+v"(mutant_values1),
+                      "+v"(mutant_values2),
+                      "+v"(mutant_values3),
+                      "+v"(differential_weights));
+
+            __m512d evolved_values = mutant_values1
+                    + differential_weights*(mutant_values2 - mutant_values3);
+            if constexpr (!AllowNegativeSpectralWeight) {
+                evolved_values = _mm512_castsi512_pd(_mm512_and_epi64(
+                        _mm512_castpd_si512(evolved_values),
+                        magnitude_mask));
+            }
+            const __m512d current_values = _mm512_maskz_loadu_pd(
+                    valid_mask, current_row + chunk_index);
+            _mm512_mask_storeu_pd(
+                    trial_row + chunk_index,
+                    valid_mask,
+                    _mm512_mask_mov_pd(
+                            current_values, lane_mask, evolved_values));
+        };
         for (; genome_index + 8 <= genome_size; genome_index += 8) {
             // Reading bool values through their declared type preserves the
             // mask representation contract while producing an AVX-512 k-mask.
@@ -63,39 +101,31 @@ DEAC_NOINLINE void form_trial_population_row(
                     | (static_cast<unsigned>(
                             mutation_mask[genome_index + 7]) << 7));
 
-            // Sanitize every arithmetic input before exposing it to the
-            // compiler's contraction policy. The boundary makes all lanes of
-            // these vectors observable, so inactive values must remain benign
-            // zeros even when later arithmetic is emitted without predicates.
-            __m512d mutant_values1 = _mm512_maskz_loadu_pd(
-                    lane_mask, mutant_row1 + genome_index);
-            __m512d mutant_values2 = _mm512_maskz_loadu_pd(
-                    lane_mask, mutant_row2 + genome_index);
-            __m512d mutant_values3 = _mm512_maskz_loadu_pd(
-                    lane_mask, mutant_row3 + genome_index);
-            __m512d differential_weights = _mm512_maskz_mov_pd(
-                    lane_mask, differential_weight_vector);
-            __asm__ volatile(
-                    ""
-                    : "+v"(mutant_values1),
-                      "+v"(mutant_values2),
-                      "+v"(mutant_values3),
-                      "+v"(differential_weights));
-
-            __m512d evolved_values = mutant_values1
-                    + differential_weights*(mutant_values2 - mutant_values3);
-            if constexpr (!AllowNegativeSpectralWeight) {
-                evolved_values = _mm512_castsi512_pd(_mm512_and_epi64(
-                        _mm512_castpd_si512(evolved_values),
-                        magnitude_mask));
-            }
-            const __m512d current_values =
-                    _mm512_loadu_pd(current_row + genome_index);
-            _mm512_storeu_pd(
-                    trial_row + genome_index,
-                    _mm512_mask_mov_pd(
-                            current_values, lane_mask, evolved_values));
+            form_vector_chunk(genome_index, lane_mask, UINT8_MAX);
         }
+        if (genome_index < genome_size) {
+            const std::size_t remaining = genome_size - genome_index;
+            unsigned lane_bits = 0;
+            for (std::size_t lane=0; lane<remaining; ++lane) {
+                lane_bits |= static_cast<unsigned>(
+                        mutation_mask[genome_index + lane]) << lane;
+            }
+            const auto valid_mask = static_cast<__mmask8>(
+                    (UINT16_C(1) << remaining) - UINT16_C(1));
+            form_vector_chunk(
+                    genome_index,
+                    static_cast<__mmask8>(lane_bits),
+                    valid_mask);
+            genome_index = genome_size;
+        }
+    #endif
+    // The fallback must retain a real control dependency: if-converting this
+    // loop can evaluate signaling or otherwise exceptional mutant inputs for
+    // inactive lanes. AVX-512 uses explicitly sanitized masked vectors above.
+    #if defined(__clang__)
+        #pragma clang loop vectorize(disable)
+    #elif defined(__GNUC__)
+        #pragma GCC novector
     #endif
     for (; genome_index<genome_size; ++genome_index) {
         if (mutation_mask[genome_index]) {
