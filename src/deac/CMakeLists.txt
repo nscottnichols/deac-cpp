@@ -269,6 +269,14 @@ install(EXPORT ${exe}Config DESTINATION share/${exe}/cmake)
 export(TARGETS ${exe} FILE ${exe}Config.cmake)
 
 # Unit tests
+add_executable(deac_trapezoidal_weights_test
+    ${CMAKE_SOURCE_DIR}/../test/trapezoidal_weights_test.cpp)
+target_include_directories(deac_trapezoidal_weights_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+add_test(
+    NAME deac_unit_trapezoidal_weights
+    COMMAND deac_trapezoidal_weights_test)
+
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     set(DEAC_SMOKE_TEST "${CMAKE_SOURCE_DIR}/../test/deac_smoke_test.py")

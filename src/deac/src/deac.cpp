@@ -8,7 +8,10 @@
 #include <algorithm> // std::none_of
 #include <cmath>
 #include <cstdint>
+#include <span>
+#include <vector>
 #include <rng.hpp>
+#include "trapezoidal_weights.hpp"
 #include <memory> // string_format
 #include <string> // string_format
 #include <stdexcept> // throw
@@ -325,6 +328,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     double zeroth_moment = isf[0];
     bool use_first_moment = first_moment >= 0.0;
     bool use_third_moment = third_moment >= 0.0;
+    const std::vector<double> frequency_weights = deac_numerics::trapezoidal_weights(
+            std::span<const double>(frequency, genome_size));
 
     //Set isf term for trapezoidal rule integration with dsf (population members)
     size_t bytes_isf_term = sizeof(double)*genome_size*number_of_timeslices;
@@ -367,14 +372,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         for (size_t j=0; j<genome_size; j++) {
             double f = frequency[j];
             (void) f;
-            double df;
-            if (j==0) {
-                df = 0.5*(frequency[j+1] - frequency[j]);
-            } else if (j == genome_size - 1) {
-                df = 0.5*(frequency[j] - frequency[j-1]);
-            } else {
-                df = 0.5*(frequency[j+1] - frequency[j-1]);
-            }
+            const double df = frequency_weights[j];
             size_t isf_term_idx = i*genome_size + j;
             #ifndef ZEROT
                 #ifdef USE_HYPERBOLIC_MODEL
@@ -518,14 +516,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         for (size_t j=0; j<genome_size; j++) {
             double f = frequency[j];
             (void) f;
-            double df;
-            if (j==0) {
-                df = 0.5*(frequency[j+1] - frequency[j]);
-            } else if (j == genome_size - 1) {
-                df = 0.5*(frequency[j] - frequency[j-1]);
-            } else {
-                df = 0.5*(frequency[j+1] - frequency[j-1]);
-            }
+            const double df = frequency_weights[j];
             #ifndef ZEROT
                 #ifdef USE_HYPERBOLIC_MODEL
                     #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
@@ -655,14 +646,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #endif
         for (size_t j=0; j<genome_size; j++) {
             double f = frequency[j];
-            double df;
-            if (j==0) {
-                df = 0.5*(frequency[j+1] - frequency[j]);
-            } else if (j == genome_size - 1) {
-                df = 0.5*(frequency[j] - frequency[j-1]);
-            } else {
-                df = 0.5*(frequency[j+1] - frequency[j-1]);
-            }
+            const double df = frequency_weights[j];
             #ifndef ZEROT
                 #ifdef USE_HYPERBOLIC_MODEL
                     #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
@@ -764,14 +748,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #endif
         for (size_t j=0; j<genome_size; j++) {
             double f = frequency[j];
-            double df;
-            if (j==0) {
-                df = 0.5*(frequency[j+1] - frequency[j]);
-            } else if (j == genome_size - 1) {
-                df = 0.5*(frequency[j] - frequency[j-1]);
-            } else {
-                df = 0.5*(frequency[j+1] - frequency[j-1]);
-            }
+            const double df = frequency_weights[j];
             #ifndef ZEROT
                 #ifdef USE_HYPERBOLIC_MODEL
                     #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
@@ -901,15 +878,10 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double negative_first_moment_error = 0.0;
         if (use_negative_first_moment) {
             negative_first_moments_term = (double*) malloc(bytes_negative_first_moments_term);
+            const std::vector<double> imaginary_time_weights = deac_numerics::trapezoidal_weights(
+                    std::span<const double>(imaginary_time, number_of_timeslices));
             for (size_t j=0; j<number_of_timeslices; j++) {
-                double dt;
-                if (j==0) {
-                    dt = 0.5*(imaginary_time[j+1] - imaginary_time[j]);
-                } else if (j == number_of_timeslices - 1) {
-                    dt = 0.5*(imaginary_time[j] - imaginary_time[j-1]);
-                } else {
-                    dt = 0.5*(imaginary_time[j+1] - imaginary_time[j-1]);
-                }
+                const double dt = imaginary_time_weights[j];
                 negative_first_moments_term[j] = dt;
                 negative_first_moment += isf[j]*dt;
                 negative_first_moment_error += pow(isf_error[j],2) * pow(dt,2);
