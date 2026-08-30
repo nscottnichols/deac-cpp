@@ -74,18 +74,6 @@ double minimum(double * A, size_t length) {
     return _minimum;
 }
 
-size_t argmin(double * A, size_t length) {
-    size_t _argmin=0;
-    double _minimum = A[0];
-    for (size_t i=0; i<length; i++) {
-        if (A[i] < _minimum) {
-            _minimum = A[i];
-            _argmin = i;
-        }
-    }
-    return _argmin;
-}
-
 std::tuple <size_t, double> argmin_and_min(double * A, size_t length) {
     size_t _argmin=0;
     double _minimum = A[0];
@@ -113,27 +101,6 @@ double squared_mean(double * A, size_t length) {
         _squared_mean += A[i]*A[i];
     }
     return _squared_mean/length;
-}
-
-std::tuple <size_t, size_t, size_t> get_mutant_indices(struct xoshiro256p_state * rng, size_t mutant_index0, size_t length) {
-    size_t mutant_index1 = mutant_index0;
-    size_t mutant_index2 = mutant_index0;
-    size_t mutant_index3 = mutant_index0;
-    while (mutant_index1 == mutant_index0) {
-        mutant_index1 = xoshiro256p(rng) % length;
-    }
-
-    while ((mutant_index2 == mutant_index0) || (mutant_index2 == mutant_index1)) {
-        mutant_index2 = xoshiro256p(rng) % length;
-    }
-
-    while ((mutant_index3 == mutant_index0) || (mutant_index3 == mutant_index1)
-            || (mutant_index3 == mutant_index2)) {
-        mutant_index3 = xoshiro256p(rng) % length;
-    }
-
-    std::tuple <size_t, size_t, size_t> _mutant_indices(mutant_index1, mutant_index2, mutant_index3);
-    return _mutant_indices;
 }
 
 void set_mutant_indices(struct xoshiro256p_state* rng, size_t* mutant_indices, size_t mutant_index0, size_t length) {
@@ -179,8 +146,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double self_adapting_crossover_probability,
         double differential_weight, 
         double self_adapting_differential_weight_probability,
-        double self_adapting_differential_weight_shift,
-        double self_adapting_differential_weight, double stop_minimum_fitness,
+        double stop_minimum_fitness,
         bool track_stats, size_t seed, std::string uuid_str, std::string spectra_type, fs::path save_directory) {
 
     #ifdef ZEROT
@@ -1117,9 +1083,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 }
 
                 if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_differential_weight_probability) {
-                    //differential_weights_new[i] = 
-                    //    self_adapting_differential_weight_shift + 
-                    //    self_adapting_differential_weight*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
                     differential_weights_new_positive_frequency[i] = 2.0*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
                 } else {
                     differential_weights_new_positive_frequency[i] = differential_weights_old_positive_frequency[i];
@@ -1133,9 +1096,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     }
 
                     if ((xoshiro256p(rng) >> 11) * 0x1.0p-53 < self_adapting_differential_weight_probability) {
-                        //differential_weights_new[i] = 
-                        //    self_adapting_differential_weight_shift + 
-                        //    self_adapting_differential_weight*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
                         differential_weights_new_negative_frequency[i] = 2.0*((xoshiro256p(rng) >> 11) * 0x1.0p-53);
                     } else {
                         differential_weights_new_negative_frequency[i] = differential_weights_old_negative_frequency[i];
@@ -1666,7 +1626,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     fitness_squared_mean_filename,
                     std::span<const double>(fitness_squared_mean, generation + 1));
         }
-
         // Append the final run record only after all binary artifacts are
         // successfully flushed and closed.
         std::string log_filename_str = string_format("%s_log_%s.dat",deac_prefix.c_str(),uuid_str.c_str());
@@ -1706,8 +1665,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         log << "self_adapting_crossover_probability: " << self_adapting_crossover_probability << std::endl;
         log << "differential_weight: " << differential_weight << std::endl;
         log << "self_adapting_differential_weight_probability: " << self_adapting_differential_weight_probability << std::endl;
-        log << "self_adapting_differential_weight_shift: " << self_adapting_differential_weight_shift << std::endl;
-        log << "self_adapting_differential_weight: " << self_adapting_differential_weight << std::endl;
         log << "stop_minimum_fitness: " << stop_minimum_fitness << std::endl;
         log << "track_stats: " << track_stats << std::endl;
         log << "seed: " << seed << std::endl;
@@ -1948,14 +1905,6 @@ int deac_main (int argc, char *argv[]) {
         .help("Probability for `differential_weight` to mutate. Must be finite and in [0, 1].")
         .default_value(0.1)
         .action([](const std::string& value) { return std::stod(value); });
-    program.add_argument("-l","--self_adapting_differential_weight_shift")
-        .help("If `self_adapting_differential_weight_probability` mutate, new value is `l + m*rand()`.")
-        .default_value(0.1)
-        .action([](const std::string& value) { return std::stod(value); });
-    program.add_argument("-m","--self_adapting_differential_weight")
-        .help("If `self_adapting_differential_weight_probability` mutate, new value is `l + m*rand()`.")
-        .default_value(0.9)
-        .action([](const std::string& value) { return std::stod(value); });
     program.add_argument("--stop_minimum_fitness")
         .help("Stop evolving when minimum fitness is at or below this finite value. Negative values are allowed.")
         .default_value(1.0)
@@ -1967,10 +1916,6 @@ int deac_main (int argc, char *argv[]) {
     program.add_argument("--uuid")
         .help("UUID for run. If empty will be set to `seed`.")
         .default_value("");
-    program.add_argument("--save_state")
-        .help("Save state of DEAC algorithm. Saves the random number generator, population, and population fitness.")
-        .default_value(false)
-        .implicit_value(true);
     program.add_argument("--save_directory")
         .help("Directory to save results in.")
         .default_value("./deacresults");
@@ -2142,9 +2087,6 @@ int deac_main (int argc, char *argv[]) {
         fail_with_error("third_moment_error must be positive when third_moment is used");
     }
 
-    double self_adapting_differential_weight_shift = program.get<double>("--self_adapting_differential_weight_shift");
-    double self_adapting_differential_weight = program.get<double>("--self_adapting_differential_weight");
-
     bool track_stats = program.get<bool>("--track_stats");
     std::string save_directory_str = program.get<std::string>("--save_directory");
     fs::path save_directory(save_directory_str);
@@ -2169,8 +2111,7 @@ int deac_main (int argc, char *argv[]) {
             third_moment_error, crossover_probability,
             self_adapting_crossover_probability, differential_weight,
             self_adapting_differential_weight_probability,
-            self_adapting_differential_weight_shift,
-            self_adapting_differential_weight, stop_minimum_fitness,
+            stop_minimum_fitness,
             track_stats, seed_int, uuid_str, spectra_type, save_directory);
 
     return 0;
