@@ -14,6 +14,12 @@
 
 namespace {
 
+#if defined(__GNUC__) || defined(__clang__)
+    #define DEAC_TEST_NOINLINE __attribute__((noinline))
+#else
+    #define DEAC_TEST_NOINLINE
+#endif
+
 enum class MaskPattern {
     all_false,
     all_true,
@@ -22,7 +28,7 @@ enum class MaskPattern {
 };
 
 template<bool AllowNegativeSpectralWeight>
-void reference_form_trial_population_row(
+DEAC_TEST_NOINLINE void reference_form_trial_population_row(
         double* trial_row,
         const double* current_row,
         const double* mutant_row1,
@@ -92,6 +98,51 @@ bool same_bits(double left, double right) {
             == std::bit_cast<std::uint64_t>(right);
 }
 
+bool check_contraction_policy() {
+    constexpr std::size_t genome_size = 8;
+    std::array<double, genome_size> current{};
+    std::array<double, genome_size> mutant1{};
+    std::array<double, genome_size> mutant2{};
+    std::array<double, genome_size> mutant3{};
+    std::array<double, genome_size> expected{};
+    std::array<double, genome_size> actual{};
+    std::array<bool, genome_size> mask{};
+    mutant1.fill(-1.0);
+    mutant2.fill(std::nextafter(1.0, 0.0));
+    mutant3.fill(0.0);
+    mask.fill(true);
+    const double differential_weight = std::nextafter(1.0, 2.0);
+
+    reference_form_trial_population_row<true>(
+            expected.data(),
+            current.data(),
+            mutant1.data(),
+            mutant2.data(),
+            mutant3.data(),
+            mask.data(),
+            differential_weight,
+            genome_size);
+    deac_numerics::form_trial_population_row<true>(
+            actual.data(),
+            current.data(),
+            mutant1.data(),
+            mutant2.data(),
+            mutant3.data(),
+            mask.data(),
+            differential_weight,
+            genome_size);
+    for (std::size_t index=0; index<genome_size; ++index) {
+        if (!same_bits(expected[index], actual[index])) {
+            std::cerr << "trial row changed the compiler's contraction policy"
+                      << " at index=" << index << ": expected "
+                      << std::hexfloat << expected[index] << ", got "
+                      << actual[index] << '\n';
+            return false;
+        }
+    }
+    return true;
+}
+
 bool check_inactive_lane_bits() {
     constexpr std::array<std::uint64_t, 9> current_bits{
             UINT64_C(0x8000000000000000), // negative zero
@@ -112,7 +163,8 @@ bool check_inactive_lane_bits() {
 
     for (std::size_t index=0; index<current.size(); ++index) {
         current[index] = std::bit_cast<double>(current_bits[index]);
-        mutant1[index] = std::numeric_limits<double>::max();
+        mutant1[index] = std::bit_cast<double>(
+                UINT64_C(0x7ff0000000000042));
         mutant2[index] = std::numeric_limits<double>::infinity();
         mutant3[index] = std::numeric_limits<double>::infinity();
     }
@@ -252,7 +304,7 @@ int main() {
             MaskPattern::seeded_random};
     constexpr std::array<double, 3> differential_weights{0.0, 0.5, 2.0};
 
-    if (!check_inactive_lane_bits()) {
+    if (!check_inactive_lane_bits() || !check_contraction_policy()) {
         return 1;
     }
 
@@ -278,3 +330,5 @@ int main() {
     }
     return 0;
 }
+
+#undef DEAC_TEST_NOINLINE

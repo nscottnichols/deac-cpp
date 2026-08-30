@@ -367,6 +367,20 @@ add_test(
     NAME deac_unit_trial_population
     COMMAND deac_trial_population_test)
 
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|IntelLLVM"
+        AND NOT GPU_BACKEND STREQUAL "cuda"
+        AND NOT GPU_BACKEND STREQUAL "hip")
+    add_executable(deac_trial_population_no_contract_test
+        ${CMAKE_SOURCE_DIR}/../test/trial_population_test.cpp)
+    target_include_directories(deac_trial_population_no_contract_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(deac_trial_population_no_contract_test PRIVATE
+        -ffp-contract=off)
+    add_test(
+        NAME deac_unit_trial_population_no_contract
+        COMMAND deac_trial_population_no_contract_test)
+endif()
+
 add_executable(deac_result_io_test
     ${CMAKE_SOURCE_DIR}/../test/result_io_test.cpp)
 target_include_directories(deac_result_io_test PRIVATE

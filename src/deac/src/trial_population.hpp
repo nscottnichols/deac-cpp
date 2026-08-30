@@ -4,7 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#if defined(__AVX512F__) && defined(__FMA__) && !defined(USE_GPU)
+#if (defined(__GNUC__) || defined(__clang__)) \
+        && defined(__AVX512F__) && !defined(USE_GPU)
     #include <immintrin.h>
     #define DEAC_TRIAL_POPULATION_AVX512 1
 #endif
@@ -23,9 +24,9 @@ namespace deac_numerics {
 // current, three mutant, and mask ranges must be pairwise non-overlapping.
 // Solver mutant selection guarantees that the four input population rows are
 // distinct, while the trial row and mask live in separate allocations. Making
-// that ownership contract explicit lets CPU compilers predicate/vectorize the
-// masked row operation without changing its scalar arithmetic, selected value
-// bits, floating-point exception behavior, or RNG order.
+// that ownership contract explicit lets CPU compilers vectorize the selected
+// row operation without changing scalar arithmetic, selected value bits,
+// floating-point exception behavior, or RNG order.
 template<bool AllowNegativeSpectralWeight>
 DEAC_NOINLINE void form_trial_population_row(
         double* __restrict__ trial_row,
@@ -61,31 +62,42 @@ DEAC_NOINLINE void form_trial_population_row(
                             mutation_mask[genome_index + 6]) << 6)
                     | (static_cast<unsigned>(
                             mutation_mask[genome_index + 7]) << 7));
-            const __m512d current_values =
-                    _mm512_loadu_pd(current_row + genome_index);
-            const __m512d mutant_difference = _mm512_maskz_sub_pd(
-                    lane_mask,
-                    _mm512_loadu_pd(mutant_row2 + genome_index),
-                    _mm512_loadu_pd(mutant_row3 + genome_index));
-            __m512d evolved_values = _mm512_maskz_fmadd_pd(
-                    lane_mask,
-                    differential_weight_vector,
-                    mutant_difference,
-                    _mm512_loadu_pd(mutant_row1 + genome_index));
+
+            // Sanitize every arithmetic input before exposing it to the
+            // compiler's contraction policy. The boundary makes all lanes of
+            // these vectors observable, so inactive values must remain benign
+            // zeros even when later arithmetic is emitted without predicates.
+            __m512d mutant_values1 = _mm512_maskz_loadu_pd(
+                    lane_mask, mutant_row1 + genome_index);
+            __m512d mutant_values2 = _mm512_maskz_loadu_pd(
+                    lane_mask, mutant_row2 + genome_index);
+            __m512d mutant_values3 = _mm512_maskz_loadu_pd(
+                    lane_mask, mutant_row3 + genome_index);
+            __m512d differential_weights = _mm512_maskz_mov_pd(
+                    lane_mask, differential_weight_vector);
+            __asm__ volatile(
+                    ""
+                    : "+v"(mutant_values1),
+                      "+v"(mutant_values2),
+                      "+v"(mutant_values3),
+                      "+v"(differential_weights));
+
+            __m512d evolved_values = mutant_values1
+                    + differential_weights*(mutant_values2 - mutant_values3);
             if constexpr (!AllowNegativeSpectralWeight) {
                 evolved_values = _mm512_castsi512_pd(_mm512_and_epi64(
                         _mm512_castpd_si512(evolved_values),
                         magnitude_mask));
             }
+            const __m512d current_values =
+                    _mm512_loadu_pd(current_row + genome_index);
             _mm512_storeu_pd(
                     trial_row + genome_index,
                     _mm512_mask_mov_pd(
                             current_values, lane_mask, evolved_values));
         }
     #endif
-    for (;
-            genome_index<genome_size;
-            ++genome_index) {
+    for (; genome_index<genome_size; ++genome_index) {
         if (mutation_mask[genome_index]) {
             const double mutant_value =
                     mutant_row1[genome_index]
