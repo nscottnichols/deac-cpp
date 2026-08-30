@@ -352,6 +352,53 @@ add_test(
     NAME deac_unit_zero_temperature_kernel
     COMMAND deac_zero_temperature_kernel_test)
 
+# A separate test-only solver binary forces every evolved normalization
+# denominator to zero.  Keeping the hook out of the installed solver makes the
+# complete-loop rejection regression deterministic without adding a public
+# option or runtime branch.
+if(NOT USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT)
+    if("${GPU_BACKEND}" STREQUAL "cuda")
+        add_executable(deac_invalid_normalization_evolution_test_exe
+            ${DEAC_SRC} ${DEAC_CUDA})
+        set_target_properties(
+            deac_invalid_normalization_evolution_test_exe PROPERTIES
+            CUDA_SEPARABLE_COMPILATION ON)
+    else()
+        add_executable(deac_invalid_normalization_evolution_test_exe
+            ${DEAC_SRC})
+    endif()
+    target_compile_definitions(
+        deac_invalid_normalization_evolution_test_exe PRIVATE
+        DEAC_TEST_FORCE_INVALID_NORMALIZATION_TRIALS=1)
+    target_include_directories(
+        deac_invalid_normalization_evolution_test_exe PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        PRIVATE src)
+    if(USE_BLAS AND "${GPU_BACKEND}" STREQUAL "cuda")
+        target_link_libraries(
+            deac_invalid_normalization_evolution_test_exe CUDA::cublas)
+    endif()
+    if(USE_BLAS AND "${GPU_BACKEND}" STREQUAL "sycl")
+        target_include_directories(
+            deac_invalid_normalization_evolution_test_exe PRIVATE
+            "${MKLROOT}/include")
+        target_link_libraries(
+            deac_invalid_normalization_evolution_test_exe
+            ${MKL_SYCL_BLAS_LIBRARY}
+            ${MKL_SYCL_LIBRARY}
+            ${MKL_INTEL_ILP64_LIBRARY}
+            ${MKL_SEQUENTIAL_LIBRARY}
+            ${MKL_CORE_LIBRARY}
+            pthread
+            m
+            dl)
+    endif()
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.0)
+        target_link_libraries(
+            deac_invalid_normalization_evolution_test_exe stdc++fs)
+    endif()
+endif()
+
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     set(DEAC_SMOKE_TEST "${CMAKE_SOURCE_DIR}/../test/deac_smoke_test.py")
@@ -370,8 +417,6 @@ if(Python3_Interpreter_FOUND)
             default
             evolution_control_lower_boundaries
             evolution_control_upper_boundaries
-            normalize
-            normalize_large_population
             first_moment
             third_moment
             track_stats
@@ -385,7 +430,6 @@ if(Python3_Interpreter_FOUND)
             normalize_negative_target
             normalize_subnormal_target
             normalize_nonfinite_target
-            normalize_unrepresentable_scale
             missing_isf
             positive_isf_single_particle
             bad_third_moment_error
@@ -411,6 +455,16 @@ if(Python3_Interpreter_FOUND)
             unwritable_save_directory
             log_destination_is_directory
             result_destination_is_directory)
+    if(USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT)
+        # Basic malformed-target validation still takes precedence above.  A
+        # valid target reaches this build-mode incompatibility check.
+        list(APPEND DEAC_SMOKE_CASES normalize_signed_weights)
+    else()
+        list(APPEND DEAC_SMOKE_CASES
+            normalize
+            normalize_large_population
+            normalize_unrepresentable_scale)
+    endif()
     if(USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF)
         list(APPEND DEAC_SMOKE_CASES negative_first_moment)
     else()
@@ -428,15 +482,27 @@ if(Python3_Interpreter_FOUND)
                 ${DEAC_SMOKE_VARIANT_ARGS}
         )
     endforeach()
-    add_test(
-        NAME deac_normalization_evolution
-        COMMAND
-            ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/../test/deac_normalization_evolution_test.py
-            --exe $<TARGET_FILE:${exe}>
-            --workdir ${CMAKE_CURRENT_BINARY_DIR}/normalization-evolution
-            ${DEAC_SMOKE_VARIANT_ARGS}
-    )
+    if(NOT USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT)
+        add_test(
+            NAME deac_normalization_evolution
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/../test/deac_normalization_evolution_test.py
+                --exe $<TARGET_FILE:${exe}>
+                --workdir ${CMAKE_CURRENT_BINARY_DIR}/normalization-evolution
+                ${DEAC_SMOKE_VARIANT_ARGS}
+        )
+        add_test(
+            NAME deac_invalid_normalization_evolution
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/../test/deac_invalid_normalization_evolution_test.py
+                --reference-exe $<TARGET_FILE:${exe}>
+                --forced-exe $<TARGET_FILE:deac_invalid_normalization_evolution_test_exe>
+                --workdir ${CMAKE_CURRENT_BINARY_DIR}/invalid-normalization-evolution
+                ${DEAC_SMOKE_VARIANT_ARGS}
+        )
+    endif()
     set(DEAC_PARITY_REFERENCE_EXE "" CACHE FILEPATH "Reference deac executable for backend parity tests.")
     if(NOT "${DEAC_PARITY_REFERENCE_EXE}" STREQUAL "")
         add_test(

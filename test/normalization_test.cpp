@@ -64,6 +64,14 @@ int main() {
     }
     try {
         deac_numerics::validate_initial_normalization_scale(
+                std::numeric_limits<double>::min(), 0.5);
+    } catch (const std::exception& error) {
+        std::cerr << "rejected DBL_MIN despite a representable grid scale: "
+                  << error.what() << '\n';
+        return 1;
+    }
+    try {
+        deac_numerics::validate_initial_normalization_scale(
                 std::numeric_limits<double>::min(), 6.0);
         std::cerr << "accepted an initial normalization scale that is subnormal\n";
         return 1;
@@ -132,7 +140,7 @@ int main() {
             ? 0.0 : std::numeric_limits<double>::max();
     if (degenerate_valid
             || degenerate_candidate != std::array<double, 2>{0.0, 0.0}
-            || degenerate_fitness <= 1.0
+            || degenerate_fitness != std::numeric_limits<double>::max()
             || incumbent != std::array<double, 2>{0.5, 1.5}) {
         std::cerr << "degenerate evolved normalization row was not rejected\n";
         return 1;

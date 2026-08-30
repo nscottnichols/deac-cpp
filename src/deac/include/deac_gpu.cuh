@@ -8,17 +8,22 @@ void gpu_dot(cudaStream_t s, double* __restrict__ C, double* __restrict__ B, dou
 void gpu_matmul(cudaStream_t s, int m, int n, int k, double alpha, double* __restrict__ A, double* __restrict__ B, double beta, double* __restrict__ C);
 void gpu_deac_gemv(cudaStream_t s, int m, int n, double alpha, double* __restrict__ A, double* __restrict__ x, double beta, double* __restrict__ y);
 void gpu_get_minimum(cudaStream_t s, double* __restrict__ minimum, double* __restrict__ array, size_t N);
-void gpu_deac_dgmmDiv1D(cudaStream_t s, double* __restrict__ positive_matrix,
-        double* __restrict__ negative_matrix,
-        const double* __restrict__ vector, bool* __restrict__ valid_rows,
+void gpu_deac_dgmmDiv1D(cudaStream_t s, double* __restrict__ matrix,
+        double* __restrict__ vector, size_t rows, size_t cols);
+void gpu_validate_normalization_rows(cudaStream_t s,
+        const double* __restrict__ matrix,
+        const double* __restrict__ vector, int* __restrict__ valid_rows,
         double target, size_t rows, size_t cols);
+void gpu_cleanup_invalid_normalization_rows(cudaStream_t s,
+        double* __restrict__ matrix, const int* __restrict__ valid_rows,
+        size_t rows, size_t cols);
 void gpu_deac_reduced_chi_squared(cudaStream_t s, const double* __restrict__ calculated_data, const double* __restrict__ observed_data, const double* __restrict__ standard_deviations, double* __restrict__ reduced_chi_squared, size_t m, size_t n, size_t ddof, double beta);
 void gpu_deac_add_scalar_reduced_chi_squared(cudaStream_t s, const double* __restrict__ calculated_data, double observed_data, double standard_deviation, double* __restrict__ reduced_chi_squared, size_t m);
 void gpu_set_fitness_mean(cudaStream_t s, double* __restrict__ fitness_mean, double* __restrict__ fitness, size_t population_size);
 void gpu_set_fitness_squared_mean(cudaStream_t s, double* __restrict__ fitness_squared_mean, double* __restrict__ fitness, size_t population_size);
 void gpu_set_population_new(cudaStream_t s, size_t grid_size, double* __restrict__ population_new, double* __restrict__ population_old, size_t* __restrict__ mutant_indices, double* __restrict__ differential_weights_new, bool* __restrict__ mutate_indices, size_t population_size, size_t genome_size);
 void gpu_match_population_zero(cudaStream_t s, size_t grid_size, double* __restrict__ population_negative_frequency, double* __restrict__ population_positive_frequency, size_t population_size, size_t genome_size);
-void gpu_set_rejection_indices(cudaStream_t s, size_t grid_size, bool* __restrict__ rejection_indices, double* __restrict__ fitness_new, double* __restrict__ fitness_old, const bool* __restrict__ normalization_valid, bool normalize, size_t population_size);
+void gpu_set_rejection_indices(cudaStream_t s, size_t grid_size, bool* __restrict__ rejection_indices, double* __restrict__ fitness_new, double* __restrict__ fitness_old, const int* __restrict__ normalization_valid, bool normalize, size_t population_size);
 void gpu_swap_control_parameters(cudaStream_t s, size_t grid_size, double* __restrict__ control_parameter_old, double* __restrict__ control_parameter_new, bool* __restrict__ rejection_indices, size_t population_size);
 void gpu_swap_populations(cudaStream_t s, size_t grid_size, double* __restrict__ population_old, double* __restrict__ population_new, bool* __restrict__ rejection_indices, size_t population_size, size_t genome_size);
 void gpu_set_crossover_probabilities_new(cudaStream_t s, size_t grid_size, uint64_t* __restrict__ rng_state, double* __restrict__ crossover_probabilities_new, double* __restrict__ crossover_probabilities_old, double self_adapting_crossover_probability, size_t population_size);

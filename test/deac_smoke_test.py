@@ -37,6 +37,7 @@ VALIDATION_CASES = [
     "normalize_subnormal_target",
     "normalize_nonfinite_target",
     "normalize_unrepresentable_scale",
+    "normalize_signed_weights",
     "missing_isf",
     "positive_isf_single_particle",
     "bad_third_moment_error",
@@ -393,6 +394,14 @@ def run_validation_case(
             "--normalize target is outside the representable normal range "
             "for this model and frequency grid"
         )
+    elif case_name == "normalize_signed_weights":
+        write_positive_fixture(fixture)
+        extra_args = ["--normalize"]
+        if not detailed_balance and not zero_temperature:
+            extra_args.extend(["--spectra_type", "bfull"])
+        expected_output = (
+            "--normalize is incompatible with negative spectral weights"
+        )
     elif case_name == "missing_isf":
         expected_output = "could not open binary input"
     elif case_name == "positive_isf_single_particle":
@@ -610,6 +619,7 @@ def run_validation_case(
         "normalize_subnormal_target",
         "normalize_nonfinite_target",
         "normalize_unrepresentable_scale",
+        "normalize_signed_weights",
     }:
         if "uuid:" in result.stdout:
             raise AssertionError(
