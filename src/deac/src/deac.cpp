@@ -7,6 +7,7 @@
 #include <sstream> // 
 #include <algorithm> // std::none_of
 #include <cmath>
+#include <cstdint>
 #include <rng.hpp>
 #include <memory> // string_format
 #include <string> // string_format
@@ -214,6 +215,22 @@ void set_mutant_indices(struct xoshiro256p_state* rng, size_t* mutant_indices, s
         mutant_indices[2] = xoshiro256p(rng) % length;
     }
 }
+
+#ifndef USE_GPU
+static uint64_t probability_threshold(double probability) {
+    // The RNG produces q * 2^-53 for an integer q in [0, 2^53).
+    // Comparing q against ceil(probability * 2^53) is therefore exact and
+    // avoids converting every generated value to double.
+    constexpr uint64_t random_range = UINT64_C(1) << 53;
+    if (!(probability > 0.0)) {
+        return 0;
+    }
+    if (probability >= 1.0) {
+        return random_range;
+    }
+    return static_cast<uint64_t>(std::ceil(std::ldexp(probability, 53)));
+}
+#endif
 
 void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double * const isf, double * const isf_error, double * frequency,
@@ -1234,13 +1251,19 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             for (size_t i=0; i<population_size; i++) {
                 set_mutant_indices(rng, mutant_indices + 3*i, i, population_size);
                 double crossover_rate_positive_frequency = crossover_probabilities_new_positive_frequency[i];
+                const uint64_t crossover_threshold_positive_frequency =
+                        probability_threshold(crossover_rate_positive_frequency);
                 for (size_t j=0; j<genome_size; j++) {
-                    mutate_indices_positive_frequency[i*genome_size + j] = (xoshiro256p(rng) >> 11) * 0x1.0p-53 < crossover_rate_positive_frequency;
+                    mutate_indices_positive_frequency[i*genome_size + j] =
+                            (xoshiro256p(rng) >> 11) < crossover_threshold_positive_frequency;
                 }
                 #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                     double crossover_rate_negative_frequency = crossover_probabilities_new_negative_frequency[i];
+                    const uint64_t crossover_threshold_negative_frequency =
+                            probability_threshold(crossover_rate_negative_frequency);
                     for (size_t j=0; j<genome_size; j++) {
-                        mutate_indices_negative_frequency[i*genome_size + j] = (xoshiro256p(rng) >> 11) * 0x1.0p-53 < crossover_rate_negative_frequency;
+                        mutate_indices_negative_frequency[i*genome_size + j] =
+                                (xoshiro256p(rng) >> 11) < crossover_threshold_negative_frequency;
                     }
                 #endif
             }
