@@ -38,6 +38,7 @@ VALIDATION_CASES = [
     "bad_differential_weight",
     "bad_self_adapting_differential_weight_probability",
     "bad_stop_minimum_fitness",
+    "inactive_options_rejected",
     "too_few_generations",
     "too_small_population",
     "too_small_genome",
@@ -333,6 +334,33 @@ def run_validation_case(exe, workdir, case_name, detailed_balance=False):
         write_fixture(fixture)
         extra_args = ["--stop_minimum_fitness", "inf"]
         expected_output = "stop_minimum_fitness must be finite"
+    elif case_name == "inactive_options_rejected":
+        write_fixture(fixture)
+        save_dir = workdir / "results"
+        for inactive_option in (
+            ["--save_state"],
+            ["-l", "0.1"],
+            ["--self_adapting_differential_weight_shift", "0.1"],
+            ["-m", "0.9"],
+            ["--self_adapting_differential_weight", "0.9"],
+        ):
+            command = deac_command(
+                exe,
+                workdir,
+                fixture,
+                extra_args=inactive_option,
+            )
+            run_command(
+                command,
+                workdir,
+                expected_returncode=1,
+                expected_output=inactive_option[0],
+            )
+            if save_dir.exists():
+                raise AssertionError(
+                    f"inactive option {inactive_option[0]} created {save_dir}"
+                )
+        return
     elif case_name == "too_few_generations":
         write_fixture(fixture)
         command_options["number_of_generations"] = "1"
@@ -504,6 +532,23 @@ def main():
                     f"expected --help to contain {expected_output!r}\n"
                     f"output:\n{result.stdout}"
                 )
+        for inactive_option in (
+            "--save_state",
+            "--self_adapting_differential_weight_shift",
+        ):
+            if inactive_option in result.stdout:
+                raise AssertionError(
+                    f"expected --help to omit inactive option {inactive_option!r}\n"
+                    f"output:\n{result.stdout}"
+                )
+        help_without_probability = result.stdout.replace(
+            "--self_adapting_differential_weight_probability", ""
+        )
+        if "--self_adapting_differential_weight" in help_without_probability:
+            raise AssertionError(
+                "expected --help to omit inactive differential-weight range option\n"
+                f"output:\n{result.stdout}"
+            )
     elif args.case == "version":
         result = run_command([exe, "-v"], workdir)
         if result.stdout.strip() != "2.0.0-rc1":

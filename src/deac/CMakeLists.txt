@@ -334,6 +334,7 @@ if(Python3_Interpreter_FOUND)
             bad_differential_weight
             bad_self_adapting_differential_weight_probability
             bad_stop_minimum_fitness
+            inactive_options_rejected
             too_few_generations
             too_small_population
             too_small_genome
