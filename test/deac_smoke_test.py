@@ -32,6 +32,11 @@ VALIDATION_CASES = [
     "uneven_isf_arrays",
     "too_few_timeslices",
     "nonfinite_isf",
+    "normalize_zero_target",
+    "normalize_negative_target",
+    "normalize_subnormal_target",
+    "normalize_nonfinite_target",
+    "normalize_unrepresentable_scale",
     "missing_isf",
     "positive_isf_single_particle",
     "bad_third_moment_error",
@@ -169,7 +174,10 @@ def run_deac_case(
     exe, workdir, case_name, detailed_balance=False, zero_temperature=False
 ):
     fixture = workdir / "tiny-isf.bin"
-    if zero_temperature:
+    if zero_temperature or case_name in (
+        "normalize",
+        "normalize_large_population",
+    ):
         write_positive_fixture(fixture)
     else:
         write_fixture(fixture)
@@ -204,6 +212,8 @@ def run_deac_case(
         extra_args.extend(["--frequency_file", str(frequency_file)])
     elif case_name in ("normalize", "normalize_large_population"):
         extra_args.append("--normalize")
+        if not detailed_balance and not zero_temperature:
+            extra_args.extend(["--spectra_type", "bfull"])
         if case_name == "normalize_large_population":
             population_size = "1028"
     elif case_name == "first_moment":
@@ -262,6 +272,11 @@ def run_deac_case(
     ) * 8
     if zero_temperature:
         prefix = "deac-zT"
+    elif (
+        case_name in ("normalize", "normalize_large_population")
+        and not detailed_balance
+    ):
+        prefix = "deac-bfull"
     else:
         prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
     assert_file_size(save_dir / f"{prefix}_dsf_{seed}.bin", expected_spectrum_bytes)
@@ -348,6 +363,36 @@ def run_validation_case(
     elif case_name == "nonfinite_isf":
         write_fixture(fixture, isf=[-1.0, float("nan"), -0.72, -0.61])
         expected_output = "ISF input file contains non-finite values"
+    elif case_name in {
+        "normalize_zero_target",
+        "normalize_negative_target",
+        "normalize_subnormal_target",
+        "normalize_nonfinite_target",
+    }:
+        target = {
+            "normalize_zero_target": 0.0,
+            "normalize_negative_target": -1.0,
+            "normalize_subnormal_target": math.ulp(0.0),
+            "normalize_nonfinite_target": float("nan"),
+        }[case_name]
+        write_fixture(fixture, isf=[target, 0.85, 0.72, 0.61])
+        extra_args = ["--normalize"]
+        if not detailed_balance and not zero_temperature:
+            extra_args.extend(["--spectra_type", "bfull"])
+        expected_output = (
+            "--normalize requires the first ISF value (zeroth moment) to be "
+            "finite, positive, and at least the smallest normal double"
+        )
+    elif case_name == "normalize_unrepresentable_scale":
+        target = float.fromhex("0x1.0p-1022")
+        write_fixture(fixture, isf=[target, target, target, target])
+        extra_args = ["--normalize"]
+        if not detailed_balance and not zero_temperature:
+            extra_args.extend(["--spectra_type", "bfull"])
+        expected_output = (
+            "--normalize target is outside the representable normal range "
+            "for this model and frequency grid"
+        )
     elif case_name == "missing_isf":
         expected_output = "could not open binary input"
     elif case_name == "positive_isf_single_particle":
@@ -559,6 +604,23 @@ def run_validation_case(
             prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
         if (save_dir / f"{prefix}_frequency_{uuid}.bin").exists():
             raise AssertionError("solver continued writing after the first result I/O failure")
+    elif case_name in {
+        "normalize_zero_target",
+        "normalize_negative_target",
+        "normalize_subnormal_target",
+        "normalize_nonfinite_target",
+        "normalize_unrepresentable_scale",
+    }:
+        if "uuid:" in result.stdout:
+            raise AssertionError(
+                "invalid normalization target emitted a run identifier"
+            )
+        if "minimum_fitness:" in result.stdout:
+            raise AssertionError("evolution started despite an invalid normalization target")
+        if save_dir.exists():
+            raise AssertionError(
+                f"invalid normalization target created output directory {save_dir}"
+            )
     elif case_name in {
         "nonfinite_frequency",
         "negative_frequency",

@@ -403,14 +403,38 @@ void gpu_get_minimum(double* __restrict__ minimum, double* __restrict__ array, s
     }
 }
 
-__global__ void gpu_deac_dgmmDiv1D(double* __restrict__ matrix, double* __restrict__ vector, size_t rows, size_t cols) {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x; // 1D index for the entire matrix
-    if (idx < rows * cols) { // Ensure we do not go out of bounds
-        size_t row = idx % rows; // Calculate the row index
-        //size_t col = idx / rows; // Calculate the column index, assuming column-major order
-        double reciprocal = 1.0/vector[row];
-        // Perform the division operation
-        matrix[idx] *= reciprocal;
+__global__ void gpu_deac_dgmmDiv1D(double* __restrict__ positive_matrix,
+        double* __restrict__ negative_matrix,
+        const double* __restrict__ vector, bool* __restrict__ valid_rows,
+        double target, size_t rows, size_t cols) {
+    const size_t row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row < rows) {
+        const double scale = target/vector[row];
+        bool valid = vector[row] >= DBL_MIN && vector[row] <= DBL_MAX
+                && scale >= DBL_MIN && scale <= DBL_MAX;
+        if (valid) {
+            for (size_t col=0; col<cols; ++col) {
+                const size_t idx = row + col*rows;
+                positive_matrix[idx] *= scale;
+                valid = valid && isfinite(positive_matrix[idx]);
+            }
+            if (negative_matrix != nullptr) {
+                for (size_t col=0; col<cols; ++col) {
+                    const size_t idx = row + col*rows;
+                    negative_matrix[idx] *= scale;
+                    valid = valid && isfinite(negative_matrix[idx]);
+                }
+            }
+        }
+        if (!valid) {
+            for (size_t col=0; col<cols; ++col) {
+                positive_matrix[row + col*rows] = 0.0;
+                if (negative_matrix != nullptr) {
+                    negative_matrix[row + col*rows] = 0.0;
+                }
+            }
+        }
+        valid_rows[row] = valid;
     }
 }
 
@@ -549,10 +573,17 @@ void gpu_match_population_zero(double* __restrict__ population_negative_frequenc
 }
 
 __global__
-void gpu_set_rejection_indices(bool* __restrict__ rejection_indices, double* __restrict__ fitness_new, double* __restrict__ fitness_old, size_t population_size) {
+void gpu_set_rejection_indices(bool* __restrict__ rejection_indices,
+        double* __restrict__ fitness_new, double* __restrict__ fitness_old,
+        const bool* __restrict__ normalization_valid, bool normalize,
+        size_t population_size) {
     size_t global_idx = blockDim.x*blockIdx.x + threadIdx.x;
     if (global_idx < population_size) {
-        bool accept = fitness_new[global_idx] <= fitness_old[global_idx];
+        if (normalize && !normalization_valid[global_idx]) {
+            fitness_new[global_idx] = DBL_MAX;
+        }
+        bool accept = (!normalize || normalization_valid[global_idx])
+                && fitness_new[global_idx] <= fitness_old[global_idx];
         rejection_indices[global_idx] = accept;
         if (accept) {
             fitness_old[global_idx] = fitness_new[global_idx];
@@ -662,8 +693,14 @@ void gpu_get_minimum(cudaStream_t s, double* __restrict__ minimum, double* __res
     gpu_get_minimum<<<dim3(1), dim3(GPU_BLOCK_SIZE), 0, s>>>(minimum, array, N);
 }
 
-void gpu_deac_dgmmDiv1D(cudaStream_t s, double* __restrict__ matrix, double* __restrict__ vector, size_t rows, size_t cols) {
-    gpu_deac_dgmmDiv1D<<<dim3((rows*cols + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE), dim3(GPU_BLOCK_SIZE), 0, s>>>(matrix, vector, rows, cols);
+void gpu_deac_dgmmDiv1D(cudaStream_t s, double* __restrict__ positive_matrix,
+        double* __restrict__ negative_matrix,
+        const double* __restrict__ vector, bool* __restrict__ valid_rows,
+        double target, size_t rows, size_t cols) {
+    gpu_deac_dgmmDiv1D<<<dim3((rows + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE),
+            dim3(GPU_BLOCK_SIZE), 0, s>>>(
+                    positive_matrix, negative_matrix, vector, valid_rows,
+                    target, rows, cols);
 }
 
 void gpu_deac_reduced_chi_squared(cudaStream_t s, const double* __restrict__ calculated_data, const double* __restrict__ observed_data, const double* __restrict__ standard_deviations, double* __restrict__ reduced_chi_squared, size_t m, size_t n, size_t ddof, double beta) {
@@ -690,8 +727,14 @@ void gpu_match_population_zero(cudaStream_t s, size_t grid_size, double* __restr
     gpu_match_population_zero<<<dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s>>>(population_negative_frequency, population_positive_frequency, population_size, genome_size);
 }
 
-void gpu_set_rejection_indices(cudaStream_t s, size_t grid_size, bool* __restrict__ rejection_indices, double* __restrict__ fitness_new, double* __restrict__ fitness_old, size_t population_size) {
-    gpu_set_rejection_indices<<<dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s>>>(rejection_indices, fitness_new, fitness_old, population_size);
+void gpu_set_rejection_indices(cudaStream_t s, size_t grid_size,
+        bool* __restrict__ rejection_indices, double* __restrict__ fitness_new,
+        double* __restrict__ fitness_old,
+        const bool* __restrict__ normalization_valid, bool normalize,
+        size_t population_size) {
+    gpu_set_rejection_indices<<<dim3(grid_size), dim3(GPU_BLOCK_SIZE), 0, s>>>(
+            rejection_indices, fitness_new, fitness_old,
+            normalization_valid, normalize, population_size);
 }
 
 void gpu_swap_control_parameters(cudaStream_t s, size_t grid_size, double* __restrict__ control_parameter_old, double* __restrict__ control_parameter_new, bool* __restrict__ rejection_indices, size_t population_size) {

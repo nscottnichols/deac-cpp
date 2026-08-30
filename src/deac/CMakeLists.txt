@@ -285,6 +285,48 @@ add_test(
     NAME deac_unit_evolution_controls
     COMMAND deac_evolution_controls_test)
 
+add_executable(deac_normalization_test
+    ${CMAKE_SOURCE_DIR}/../test/normalization_test.cpp)
+target_include_directories(deac_normalization_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+add_test(
+    NAME deac_unit_normalization
+    COMMAND deac_normalization_test)
+
+if(NOT "${GPU_BACKEND}" STREQUAL "none")
+    set(DEAC_GPU_NORMALIZATION_TEST_SOURCES
+        ${CMAKE_SOURCE_DIR}/../test/gpu_normalization_test.cpp)
+    if("${GPU_BACKEND}" STREQUAL "cuda")
+        list(APPEND DEAC_GPU_NORMALIZATION_TEST_SOURCES
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deac_gpu.cu)
+    endif()
+    add_executable(deac_gpu_normalization_test
+        ${DEAC_GPU_NORMALIZATION_TEST_SOURCES})
+    target_include_directories(deac_gpu_normalization_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    if("${GPU_BACKEND}" STREQUAL "cuda")
+        set_target_properties(deac_gpu_normalization_test PROPERTIES
+            CUDA_SEPARABLE_COMPILATION ON)
+    endif()
+    if(USE_BLAS AND "${GPU_BACKEND}" STREQUAL "cuda")
+        target_link_libraries(deac_gpu_normalization_test CUDA::cublas)
+    endif()
+    if(USE_BLAS AND "${GPU_BACKEND}" STREQUAL "sycl")
+        target_link_libraries(deac_gpu_normalization_test
+            ${MKL_SYCL_BLAS_LIBRARY}
+            ${MKL_SYCL_LIBRARY}
+            ${MKL_INTEL_ILP64_LIBRARY}
+            ${MKL_SEQUENTIAL_LIBRARY}
+            ${MKL_CORE_LIBRARY}
+            pthread
+            m
+            dl)
+    endif()
+    add_test(
+        NAME deac_unit_gpu_normalization
+        COMMAND deac_gpu_normalization_test)
+endif()
+
 add_executable(deac_population_projection_test
     ${CMAKE_SOURCE_DIR}/../test/population_projection_test.cpp)
 target_include_directories(deac_population_projection_test PRIVATE
@@ -339,6 +381,11 @@ if(Python3_Interpreter_FOUND)
             uneven_isf_arrays
             too_few_timeslices
             nonfinite_isf
+            normalize_zero_target
+            normalize_negative_target
+            normalize_subnormal_target
+            normalize_nonfinite_target
+            normalize_unrepresentable_scale
             missing_isf
             positive_isf_single_particle
             bad_third_moment_error

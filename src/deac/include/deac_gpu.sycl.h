@@ -9,6 +9,7 @@
 #ifndef DEAC_GPU_SYCL_H 
 #define DEAC_GPU_SYCL_H
 #include "common_gpu.hpp"
+#include <cfloat>
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
@@ -446,18 +447,42 @@ void gpu_get_minimum(sycl::queue q, double* __restrict__ minimum, double* __rest
     });
 }
 
-void gpu_deac_dgmmDiv1D(sycl::queue q, double* __restrict__ matrix, double* __restrict__ vector, size_t rows, size_t cols) {
+void gpu_deac_dgmmDiv1D(sycl::queue q, double* __restrict__ positive_matrix,
+        double* __restrict__ negative_matrix,
+        const double* __restrict__ vector, bool* __restrict__ valid_rows,
+        double target, size_t rows, size_t cols) {
     q.submit([&](sycl::handler& cgh) {
-        size_t grid_size = (rows*cols + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
+        size_t grid_size = (rows + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE;
         cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
                 [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
-            size_t idx = item.get_global_id(0); // 1D index for the entire matrix
-            if (idx < rows * cols) { // Ensure we do not go out of bounds
-                size_t row = idx % rows; // Calculate the row index
-                //size_t col = idx / rows; // Calculate the column index, assuming column-major order
-                // Perform the division operation
-                double reciprocal = 1.0/vector[row];
-                matrix[idx] *= reciprocal;
+            const size_t row = item.get_global_id(0);
+            if (row < rows) {
+                const double scale = target/vector[row];
+                bool valid = vector[row] >= DBL_MIN && vector[row] <= DBL_MAX
+                        && scale >= DBL_MIN && scale <= DBL_MAX;
+                if (valid) {
+                    for (size_t col=0; col<cols; ++col) {
+                        const size_t idx = row + col*rows;
+                        positive_matrix[idx] *= scale;
+                        valid = valid && sycl::isfinite(positive_matrix[idx]);
+                    }
+                    if (negative_matrix != nullptr) {
+                        for (size_t col=0; col<cols; ++col) {
+                            const size_t idx = row + col*rows;
+                            negative_matrix[idx] *= scale;
+                            valid = valid && sycl::isfinite(negative_matrix[idx]);
+                        }
+                    }
+                }
+                if (!valid) {
+                    for (size_t col=0; col<cols; ++col) {
+                        positive_matrix[row + col*rows] = 0.0;
+                        if (negative_matrix != nullptr) {
+                            negative_matrix[row + col*rows] = 0.0;
+                        }
+                    }
+                }
+                valid_rows[row] = valid;
             }
         });
     });
@@ -623,13 +648,21 @@ void gpu_match_population_zero(sycl::queue q, size_t grid_size, double* __restri
     });
 }
 
-void gpu_set_rejection_indices(sycl::queue q, size_t grid_size, bool* __restrict__ rejection_indices, double* __restrict__ fitness_new, double* __restrict__ fitness_old, size_t population_size) {
+void gpu_set_rejection_indices(sycl::queue q, size_t grid_size,
+        bool* __restrict__ rejection_indices, double* __restrict__ fitness_new,
+        double* __restrict__ fitness_old,
+        const bool* __restrict__ normalization_valid, bool normalize,
+        size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
                 [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             size_t global_idx = item.get_global_id(0);
             if (global_idx < population_size) {
-                bool accept = fitness_new[global_idx] <= fitness_old[global_idx];
+                if (normalize && !normalization_valid[global_idx]) {
+                    fitness_new[global_idx] = DBL_MAX;
+                }
+                bool accept = (!normalize || normalization_valid[global_idx])
+                        && fitness_new[global_idx] <= fitness_old[global_idx];
                 rejection_indices[global_idx] = accept;
                 if (accept) {
                     fitness_old[global_idx] = fitness_new[global_idx];
