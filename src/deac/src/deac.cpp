@@ -1238,24 +1238,21 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 for (size_t i=0; i<population_size; i++) {
                     normalization[i] = 0.0;
                 }
-                #ifndef SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
-                #else
-                    matrix_multiply_MxN_by_Nx1(normalization, population_new_positive_frequency,
-                            normalization_term_positive_frequency, population_size, genome_size);
-                    #ifdef DEAC_TWO_SIDED_POPULATION
-                        matrix_multiply_MxN_by_Nx1(normalization, population_new_negative_frequency,
-                                normalization_term_negative_frequency, population_size, genome_size);
-                    #endif
-                    for (size_t i=0; i<population_size; i++) {
-                        double _norm = normalization[i];
-                        for (size_t j=0; j<genome_size; j++) {
-                            population_new_positive_frequency[i*genome_size + j] *= zeroth_moment/_norm;
-                            #ifdef DEAC_TWO_SIDED_POPULATION
-                                population_new_negative_frequency[i*genome_size + j] *= zeroth_moment/_norm;
-                            #endif
-                        }
-                    }
+                matrix_multiply_MxN_by_Nx1(normalization, population_new_positive_frequency,
+                        normalization_term_positive_frequency, population_size, genome_size);
+                #ifdef DEAC_TWO_SIDED_POPULATION
+                    matrix_multiply_MxN_by_Nx1(normalization, population_new_negative_frequency,
+                            normalization_term_negative_frequency, population_size, genome_size);
                 #endif
+                for (size_t i=0; i<population_size; i++) {
+                    double _norm = normalization[i];
+                    for (size_t j=0; j<genome_size; j++) {
+                        population_new_positive_frequency[i*genome_size + j] *= zeroth_moment/_norm;
+                        #ifdef DEAC_TWO_SIDED_POPULATION
+                            population_new_negative_frequency[i*genome_size + j] *= zeroth_moment/_norm;
+                        #endif
+                    }
+                }
             #endif
         }
 
