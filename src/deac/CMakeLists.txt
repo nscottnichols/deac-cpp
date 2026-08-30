@@ -277,6 +277,14 @@ add_test(
     NAME deac_unit_trapezoidal_weights
     COMMAND deac_trapezoidal_weights_test)
 
+add_executable(deac_evolution_controls_test
+    ${CMAKE_SOURCE_DIR}/../test/evolution_controls_test.cpp)
+target_include_directories(deac_evolution_controls_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+add_test(
+    NAME deac_unit_evolution_controls
+    COMMAND deac_evolution_controls_test)
+
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     set(DEAC_SMOKE_TEST "${CMAKE_SOURCE_DIR}/../test/deac_smoke_test.py")
@@ -287,8 +295,11 @@ if(Python3_Interpreter_FOUND)
     endif()
     set(DEAC_SMOKE_CASES
             help
+            version
             bad_spectra
             default
+            evolution_control_lower_boundaries
+            evolution_control_upper_boundaries
             normalize
             normalize_large_population
             first_moment
@@ -300,6 +311,11 @@ if(Python3_Interpreter_FOUND)
             nonfinite_isf
             positive_isf_single_particle
             bad_third_moment_error
+            bad_crossover_probability
+            bad_self_adapting_crossover_probability
+            bad_differential_weight
+            bad_self_adapting_differential_weight_probability
+            bad_stop_minimum_fitness
             too_few_generations
             too_small_population
             too_small_genome
