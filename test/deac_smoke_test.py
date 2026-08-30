@@ -22,6 +22,7 @@ SMOKE_CASES = [
     "third_moment",
     "negative_first_moment",
     "track_stats",
+    "valid_nonuniform_frequency",
     "nested_output",
 ]
 
@@ -48,6 +49,8 @@ VALIDATION_CASES = [
     "short_frequency_file",
     "nonfinite_frequency",
     "negative_frequency",
+    "duplicate_frequency",
+    "all_equal_frequency",
     "unsorted_frequency",
     "save_directory_is_file",
     "unwritable_save_directory",
@@ -185,13 +188,21 @@ def run_deac_case(
         "third_moment": "11",
         "negative_first_moment": "5",
         "track_stats": "4",
+        "valid_nonuniform_frequency": "12",
         "nested_output": "10",
     }[case_name]
 
     extra_args = []
     number_of_generations = "2"
     population_size = "8"
-    if case_name in ("normalize", "normalize_large_population"):
+    if case_name == "valid_nonuniform_frequency":
+        frequency_file = workdir / "frequency.bin"
+        write_doubles(
+            frequency_file,
+            [0.25, 0.5, 1.0, 1.75, 2.0, 3.5, 4.25, 6.0],
+        )
+        extra_args.extend(["--frequency_file", str(frequency_file)])
+    elif case_name in ("normalize", "normalize_large_population"):
         extra_args.append("--normalize")
         if case_name == "normalize_large_population":
             population_size = "1028"
@@ -439,11 +450,21 @@ def run_validation_case(
         write_doubles(frequency_file, [0.0, -1.0])
         extra_args = ["--frequency_file", str(frequency_file)]
         expected_output = "frequencies must be finite and non-negative"
+    elif case_name == "duplicate_frequency":
+        write_fixture(fixture)
+        write_doubles(frequency_file, [0.0, 0.75, 0.75, 2.0])
+        extra_args = ["--frequency_file", str(frequency_file)]
+        expected_output = "frequencies must be strictly increasing"
+    elif case_name == "all_equal_frequency":
+        write_fixture(fixture)
+        write_doubles(frequency_file, [1.0, 1.0, 1.0])
+        extra_args = ["--frequency_file", str(frequency_file)]
+        expected_output = "frequencies must be strictly increasing"
     elif case_name == "unsorted_frequency":
         write_fixture(fixture)
         write_doubles(frequency_file, [0.0, 2.0, 1.0])
         extra_args = ["--frequency_file", str(frequency_file)]
-        expected_output = "frequencies must be sorted in non-decreasing order"
+        expected_output = "frequencies must be strictly increasing"
     elif case_name == "save_directory_is_file":
         write_fixture(fixture)
         save_directory = workdir / "result-path-is-a-file"
@@ -538,6 +559,19 @@ def run_validation_case(
             prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
         if (save_dir / f"{prefix}_frequency_{uuid}.bin").exists():
             raise AssertionError("solver continued writing after the first result I/O failure")
+    elif case_name in {
+        "nonfinite_frequency",
+        "negative_frequency",
+        "duplicate_frequency",
+        "all_equal_frequency",
+        "unsorted_frequency",
+    }:
+        if "minimum_fitness:" in result.stdout:
+            raise AssertionError("evolution started despite an invalid frequency grid")
+        if save_dir.exists():
+            raise AssertionError(
+                f"invalid frequency grid created output directory {save_dir}"
+            )
     if case_name.startswith("bad_") and case_name in {
         "bad_crossover_probability",
         "bad_self_adapting_crossover_probability",

@@ -333,6 +333,7 @@ if(Python3_Interpreter_FOUND)
             first_moment
             third_moment
             track_stats
+            valid_nonuniform_frequency
             bad_isf_byte_length
             empty_isf
             uneven_isf_arrays
@@ -355,6 +356,8 @@ if(Python3_Interpreter_FOUND)
             short_frequency_file
             nonfinite_frequency
             negative_frequency
+            duplicate_frequency
+            all_equal_frequency
             unsorted_frequency
             nested_output
             save_directory_is_file

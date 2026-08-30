@@ -2070,8 +2070,8 @@ int deac_main (int argc, char *argv[]) {
         if (!std::isfinite(frequency[i]) || frequency[i] < 0.0) {
             fail_with_error("frequencies must be finite and non-negative");
         }
-        if ((i > 0) && (frequency[i] < frequency[i - 1])) {
-            fail_with_error("frequencies must be sorted in non-decreasing order");
+        if ((i > 0) && (frequency[i] <= frequency[i - 1])) {
+            fail_with_error("frequencies must be strictly increasing");
         }
     }
 
