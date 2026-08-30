@@ -12,6 +12,7 @@
 #include <vector>
 #include <rng.hpp>
 #include "evolution_controls.hpp"
+#include "population_projection.hpp"
 #include "trapezoidal_weights.hpp"
 #include <memory> // string_format
 #include <string> // string_format
@@ -108,16 +109,6 @@ void matrix_multiply_MxN_by_Nx1(double * C, double * A, double * B, size_t M, si
     for (size_t i=0; i<M; i++) {
         for (size_t j=0; j<N; j++) {
             C[i] += A[i*N + j]*B[j];
-        }
-    }
-}
-
-void matrix_multiply_LxM_by_MxN(double * C, double * A, double * B, size_t L, size_t M, size_t N) {
-    for (size_t i=0; i<N; i++) {
-        for (size_t j=0; j<L; j++) {
-            for (size_t k=0; k<M; k++) {
-                C[i*L + j] += A[j*M + k]*B[i*M + k];
-            }
         }
     }
 }
@@ -858,10 +849,12 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         for (size_t i=0; i<population_size*number_of_timeslices; i++) {
             isf_model[i] = 0.0;
         }
-        matrix_multiply_LxM_by_MxN(isf_model, isf_term_positive_frequency, population_old_positive_frequency,
+        deac_numerics::accumulate_population_projection(
+                isf_model, isf_term_positive_frequency, population_old_positive_frequency,
                 number_of_timeslices, genome_size, population_size);
         #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-            matrix_multiply_LxM_by_MxN(isf_model, isf_term_negative_frequency, population_old_negative_frequency,
+            deac_numerics::accumulate_population_projection(
+                    isf_model, isf_term_negative_frequency, population_old_negative_frequency,
                     number_of_timeslices, genome_size, population_size);
         #endif
     #endif
@@ -1387,10 +1380,12 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             for (size_t i=0; i<population_size*number_of_timeslices; i++) {
                 isf_model[i] = 0.0;
             }
-            matrix_multiply_LxM_by_MxN(isf_model, isf_term_positive_frequency, population_new_positive_frequency,
+            deac_numerics::accumulate_population_projection(
+                    isf_model, isf_term_positive_frequency, population_new_positive_frequency,
                     number_of_timeslices, genome_size, population_size);
             #ifndef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                matrix_multiply_LxM_by_MxN(isf_model, isf_term_negative_frequency, population_new_negative_frequency,
+                deac_numerics::accumulate_population_projection(
+                        isf_model, isf_term_negative_frequency, population_new_negative_frequency,
                         number_of_timeslices, genome_size, population_size);
             #endif
         #endif

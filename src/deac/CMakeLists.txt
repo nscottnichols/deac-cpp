@@ -285,6 +285,14 @@ add_test(
     NAME deac_unit_evolution_controls
     COMMAND deac_evolution_controls_test)
 
+add_executable(deac_population_projection_test
+    ${CMAKE_SOURCE_DIR}/../test/population_projection_test.cpp)
+target_include_directories(deac_population_projection_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+add_test(
+    NAME deac_unit_population_projection
+    COMMAND deac_population_projection_test)
+
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     set(DEAC_SMOKE_TEST "${CMAKE_SOURCE_DIR}/../test/deac_smoke_test.py")
