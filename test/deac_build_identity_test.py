@@ -217,6 +217,8 @@ deac_add_build_identity(
     RECEIPT "${CMAKE_CURRENT_BINARY_DIR}/deac-build-identity.json")
 add_executable(identity-probe src/probe.cpp)
 deac_target_add_build_identity(identity-probe)
+add_executable(identity-probe-secondary src/probe.cpp)
+deac_target_add_build_identity(identity-probe-secondary)
 """,
         encoding="utf-8",
     )
@@ -260,7 +262,7 @@ def build_fixture(
     env=None,
     require_ref_watch=False,
 ):
-    command = [cmake, "--build", build, "--parallel", "2"]
+    command = [cmake, "--build", build, "--parallel", "16"]
     if build_config is not None:
         command.extend(["--config", build_config])
     result = run(command, source, env=env)
@@ -277,6 +279,10 @@ def build_fixture(
         raise AssertionError(
             "ordinary build did not link the refreshed identity object:\n" + output
         )
+    if "identity-probe-secondary" not in output:
+        raise AssertionError(
+            "ordinary build did not link the second identity consumer:\n" + output
+        )
     if (
         require_ref_watch
         and "Configuring done" not in output
@@ -289,10 +295,27 @@ def build_fixture(
     return result
 
 
-def fixture_executable(build, build_config=None):
+def fixture_executables(build, build_config=None):
     suffix = ".exe" if os.name == "nt" else ""
     executable_directory = build if build_config is None else build / build_config
-    return executable_directory / f"identity-probe{suffix}"
+    return (
+        executable_directory / f"identity-probe{suffix}",
+        executable_directory / f"identity-probe-secondary{suffix}",
+    )
+
+
+def assert_fixture_identities(
+    executables, receipt, *, version, sha, state, repeat=False
+):
+    for executable in executables:
+        assert_executable_identity(
+            executable,
+            receipt,
+            version=version,
+            sha=sha,
+            state=state,
+            repeat=repeat,
+        )
 
 
 def git_environment():
@@ -350,50 +373,55 @@ def test_git_transitions(
         git,
     )
     build_fixture(cmake, source, build, build_config=build_config)
-    exe = fixture_executable(build, build_config)
+    executables = fixture_executables(build, build_config)
     receipt = build / "deac-build-identity.json"
-    assert_executable_identity(
-        exe, receipt, version="2.0.0-rc1", sha=initial_sha, state="clean", repeat=True
+    assert_fixture_identities(
+        executables,
+        receipt,
+        version="2.0.0-rc1",
+        sha=initial_sha,
+        state="clean",
+        repeat=True,
     )
 
     ignored_product = source / "src" / "compiler-cache.ignored"
     ignored_product.write_text("ignored build output\n", encoding="utf-8")
     build_fixture(cmake, source, build, build_config=build_config)
-    assert_executable_identity(
-        exe, receipt, version="2.0.0-rc1", sha=initial_sha, state="clean"
+    assert_fixture_identities(
+        executables, receipt, version="2.0.0-rc1", sha=initial_sha, state="clean"
     )
     ignored_product.unlink()
 
     untracked_source = source / "src" / "untracked.hpp"
     untracked_source.write_text("// untracked source\n", encoding="utf-8")
     build_fixture(cmake, source, build, build_config=build_config)
-    assert_executable_identity(
-        exe, receipt, version="2.0.0-rc1", sha=initial_sha, state="dirty"
+    assert_fixture_identities(
+        executables, receipt, version="2.0.0-rc1", sha=initial_sha, state="dirty"
     )
     untracked_source.unlink()
     build_fixture(cmake, source, build, build_config=build_config)
-    assert_executable_identity(
-        exe, receipt, version="2.0.0-rc1", sha=initial_sha, state="clean"
+    assert_fixture_identities(
+        executables, receipt, version="2.0.0-rc1", sha=initial_sha, state="clean"
     )
 
     probe = source / "src" / "probe.cpp"
     probe.write_text(fixture_probe_source("unstaged dirty"), encoding="utf-8")
     build_fixture(cmake, source, build, build_config=build_config)
-    assert_executable_identity(
-        exe, receipt, version="2.0.0-rc1", sha=initial_sha, state="dirty"
+    assert_fixture_identities(
+        executables, receipt, version="2.0.0-rc1", sha=initial_sha, state="dirty"
     )
 
     run([git, "add", "src/probe.cpp"], source, env=environment)
     build_fixture(cmake, source, build, build_config=build_config)
-    assert_executable_identity(
-        exe, receipt, version="2.0.0-rc1", sha=initial_sha, state="dirty"
+    assert_fixture_identities(
+        executables, receipt, version="2.0.0-rc1", sha=initial_sha, state="dirty"
     )
 
     probe.write_text(fixture_probe_source(), encoding="utf-8")
     run([git, "add", "src/probe.cpp"], source, env=environment)
     build_fixture(cmake, source, build, build_config=build_config)
-    assert_executable_identity(
-        exe, receipt, version="2.0.0-rc1", sha=initial_sha, state="clean"
+    assert_fixture_identities(
+        executables, receipt, version="2.0.0-rc1", sha=initial_sha, state="clean"
     )
 
     probe.write_text(fixture_probe_source("committed successor"), encoding="utf-8")
@@ -401,8 +429,12 @@ def test_git_transitions(
     run([git, "commit", "--quiet", "-m", "fixture successor"], source, env=environment)
     successor_sha = run([git, "rev-parse", "HEAD"], source, env=environment).stdout.strip()
     build_fixture(cmake, source, build, build_config=build_config)
-    assert_executable_identity(
-        exe, receipt, version="2.0.0-rc1", sha=successor_sha, state="clean"
+    assert_fixture_identities(
+        executables,
+        receipt,
+        version="2.0.0-rc1",
+        sha=successor_sha,
+        state="clean",
     )
 
     symbolic_ref = run(
@@ -418,8 +450,12 @@ def test_git_transitions(
     if loose_ref.exists():
         raise AssertionError(f"pack-refs did not remove loose ref {loose_ref}")
     build_fixture(cmake, source, build, build_config=build_config)
-    assert_executable_identity(
-        exe, receipt, version="2.0.0-rc1", sha=successor_sha, state="clean"
+    assert_fixture_identities(
+        executables,
+        receipt,
+        version="2.0.0-rc1",
+        sha=successor_sha,
+        state="clean",
     )
 
     run(
@@ -439,8 +475,12 @@ def test_git_transitions(
         build_config=build_config,
         require_ref_watch=True,
     )
-    assert_executable_identity(
-        exe, receipt, version="2.0.0-rc1", sha=metadata_only_sha, state="clean"
+    assert_fixture_identities(
+        executables,
+        receipt,
+        version="2.0.0-rc1",
+        sha=metadata_only_sha,
+        state="clean",
     )
 
     return source
@@ -501,8 +541,8 @@ def test_archive_spoof(
         build_config=build_config,
         env=spoofed_environment,
     )
-    assert_executable_identity(
-        fixture_executable(archive_build, build_config),
+    assert_fixture_identities(
+        fixture_executables(archive_build, build_config),
         archive_build / "deac-build-identity.json",
         version="2.0.0-rc1",
         sha=None,

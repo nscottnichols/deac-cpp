@@ -226,6 +226,10 @@ function(deac_add_build_identity)
                 "deac_add_build_identity requires ${_required_argument}")
         endif()
     endforeach()
+    if(NOT DEAC_IDENTITY_IDENTITY_NAME MATCHES "^[A-Za-z0-9_.-]+$")
+        message(FATAL_ERROR
+            "deac_add_build_identity IDENTITY_NAME must be path-safe")
+    endif()
 
     get_filename_component(
         _source_root "${DEAC_IDENTITY_SOURCE_ROOT}" REALPATH)
@@ -248,8 +252,8 @@ function(deac_add_build_identity)
     # The symbolic primary output is intentionally never created.  Do not list
     # the header or receipt as BYPRODUCTS: Ninja would add `restat`, and an
     # equal coarse timestamp could then suppress the dependent compile/link
-    # even though their canonical bytes changed.  The target helper registers
-    # those two side effects for cleaning instead.
+    # even though their canonical bytes changed.  The shared identity object
+    # target registers those two side effects for cleaning instead.
     add_custom_command(
         OUTPUT "${_refresh}"
         COMMAND
@@ -278,6 +282,29 @@ function(deac_add_build_identity)
         _support_directory
         "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../deac/src"
         REALPATH)
+    set(_implementation_source "${_support_directory}/build_identity.cpp")
+    string(MAKE_C_IDENTIFIER
+        "${DEAC_IDENTITY_IDENTITY_NAME}_build_identity_object"
+        _object_target)
+    if(TARGET "${_object_target}")
+        message(FATAL_ERROR
+            "build-identity object target already exists: ${_object_target}")
+    endif()
+
+    # Compile the identity implementation once and share that object among all
+    # solver executables in this directory.  This serializes the only command
+    # that writes the generated header and receipt even under recursive,
+    # high-parallel Make builds.
+    set_property(SOURCE "${_implementation_source}"
+        APPEND PROPERTY OBJECT_DEPENDS "${_refresh}")
+    add_library("${_object_target}" OBJECT
+        "${_implementation_source}")
+    target_include_directories("${_object_target}" PRIVATE
+        "${_support_directory}"
+        "${DEAC_IDENTITY_GENERATED_DIRECTORY}")
+    set_property(TARGET "${_object_target}" APPEND PROPERTY
+        ADDITIONAL_CLEAN_FILES "${_generated_header};${_receipt}")
+
     set(DEAC_BUILD_IDENTITY_SEMANTIC_VERSION
         "${_semantic_version}" PARENT_SCOPE)
     set(DEAC_BUILD_IDENTITY_GENERATED_HEADER
@@ -285,9 +312,13 @@ function(deac_add_build_identity)
     set(DEAC_BUILD_IDENTITY_GENERATED_INCLUDE_DIRECTORY
         "${DEAC_IDENTITY_GENERATED_DIRECTORY}" PARENT_SCOPE)
     set(DEAC_BUILD_IDENTITY_IMPLEMENTATION_SOURCE
-        "${_support_directory}/build_identity.cpp" PARENT_SCOPE)
+        "${_implementation_source}" PARENT_SCOPE)
     set(DEAC_BUILD_IDENTITY_SUPPORT_INCLUDE_DIRECTORY
         "${_support_directory}" PARENT_SCOPE)
+    set(DEAC_BUILD_IDENTITY_OBJECT_TARGET
+        "${_object_target}" PARENT_SCOPE)
+    set(DEAC_BUILD_IDENTITY_IDENTITY_NAME
+        "${DEAC_IDENTITY_IDENTITY_NAME}" PARENT_SCOPE)
     set(DEAC_BUILD_IDENTITY_RECEIPT "${_receipt}" PARENT_SCOPE)
     set(DEAC_BUILD_IDENTITY_REFRESH "${_refresh}" PARENT_SCOPE)
 endfunction()
@@ -298,12 +329,10 @@ function(deac_target_add_build_identity target_name)
             "deac_target_add_build_identity requires an existing target")
     endif()
     foreach(_required_variable
-            DEAC_BUILD_IDENTITY_IMPLEMENTATION_SOURCE
-            DEAC_BUILD_IDENTITY_GENERATED_HEADER
+            DEAC_BUILD_IDENTITY_OBJECT_TARGET
             DEAC_BUILD_IDENTITY_SUPPORT_INCLUDE_DIRECTORY
             DEAC_BUILD_IDENTITY_GENERATED_INCLUDE_DIRECTORY
-            DEAC_BUILD_IDENTITY_RECEIPT
-            DEAC_BUILD_IDENTITY_REFRESH)
+            DEAC_BUILD_IDENTITY_IDENTITY_NAME)
         if(NOT DEFINED ${_required_variable} OR
                 "${${_required_variable}}" STREQUAL "")
             message(FATAL_ERROR
@@ -313,22 +342,29 @@ function(deac_target_add_build_identity target_name)
     endforeach()
 
     target_sources("${target_name}" PRIVATE
-        "${DEAC_BUILD_IDENTITY_IMPLEMENTATION_SOURCE}"
-        "${DEAC_BUILD_IDENTITY_GENERATED_HEADER}")
+        "$<TARGET_OBJECTS:${DEAC_BUILD_IDENTITY_OBJECT_TARGET}>")
+    add_dependencies("${target_name}"
+        "${DEAC_BUILD_IDENTITY_OBJECT_TARGET}")
     target_include_directories("${target_name}" PRIVATE
-        "${DEAC_BUILD_IDENTITY_SUPPORT_INCLUDE_DIRECTORY}"
-        "${DEAC_BUILD_IDENTITY_GENERATED_INCLUDE_DIRECTORY}")
+        "${DEAC_BUILD_IDENTITY_SUPPORT_INCLUDE_DIRECTORY}")
 
     # A build-time refresh can discover a changed Git identity even when every
-    # relevant filesystem timestamp is equal at the platform's resolution.
-    # Make both the tiny identity implementation object and the link depend on
-    # the symbolic refresh output so those canonical bytes reach the executable
-    # during the same ordinary build.
-    set_property(SOURCE "${DEAC_BUILD_IDENTITY_IMPLEMENTATION_SOURCE}"
-        APPEND PROPERTY OBJECT_DEPENDS "${DEAC_BUILD_IDENTITY_REFRESH}")
+    # relevant filesystem timestamp is equal at the platform's resolution.  A
+    # target-specific, write-free symbolic dependency forces this executable's
+    # link without racing the shared generated header or receipt.
+    string(SHA256 _target_digest "${target_name}")
+    string(CONCAT _link_refresh
+        "${DEAC_BUILD_IDENTITY_GENERATED_INCLUDE_DIRECTORY}/"
+        "${DEAC_BUILD_IDENTITY_IDENTITY_NAME}-"
+        "${_target_digest}-link.refresh")
+    add_custom_command(
+        OUTPUT "${_link_refresh}"
+        COMMAND "${CMAKE_COMMAND}" -E true
+        COMMENT "Refreshing DEAC build-identity link for ${target_name}"
+        VERBATIM)
+    set_source_files_properties("${_link_refresh}"
+        PROPERTIES GENERATED TRUE SYMBOLIC TRUE)
+    target_sources("${target_name}" PRIVATE "${_link_refresh}")
     set_property(TARGET "${target_name}" APPEND PROPERTY
-        LINK_DEPENDS "${DEAC_BUILD_IDENTITY_REFRESH}")
-    set_property(TARGET "${target_name}" APPEND PROPERTY
-        ADDITIONAL_CLEAN_FILES
-            "${DEAC_BUILD_IDENTITY_GENERATED_HEADER};${DEAC_BUILD_IDENTITY_RECEIPT}")
+        LINK_DEPENDS "${_link_refresh}")
 endfunction()
