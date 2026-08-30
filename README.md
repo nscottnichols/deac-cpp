@@ -101,9 +101,26 @@ directory (issue `make clean` or `rm -rf ./*` inside the build directory).
 
 A single reconstruction of the dynamic structure factor can be generated using the input data from step 1. For example:
 ```bash
-deac.e --number_of_generations 1600000 --temperature 1.35 --population_size 8 --genome_size 4096 --normalize --omega_max 512.0 --save_directory deac_results --seed 1 --stop_minimum_fitness 1.0 isf.bin
+deac.e --number_of_generations 1600000 --temperature 1.35 --population_size 8 --genome_size 4096 --normalize --spectra_type bfull --omega_max 512.0 --save_directory deac_results --seed 1 --stop_minimum_fitness 1.0 isf.bin
 ```
 This command will save the generated spectrum in the `deac_results` directory after `1600000` steps or if the desired fitness cutoff of `1.0` is reached. Please see `deac.e --help` for more command line arguments and further description.
+
+For every model and backend, `--normalize` uses the first ISF value as the
+target zeroth moment. The target must be finite, positive, and at least the
+smallest normal binary64 value. It must also produce a normal initial scale for
+the selected model and frequency grid; this additional lower bound is checked
+before output creation because it depends on the grid's quadrature weights.
+Zero, negative, non-finite, subnormal, and unrepresentably small targets are
+therefore rejected before the solver creates its result directory or starts
+evolution. Builds that allow negative spectral weights reject `--normalize`
+because a signed population does not guarantee a positive denominator. Choose
+a kernel convention with a positive equal-time correlation, such as `bfull`,
+`bdsf`, or the ZeroT positive-frequency kernel; the solver does not silently
+flip the sign of a single-particle correlation. An invalid initial population
+normalization is fatal because there is no valid incumbent. During evolution,
+a candidate with a zero, non-finite, or otherwise unrepresentable denominator
+or scale is assigned noncompetitive fitness and rejected; it cannot contaminate
+the incumbent population or its statistics.
 	
 The general recommendation is to generate several spectra using different seeds (`--seed`) and average the final results. A sample bash script to generate a command file with multiple seeds can be found in the tools directory `tools/generate_commands.sh`.
 	

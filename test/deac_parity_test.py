@@ -53,6 +53,7 @@ def run_deac(
     negative_first_moment=False,
     population_size="8",
     zero_temperature=False,
+    detailed_balance=False,
 ):
     workdir.mkdir(parents=True)
     save_dir = workdir / "results"
@@ -81,6 +82,8 @@ def run_deac(
     ]
     if normalize:
         command.append("--normalize")
+        if not detailed_balance and not zero_temperature:
+            command.extend(["--spectra_type", "bfull"])
     if negative_first_moment:
         command.append("--use_negative_first_moment")
     command.append(str(fixture))
@@ -130,9 +133,12 @@ def assert_outputs_match(
     relative_tolerance,
     detailed_balance=False,
     zero_temperature=False,
+    normalize=False,
 ):
     if zero_temperature:
         prefix = "deac-zT"
+    elif normalize and not detailed_balance:
+        prefix = "deac-bfull"
     else:
         prefix = "deac-bdsf" if detailed_balance else "deac-spfsf"
     for suffix in [
@@ -196,13 +202,21 @@ def main():
     workdir.mkdir(parents=True)
 
     fixture = workdir / "tiny-isf.bin"
-    if args.zero_temperature:
-        isf = [1.0, 0.85, 0.72, 0.61]
-    else:
-        isf = [-1.0, -0.85, -0.72, -0.61]
+    positive_fixture = workdir / "positive-isf.bin"
+    isf = (
+        [1.0, 0.85, 0.72, 0.61]
+        if args.zero_temperature
+        else [-1.0, -0.85, -0.72, -0.61]
+    )
     write_doubles(
         fixture,
         [0.0, 0.2, 0.4, 0.6] + isf + [0.05, 0.05, 0.05, 0.05],
+    )
+    write_doubles(
+        positive_fixture,
+        [0.0, 0.2, 0.4, 0.6]
+        + [1.0, 0.85, 0.72, 0.61]
+        + [0.05, 0.05, 0.05, 0.05],
     )
     frequency_file = workdir / "frequency.bin"
     write_doubles(frequency_file, [0.0, 0.7, 1.8, 3.0])
@@ -216,9 +230,10 @@ def main():
     if args.detailed_balance and not args.zero_temperature:
         cases.append(("negative_first_moment", "23", False, True, "8"))
     for case_name, seed, normalize, negative_first_moment, population_size in cases:
+        case_fixture = positive_fixture if normalize else fixture
         reference_dir = run_deac(
             reference_exe,
-            fixture,
+            case_fixture,
             frequency_file,
             workdir / case_name / "reference",
             seed,
@@ -226,10 +241,11 @@ def main():
             negative_first_moment=negative_first_moment,
             population_size=population_size,
             zero_temperature=args.zero_temperature,
+            detailed_balance=args.detailed_balance,
         )
         candidate_dir = run_deac(
             candidate_exe,
-            fixture,
+            case_fixture,
             frequency_file,
             workdir / case_name / "candidate",
             seed,
@@ -237,6 +253,7 @@ def main():
             negative_first_moment=negative_first_moment,
             population_size=population_size,
             zero_temperature=args.zero_temperature,
+            detailed_balance=args.detailed_balance,
         )
         assert_outputs_match(
             reference_dir,
@@ -246,6 +263,7 @@ def main():
             args.relative_tolerance,
             args.detailed_balance,
             args.zero_temperature,
+            normalize,
         )
 
 

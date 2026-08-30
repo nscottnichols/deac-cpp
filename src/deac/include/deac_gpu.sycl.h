@@ -9,6 +9,7 @@
 #ifndef DEAC_GPU_SYCL_H 
 #define DEAC_GPU_SYCL_H
 #include "common_gpu.hpp"
+#include <cfloat>
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
@@ -463,6 +464,59 @@ void gpu_deac_dgmmDiv1D(sycl::queue q, double* __restrict__ matrix, double* __re
     });
 }
 
+void gpu_validate_normalization_rows(
+        sycl::queue q, const double* __restrict__ matrix,
+        const double* __restrict__ vector, int* __restrict__ valid_rows,
+        double target, size_t rows, size_t cols) {
+    q.submit([&](sycl::handler& cgh) {
+        const size_t grid_size = (rows*cols + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+        cgh.parallel_for(
+                sycl::nd_range<1>(
+                        sycl::range<1>(grid_size*GPU_BLOCK_SIZE),
+                        sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item)
+                        [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            const size_t idx = item.get_global_id(0);
+            if (idx < rows*cols) {
+                const size_t row = idx % rows;
+                const double denominator = vector[row]*target;
+                const double reciprocal = 1.0/vector[row];
+                if (!(denominator >= DBL_MIN && denominator <= DBL_MAX
+                            && reciprocal >= DBL_MIN && reciprocal <= DBL_MAX
+                            && sycl::isfinite(matrix[idx]))) {
+                    sycl::atomic_ref<
+                            int,
+                            sycl::memory_order::relaxed,
+                            sycl::memory_scope::device,
+                            sycl::access::address_space::global_space>(
+                                    valid_rows[row]).store(0);
+                }
+            }
+        });
+    });
+}
+
+void gpu_cleanup_invalid_normalization_rows(
+        sycl::queue q, double* __restrict__ matrix,
+        const int* __restrict__ valid_rows, size_t rows, size_t cols) {
+    q.submit([&](sycl::handler& cgh) {
+        const size_t grid_size = (rows + GPU_BLOCK_SIZE - 1)/GPU_BLOCK_SIZE;
+        cgh.parallel_for(
+                sycl::nd_range<1>(
+                        sycl::range<1>(grid_size*GPU_BLOCK_SIZE),
+                        sycl::range<1>(GPU_BLOCK_SIZE)),
+                [=](sycl::nd_item<1> item)
+                        [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
+            const size_t row = item.get_global_id(0);
+            if (row < rows && valid_rows[row] == 0) {
+                for (size_t col=0; col<cols; ++col) {
+                    matrix[row + rows*col] = 0.0;
+                }
+            }
+        });
+    });
+}
+
 void gpu_deac_reduced_chi_squared(sycl::queue q, const double* __restrict__ calculated_data, const double* __restrict__ observed_data, const double* __restrict__ standard_deviations, double* __restrict__ reduced_chi_squared, size_t m, size_t n, size_t ddof, double beta) {
     q.submit([&](sycl::handler& cgh) {
         sycl::local_accessor<double, 1> sdata(sycl::range<1>(GPU_BLOCK_SIZE), cgh); // Use static shared memory for reduction
@@ -623,13 +677,21 @@ void gpu_match_population_zero(sycl::queue q, size_t grid_size, double* __restri
     });
 }
 
-void gpu_set_rejection_indices(sycl::queue q, size_t grid_size, bool* __restrict__ rejection_indices, double* __restrict__ fitness_new, double* __restrict__ fitness_old, size_t population_size) {
+void gpu_set_rejection_indices(sycl::queue q, size_t grid_size,
+        bool* __restrict__ rejection_indices, double* __restrict__ fitness_new,
+        double* __restrict__ fitness_old,
+        const int* __restrict__ normalization_valid, bool normalize,
+        size_t population_size) {
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(grid_size*GPU_BLOCK_SIZE), sycl::range<1>(GPU_BLOCK_SIZE)),
                 [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SUB_GROUP_SIZE)]] {
             size_t global_idx = item.get_global_id(0);
             if (global_idx < population_size) {
-                bool accept = fitness_new[global_idx] <= fitness_old[global_idx];
+                if (normalize && normalization_valid[global_idx] == 0) {
+                    fitness_new[global_idx] = DBL_MAX;
+                }
+                bool accept = (!normalize || normalization_valid[global_idx] != 0)
+                        && fitness_new[global_idx] <= fitness_old[global_idx];
                 rejection_indices[global_idx] = accept;
                 if (accept) {
                     fitness_old[global_idx] = fitness_new[global_idx];
