@@ -51,6 +51,7 @@ def run_deac(
     *,
     normalize=False,
     negative_first_moment=False,
+    first_moment=False,
     population_size="8",
     zero_temperature=False,
     detailed_balance=False,
@@ -86,6 +87,8 @@ def run_deac(
             command.extend(["--spectra_type", "bfull"])
     if negative_first_moment:
         command.append("--use_negative_first_moment")
+    if first_moment:
+        command.extend(["--first_moment", "0"])
     command.append(str(fixture))
     run_command(command, workdir)
     return save_dir
@@ -222,14 +225,26 @@ def main():
     write_doubles(frequency_file, [0.0, 0.7, 1.8, 3.0])
 
     cases = [
-        ("default", "17", False, False, "8"),
+        ("default", "17", False, False, False, "8"),
+        # A zero-valued first moment is active. It previously divided the CPU
+        # fitness by the target while GPU backends used a unit uncertainty.
+        ("first_moment_zero", "29", False, False, True, "8"),
         # Exercise both GEMV beta paths and a partial second work-group even
         # with the default GPU_BLOCK_SIZE=1024.
-        ("normalize_large_population", "19", True, False, "1028"),
+        ("normalize_large_population", "19", True, False, False, "1028"),
     ]
     if args.detailed_balance and not args.zero_temperature:
-        cases.append(("negative_first_moment", "23", False, True, "8"))
-    for case_name, seed, normalize, negative_first_moment, population_size in cases:
+        cases.append(
+            ("negative_first_moment", "23", False, True, False, "8")
+        )
+    for (
+        case_name,
+        seed,
+        normalize,
+        negative_first_moment,
+        first_moment,
+        population_size,
+    ) in cases:
         case_fixture = positive_fixture if normalize else fixture
         reference_dir = run_deac(
             reference_exe,
@@ -239,6 +254,7 @@ def main():
             seed,
             normalize=normalize,
             negative_first_moment=negative_first_moment,
+            first_moment=first_moment,
             population_size=population_size,
             zero_temperature=args.zero_temperature,
             detailed_balance=args.detailed_balance,
@@ -251,6 +267,7 @@ def main():
             seed,
             normalize=normalize,
             negative_first_moment=negative_first_moment,
+            first_moment=first_moment,
             population_size=population_size,
             zero_temperature=args.zero_temperature,
             detailed_balance=args.detailed_balance,

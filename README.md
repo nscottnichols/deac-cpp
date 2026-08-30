@@ -121,6 +121,13 @@ normalization is fatal because there is no valid incumbent. During evolution,
 a candidate with a zero, non-finite, or otherwise unrepresentable denominator
 or scale is assigned noncompetitive fitness and rejected; it cannot contaminate
 the incumbent population or its statistics.
+
+When `--first_moment` is non-negative, it is an active constraint, including
+the valid target value zero. The fitness contribution is
+`((candidate_first_moment - target_first_moment) / 1.0)^2` on every backend.
+The unit standard deviation is fixed because the CLI does not yet expose a
+first-moment uncertainty; negative `--first_moment` values disable the
+constraint.
 	
 The general recommendation is to generate several spectra using different seeds (`--seed`) and average the final results. A sample bash script to generate a command file with multiple seeds can be found in the tools directory `tools/generate_commands.sh`.
 	
