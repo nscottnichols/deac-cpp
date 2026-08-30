@@ -52,8 +52,8 @@ int main() {
         return 1;
     }
 
-    // Repeated coordinates are accepted because solver input validation permits
-    // a non-decreasing grid; the helper only applies the integration formula.
+    // The integration helper only applies the formula. The solver CLI validates
+    // custom frequency grids before calling it and rejects repeated coordinates.
     const std::array<double, 3> repeated_grid{0.0, 0.0, 2.0};
     const std::array<double, 3> repeated_weights{0.0, 1.0, 1.0};
     if (!check_weights(repeated_grid, repeated_weights)) {
