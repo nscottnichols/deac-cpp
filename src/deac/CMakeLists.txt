@@ -378,6 +378,15 @@ if(Python3_Interpreter_FOUND)
                 ${DEAC_SMOKE_VARIANT_ARGS}
         )
     endforeach()
+    add_test(
+        NAME deac_normalization_evolution
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/../test/deac_normalization_evolution_test.py
+            --exe $<TARGET_FILE:${exe}>
+            --workdir ${CMAKE_CURRENT_BINARY_DIR}/normalization-evolution
+            ${DEAC_SMOKE_VARIANT_ARGS}
+    )
     set(DEAC_PARITY_REFERENCE_EXE "" CACHE FILEPATH "Reference deac executable for backend parity tests.")
     if(NOT "${DEAC_PARITY_REFERENCE_EXE}" STREQUAL "")
         add_test(
