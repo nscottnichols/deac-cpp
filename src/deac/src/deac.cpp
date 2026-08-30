@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <math.h> // cosh
 #include <stdlib.h>
+#include <cstdlib>
 #include <iostream>
 #include <tuple> // for tie() and tuple
 #include <argparse.hpp>
@@ -20,6 +21,7 @@
 #include "result_io.hpp"
 #include "zero_temperature_kernel.hpp"
 #include "trapezoidal_weights.hpp"
+#include "deac_build_identity.hpp"
 #include <memory> // string_format
 #include <string> // string_format
 #include <stdexcept> // throw
@@ -46,6 +48,22 @@
 
 [[noreturn]] void fail_with_error(const std::string& error_message) {
     throw std::runtime_error(error_message);
+}
+
+void print_build_identity(std::ostream& output) {
+    // Every substituted string is validated by DeacBuildIdentity.cmake before
+    // reaching this JSON object, so no run-time escaping is required.
+    output << "{\"schema_version\":" << deac_build_identity::schema_version
+           << ",\"semantic_version\":\""
+           << deac_build_identity::semantic_version
+           << "\",\"source_sha\":";
+    if (deac_build_identity::source_sha_available) {
+        output << "\"" << deac_build_identity::source_sha << "\"";
+    } else {
+        output << "null";
+    }
+    output << ",\"source_state\":\"" << deac_build_identity::source_state
+           << "\"}" << std::endl;
 }
 
 template<typename ... Args>
@@ -1973,7 +1991,17 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 }
 
 int deac_main (int argc, char *argv[]) {
-    argparse::ArgumentParser program("deac-cpp", "2.0.0-rc1");
+    argparse::ArgumentParser program(
+        "deac-cpp", deac_build_identity::semantic_version);
+    program.add_argument("--build-identity")
+        .action([](const auto&) {
+            print_build_identity(std::cout);
+            std::exit(0);
+        })
+        .default_value(false)
+        .help("prints canonical JSON build identity and exits")
+        .implicit_value(true)
+        .nargs(0);
     program.add_argument("-T", "--temperature")
         #ifndef ZEROT
             .help("Temperature of system. Must be positive.")

@@ -56,6 +56,32 @@ As above, and with further details below, but you should consider using the foll
 Executables will be installed to `CMAKE_INSTALL_PREFIX` location or, if the install is skipped, they will be located in `build/deac`.
 Executables produced are `deac.e`, `deacd.e`, `deac-zT.e`, and `deac-zTd.e` for `CMAKE_BUILD_TYPE=Release|Debug|ZeroT|ZeroTDebug` respectively.
 
+### Build identity and provenance
+
+`deac.e --version` (or `-v`) retains the legacy one-line semantic-version
+output. For provenance checks, every executable also provides a byte-stable,
+single-line JSON identity:
+
+```console
+$ deac.e --build-identity
+{"schema_version":1,"semantic_version":"2.0.0-rc1","source_sha":"0123456789abcdef0123456789abcdef01234567","source_state":"clean"}
+```
+
+Schema 1 has exactly four fields in the order shown. `source_sha` is the full,
+lowercase 40-hex commit at build time when Git metadata is trustworthy.
+`source_state` is `clean` when the tracked commit and build-relevant `VERSION`
+and `src/` inputs agree, or `dirty` when those inputs contain staged,
+unstaged, or untracked changes (Git-ignored files do not count). A source
+archive with no matching repository metadata reports `source_sha: null` and
+`source_state: "unavailable"`; it never borrows the SHA of an enclosing Git
+checkout.
+
+CMake writes the same canonical object to
+`build/deac/deac-build-identity.json`. A normal `cmake --build build` watches
+the relevant source files plus worktree-aware Git HEAD, index, and ref paths,
+so editing, reverting, committing, or checking out source refreshes the
+embedded identity without a manually repeated configure command.
+
 ### Zero-temperature mode
 
 `ZeroT` and `ZeroTDebug` restore the original zero-temperature problem: one

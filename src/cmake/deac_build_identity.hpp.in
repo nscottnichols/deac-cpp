@@ -1,0 +1,13 @@
+#pragma once
+
+namespace deac_build_identity {
+
+inline constexpr int schema_version = 1;
+inline constexpr char semantic_version[] =
+    "@DEAC_BUILD_IDENTITY_SEMANTIC_VERSION@";
+inline constexpr char source_sha[] = "@DEAC_BUILD_IDENTITY_SOURCE_SHA@";
+inline constexpr char source_state[] = "@DEAC_BUILD_IDENTITY_SOURCE_STATE@";
+inline constexpr bool source_sha_available =
+    @DEAC_BUILD_IDENTITY_SOURCE_SHA_AVAILABLE@;
+
+}  // namespace deac_build_identity

@@ -134,8 +134,21 @@ elseif(CMAKE_BUILD_TYPE MATCHES Debug)
     set(exe deacd.e)
 endif()
 
+# Generate an executable identity and a matching build-tree receipt.  The
+# helper also registers the source and Git metadata that must trigger CMake
+# regeneration during an ordinary build.
+include("${CMAKE_SOURCE_DIR}/cmake/DeacBuildIdentity.cmake")
+set(DEAC_BUILD_IDENTITY_HEADER
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/deac_build_identity.hpp")
+set(DEAC_BUILD_IDENTITY_RECEIPT
+    "${CMAKE_CURRENT_BINARY_DIR}/deac-build-identity.json")
+deac_configure_build_identity(
+    SOURCE_ROOT "${CMAKE_SOURCE_DIR}/.."
+    OUTPUT_HEADER "${DEAC_BUILD_IDENTITY_HEADER}"
+    OUTPUT_RECEIPT "${DEAC_BUILD_IDENTITY_RECEIPT}")
+
 # Find source files ( better to list explicitly https://stackoverflow.com/questions/1027247/specify-source-files-globally-with-glob )
-file( GLOB DEAC_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp )
+file(GLOB DEAC_SRC CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 if ("${GPU_BACKEND}" STREQUAL "cuda")
     file( GLOB DEAC_CUDA ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cu )
     add_executable(${exe} ${DEAC_SRC} ${DEAC_CUDA})
@@ -156,7 +169,9 @@ endif()
 target_include_directories(${exe} PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
-    PRIVATE src)
+    PRIVATE
+        src
+        "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 if(USE_BLAS AND "${GPU_BACKEND}" STREQUAL "cuda")
     target_link_libraries(${exe} CUDA::cublas)
@@ -411,6 +426,8 @@ find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     set(DEAC_SMOKE_TEST "${CMAKE_SOURCE_DIR}/../test/deac_smoke_test.py")
     set(DEAC_PARITY_TEST "${CMAKE_SOURCE_DIR}/../test/deac_parity_test.py")
+    set(DEAC_BUILD_IDENTITY_TEST
+        "${CMAKE_SOURCE_DIR}/../test/deac_build_identity_test.py")
     set(DEAC_SMOKE_VARIANT_ARGS)
     if(USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF)
         list(APPEND DEAC_SMOKE_VARIANT_ARGS --detailed-balance)
@@ -487,6 +504,7 @@ if(Python3_Interpreter_FOUND)
                 --exe $<TARGET_FILE:${exe}>
                 --workdir ${CMAKE_CURRENT_BINARY_DIR}/smoke/${test_case}
                 --case ${test_case}
+                --expected-version ${DEAC_BUILD_IDENTITY_SEMANTIC_VERSION}
                 ${DEAC_SMOKE_VARIANT_ARGS}
         )
     endforeach()
@@ -512,6 +530,33 @@ if(Python3_Interpreter_FOUND)
         )
     endif()
 
+    if(DEAC_BUILD_IDENTITY_SOURCE_SHA_AVAILABLE)
+        set(DEAC_BUILD_IDENTITY_EXPECTED_SHA
+            "${DEAC_BUILD_IDENTITY_SOURCE_SHA}")
+    else()
+        set(DEAC_BUILD_IDENTITY_EXPECTED_SHA "null")
+    endif()
+    set(DEAC_BUILD_IDENTITY_GIT_ARGS)
+    if(Git_FOUND)
+        list(APPEND DEAC_BUILD_IDENTITY_GIT_ARGS
+            --git "${GIT_EXECUTABLE}")
+    endif()
+    add_test(
+        NAME deac_build_identity
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${DEAC_BUILD_IDENTITY_TEST}
+            --exe $<TARGET_FILE:${exe}>
+            --receipt ${DEAC_BUILD_IDENTITY_RECEIPT}
+            --workdir ${CMAKE_CURRENT_BINARY_DIR}/build-identity-test
+            --identity-module
+                ${CMAKE_SOURCE_DIR}/cmake/DeacBuildIdentity.cmake
+            --cmake ${CMAKE_COMMAND}
+            --expected-version ${DEAC_BUILD_IDENTITY_SEMANTIC_VERSION}
+            --expected-sha ${DEAC_BUILD_IDENTITY_EXPECTED_SHA}
+            --expected-state ${DEAC_BUILD_IDENTITY_SOURCE_STATE}
+            ${DEAC_BUILD_IDENTITY_GIT_ARGS}
+    )
     add_test(
         NAME deac_first_moment_fitness
         COMMAND
