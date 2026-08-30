@@ -8,16 +8,17 @@
 #include <algorithm> // std::none_of
 #include <cmath>
 #include <cstdint>
+#include <exception>
 #include <span>
 #include <vector>
 #include <rng.hpp>
 #include "evolution_controls.hpp"
 #include "population_projection.hpp"
+#include "result_io.hpp"
 #include "trapezoidal_weights.hpp"
 #include <memory> // string_format
 #include <string> // string_format
 #include <stdexcept> // throw
-#include <fstream> // std::ofstream
 #include <cassert>
 #include <fs.h> //fs namespace (std::filesystem or std::experimental::filesystem)
 
@@ -32,15 +33,8 @@
     #include "deac_gpu.sycl.h"
 #endif
 
-void write_to_logfile(fs::path filename, std::string log_message ) {
-    std::ofstream ofs(filename.c_str(), std::ios_base::out | std::ios_base::app );
-    ofs << log_message << std::endl;
-    ofs.close();
-}
-
-void fail_with_error(const std::string& error_message) {
-    std::cerr << error_message << std::endl;
-    exit(1);
+[[noreturn]] void fail_with_error(const std::string& error_message) {
+    throw std::runtime_error(error_message);
 }
 
 template<typename ... Args>
@@ -52,57 +46,6 @@ std::string string_format( const std::string& format, Args ... args ) {
     auto buf = std::make_unique<char[]>( size );
     snprintf( buf.get(), size, format.c_str(), args ... );
     return std::string( buf.get(), buf.get() + size - 1 ); // We don't want the '\0' inside
-}
-
-void write_array(fs::path filename, double * buffer, size_t length) {
-    FILE * output_file;
-    output_file = fopen (filename.c_str(), "wb");
-    fwrite (buffer , sizeof(double), static_cast<size_t>(length), output_file);
-    fclose (output_file);
-}
-
-std::tuple <double*, size_t> load_numpy_array(std::string data_file) {
-    FILE * input_file;
-    long file_size_bytes;
-    double * buffer;
-    size_t result;
-  
-    input_file = fopen( data_file.c_str(), "rb" );
-    if (input_file==NULL) {
-        std::string error_str = string_format("File error: %s\n", data_file.c_str());
-        fputs(error_str.c_str(), stderr);
-        exit(1);
-    }
-  
-    // obtain file size:
-    fseek(input_file , 0 , SEEK_END);
-    file_size_bytes = ftell(input_file);
-    rewind(input_file);
-
-    if ((file_size_bytes < 0) || (file_size_bytes % sizeof(double) != 0)) {
-        fclose(input_file);
-        fail_with_error(string_format("File error: %s does not contain a whole number of doubles", data_file.c_str()));
-    }
-    
-    size_t number_of_elements = static_cast<size_t> (file_size_bytes/sizeof(double));
-    if (number_of_elements == 0) {
-        fclose(input_file);
-        fail_with_error(string_format("File error: %s is empty", data_file.c_str()));
-    }
-  
-    // allocate memory to contain the whole file:
-    buffer = (double*) malloc(sizeof(double)*number_of_elements);
-    if (buffer == NULL) {fputs("Memory error",stderr); exit(2);}
-  
-    // copy the file into the buffer:
-    result = fread(buffer, 1, static_cast<size_t>(file_size_bytes), input_file);
-    if (result != static_cast<size_t>(file_size_bytes)) {fputs("Reading error",stderr); exit(3);}
-  
-    /* the whole file is now loaded in the memory buffer. */
-    fclose (input_file);
-
-    std::tuple <double*, size_t> numpy_data_tuple(buffer, number_of_elements);
-    return numpy_data_tuple;
 }
 
 void matrix_multiply_MxN_by_Nx1(double * C, double * A, double * B, size_t M, size_t N) {
@@ -1679,95 +1622,113 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         }
     }
 
-    //Save data
-    #ifndef ZEROT
-        std::string deac_prefix = "deac-" + spectra_type;
-    #else
-        std::string deac_prefix = "deac-zT" + spectra_type;
-    #endif
-    std::string best_dsf_filename_str = string_format("%s_dsf_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
-    fs::path best_dsf_filename = save_directory / best_dsf_filename_str;
-    std::string frequency_filename_str = string_format("%s_frequency_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
-    fs::path frequency_filename = save_directory / frequency_filename_str;
-    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-        write_array(best_dsf_filename, best_dsf, genome_size);
-        write_array(frequency_filename, best_frequency, genome_size);
-    #else
-        write_array(best_dsf_filename, best_dsf, 2*genome_size - 1);
-        write_array(frequency_filename, best_frequency, 2*genome_size - 1);
-    #endif
-    fs::path fitness_mean_filename;
-    fs::path fitness_minimum_filename;
-    fs::path fitness_squared_mean_filename;
-    if (track_stats) {
-        std::string fitness_mean_filename_str = string_format("%s_stats_fitness-mean_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
-        std::string fitness_minimum_filename_str = string_format("%s_stats_fitness-minimum_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
-        std::string fitness_squared_mean_filename_str = string_format("%s_stats_fitness-squared-mean_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
-        fitness_mean_filename = save_directory / fitness_mean_filename_str;
-        fitness_minimum_filename = save_directory / fitness_minimum_filename_str;
-        fitness_squared_mean_filename = save_directory / fitness_squared_mean_filename_str;
-        write_array(fitness_mean_filename, fitness_mean, generation + 1);
-        write_array(fitness_minimum_filename, fitness_minimum, generation + 1);
-        write_array(fitness_squared_mean_filename, fitness_squared_mean, generation + 1);
-    }
-
-    //Write to log file
-    std::string log_filename_str = string_format("%s_log_%s.dat",deac_prefix.c_str(),uuid_str.c_str());
-    fs::path log_filename = save_directory / log_filename_str;
-    std::ofstream log_ofs(log_filename.c_str(), std::ios_base::out | std::ios_base::app );
-
-    //Build Type
-    #ifdef USE_HYPERBOLIC_MODEL
-        log_ofs << "build: USE_HYPERBOLIC_MODEL" << std::endl;
-    #endif
-    #ifdef USE_STANDARD_MODEL
-        log_ofs << "build: USE_STANDARD_MODEL" << std::endl;
-    #endif
-    #ifdef USE_NORMALIZATION_MODEL
-        log_ofs << "build: USE_NORMALIZATION_MODEL" << std::endl;
-    #endif
-    log_ofs << "kernel: " << spectra_type << std::endl;
-
-    //Input parameters
-    log_ofs << "temperature: " << temperature << std::endl;
-    log_ofs << "number_of_generations: " << number_of_generations << std::endl;
-    log_ofs << "number_of_timeslices: " << number_of_timeslices << std::endl;
-    log_ofs << "population_size: " << population_size << std::endl;
-    log_ofs << "genome_size: " << genome_size << std::endl;
-    log_ofs << "normalize: " << normalize << std::endl;
-    log_ofs << "use_negative_first_moment: " << use_negative_first_moment << std::endl;
-    #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-        if (use_negative_first_moment) {
-            log_ofs << "negative_first_moment: " << negative_first_moment << std::endl;
-            log_ofs << "negative_first_moment_error: " << negative_first_moment_error << std::endl;
+    std::exception_ptr result_io_error;
+    try {
+        // Save data.
+        #ifndef ZEROT
+            std::string deac_prefix = "deac-" + spectra_type;
+        #else
+            std::string deac_prefix = "deac-zT" + spectra_type;
+        #endif
+        std::string best_dsf_filename_str = string_format("%s_dsf_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
+        fs::path best_dsf_filename = save_directory / best_dsf_filename_str;
+        std::string frequency_filename_str = string_format("%s_frequency_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
+        fs::path frequency_filename = save_directory / frequency_filename_str;
+        #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            deac_io::write_binary_doubles(
+                    best_dsf_filename, std::span<const double>(best_dsf, genome_size));
+            deac_io::write_binary_doubles(
+                    frequency_filename, std::span<const double>(best_frequency, genome_size));
+        #else
+            const size_t output_size = 2*genome_size - 1;
+            deac_io::write_binary_doubles(
+                    best_dsf_filename, std::span<const double>(best_dsf, output_size));
+            deac_io::write_binary_doubles(
+                    frequency_filename, std::span<const double>(best_frequency, output_size));
+        #endif
+        fs::path fitness_mean_filename;
+        fs::path fitness_minimum_filename;
+        fs::path fitness_squared_mean_filename;
+        if (track_stats) {
+            std::string fitness_mean_filename_str = string_format("%s_stats_fitness-mean_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
+            std::string fitness_minimum_filename_str = string_format("%s_stats_fitness-minimum_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
+            std::string fitness_squared_mean_filename_str = string_format("%s_stats_fitness-squared-mean_%s.bin",deac_prefix.c_str(),uuid_str.c_str());
+            fitness_mean_filename = save_directory / fitness_mean_filename_str;
+            fitness_minimum_filename = save_directory / fitness_minimum_filename_str;
+            fitness_squared_mean_filename = save_directory / fitness_squared_mean_filename_str;
+            deac_io::write_binary_doubles(
+                    fitness_mean_filename,
+                    std::span<const double>(fitness_mean, generation + 1));
+            deac_io::write_binary_doubles(
+                    fitness_minimum_filename,
+                    std::span<const double>(fitness_minimum, generation + 1));
+            deac_io::write_binary_doubles(
+                    fitness_squared_mean_filename,
+                    std::span<const double>(fitness_squared_mean, generation + 1));
         }
-    #endif
-    log_ofs << "first_moment: " << first_moment << std::endl;
-    log_ofs << "third_moment: " << third_moment << std::endl;
-    log_ofs << "third_moment_error: " << third_moment_error << std::endl;
-    log_ofs << "crossover_probability: " << crossover_probability << std::endl;
-    log_ofs << "self_adapting_crossover_probability: " << self_adapting_crossover_probability << std::endl;
-    log_ofs << "differential_weight: " << differential_weight << std::endl;
-    log_ofs << "self_adapting_differential_weight_probability: " << self_adapting_differential_weight_probability << std::endl;
-    log_ofs << "self_adapting_differential_weight_shift: " << self_adapting_differential_weight_shift << std::endl;
-    log_ofs << "self_adapting_differential_weight: " << self_adapting_differential_weight << std::endl;
-    log_ofs << "stop_minimum_fitness: " << stop_minimum_fitness << std::endl;
-    log_ofs << "track_stats: " << track_stats << std::endl;
-    log_ofs << "seed: " << seed << std::endl;
 
-    //Generated variables
-    log_ofs << "best_dsf_filename: " << best_dsf_filename << std::endl;
-    log_ofs << "frequency_filename: " << frequency_filename << std::endl;
-    log_ofs << "generation: " << generation << std::endl;
-    std::cout << "generation: " << generation << std::endl;
-    log_ofs << "minimum_fitness: " << minimum_fitness << std::endl;
-    std::cout << "minimum_fitness: " << minimum_fitness << std::endl;
-    if (track_stats) {
-        log_ofs << "fitness_mean_filename: " << fitness_mean_filename << std::endl;
-        log_ofs << "fitness_minimum_filename: " << fitness_minimum_filename << std::endl;
-        log_ofs << "fitness_squared_mean_filename: " << fitness_squared_mean_filename << std::endl;
+        // Append the final run record only after all binary artifacts are
+        // successfully flushed and closed.
+        std::string log_filename_str = string_format("%s_log_%s.dat",deac_prefix.c_str(),uuid_str.c_str());
+        fs::path log_filename = save_directory / log_filename_str;
+        std::ostringstream log;
+
+        // Build Type
+        #ifdef USE_HYPERBOLIC_MODEL
+            log << "build: USE_HYPERBOLIC_MODEL" << std::endl;
+        #endif
+        #ifdef USE_STANDARD_MODEL
+            log << "build: USE_STANDARD_MODEL" << std::endl;
+        #endif
+        #ifdef USE_NORMALIZATION_MODEL
+            log << "build: USE_NORMALIZATION_MODEL" << std::endl;
+        #endif
+        log << "kernel: " << spectra_type << std::endl;
+
+        // Input parameters
+        log << "temperature: " << temperature << std::endl;
+        log << "number_of_generations: " << number_of_generations << std::endl;
+        log << "number_of_timeslices: " << number_of_timeslices << std::endl;
+        log << "population_size: " << population_size << std::endl;
+        log << "genome_size: " << genome_size << std::endl;
+        log << "normalize: " << normalize << std::endl;
+        log << "use_negative_first_moment: " << use_negative_first_moment << std::endl;
+        #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            if (use_negative_first_moment) {
+                log << "negative_first_moment: " << negative_first_moment << std::endl;
+                log << "negative_first_moment_error: " << negative_first_moment_error << std::endl;
+            }
+        #endif
+        log << "first_moment: " << first_moment << std::endl;
+        log << "third_moment: " << third_moment << std::endl;
+        log << "third_moment_error: " << third_moment_error << std::endl;
+        log << "crossover_probability: " << crossover_probability << std::endl;
+        log << "self_adapting_crossover_probability: " << self_adapting_crossover_probability << std::endl;
+        log << "differential_weight: " << differential_weight << std::endl;
+        log << "self_adapting_differential_weight_probability: " << self_adapting_differential_weight_probability << std::endl;
+        log << "self_adapting_differential_weight_shift: " << self_adapting_differential_weight_shift << std::endl;
+        log << "self_adapting_differential_weight: " << self_adapting_differential_weight << std::endl;
+        log << "stop_minimum_fitness: " << stop_minimum_fitness << std::endl;
+        log << "track_stats: " << track_stats << std::endl;
+        log << "seed: " << seed << std::endl;
+
+        // Generated variables
+        log << "best_dsf_filename: " << best_dsf_filename << std::endl;
+        log << "frequency_filename: " << frequency_filename << std::endl;
+        log << "generation: " << generation << std::endl;
+        log << "minimum_fitness: " << minimum_fitness << std::endl;
+        if (track_stats) {
+            log << "fitness_mean_filename: " << fitness_mean_filename << std::endl;
+            log << "fitness_minimum_filename: " << fitness_minimum_filename << std::endl;
+            log << "fitness_squared_mean_filename: " << fitness_squared_mean_filename << std::endl;
+        }
+        deac_io::append_text(log_filename, log.str());
+        std::cout << "generation: " << generation << std::endl;
+        std::cout << "minimum_fitness: " << minimum_fitness << std::endl;
+    } catch (...) {
+        // Keep the original I/O failure while still releasing all solver resources.
+        result_io_error = std::current_exception();
     }
-    log_ofs.close();
 
     //Free memory
     if (track_stats) {
@@ -1921,9 +1882,13 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             }
         #endif
     #endif
+
+    if (result_io_error) {
+        std::rethrow_exception(result_io_error);
+    }
 }
 
-int main (int argc, char *argv[]) {
+int deac_main (int argc, char *argv[]) {
     argparse::ArgumentParser program("deac-cpp", "2.0.0-rc1");
     program.add_argument("-T", "--temperature")
         .help("Temperature of system.")
@@ -2029,7 +1994,7 @@ int main (int argc, char *argv[]) {
     catch (const std::runtime_error& err) {
         std::cout << err.what() << std::endl;
         std::cout << program << std::endl;
-        exit(1);
+        return 1;
     }
 
     double crossover_probability = program.get<double>("--crossover_probability");
@@ -2071,13 +2036,12 @@ int main (int argc, char *argv[]) {
          #endif
         )) {
         std::cout << "Please choose spectra_type from the following options: " << valid_spectra_type << std::endl;
-        exit(1);
+        return 1;
     }
 
-    size_t number_of_elements;
-    double* numpy_data;
     std::string isf_file = program.get<std::string>("isf_file");
-    std::tie(numpy_data, number_of_elements) = load_numpy_array(isf_file);
+    std::vector<double> numpy_data = deac_io::read_binary_doubles(isf_file);
+    const size_t number_of_elements = numpy_data.size();
     if (number_of_elements % 3 != 0) {
         fail_with_error("ISF input file must contain tau, isf, and error arrays of equal length");
     }
@@ -2086,9 +2050,9 @@ int main (int argc, char *argv[]) {
         fail_with_error("ISF input file must contain at least two timeslices");
     }
 
-    double * const imaginary_time = numpy_data;
-    double * const isf = numpy_data + number_of_timeslices;
-    double * const isf_error = numpy_data + 2*number_of_timeslices;
+    double * const imaginary_time = numpy_data.data();
+    double * const isf = numpy_data.data() + number_of_timeslices;
+    double * const isf_error = numpy_data.data() + 2*number_of_timeslices;
     for (size_t i=0; i<number_of_timeslices; i++) {
         if (!std::isfinite(imaginary_time[i]) || !std::isfinite(isf[i]) || !std::isfinite(isf_error[i])) {
             fail_with_error("ISF input file contains non-finite values");
@@ -2123,9 +2087,10 @@ int main (int argc, char *argv[]) {
     }
 
     size_t genome_size;
-    double * frequency;
+    std::vector<double> frequency_data;
     if (auto frequency_filename = program.present("--frequency_file")) {
-        std::tie(frequency,genome_size) = load_numpy_array(*frequency_filename);
+        frequency_data = deac_io::read_binary_doubles(*frequency_filename);
+        genome_size = frequency_data.size();
     } else{
         genome_size = static_cast<size_t>(program.get<unsigned long>("--genome_size"));
         double max_frequency = program.get<double>("--omega_max");
@@ -2136,12 +2101,13 @@ int main (int argc, char *argv[]) {
             fail_with_error("omega_max must be positive");
         }
 
-        frequency = (double*) malloc(sizeof(double)*genome_size);
+        frequency_data.resize(genome_size);
         double dfrequency = max_frequency/(genome_size - 1);
         for (size_t i=0; i<genome_size; i++) {
-            frequency[i] = i*dfrequency;
+            frequency_data[i] = i*dfrequency;
         }
     }
+    double* const frequency = frequency_data.data();
     if (genome_size < 2) {
         fail_with_error("frequency_file must contain at least two frequencies");
     }
@@ -2182,7 +2148,7 @@ int main (int argc, char *argv[]) {
     bool track_stats = program.get<bool>("--track_stats");
     std::string save_directory_str = program.get<std::string>("--save_directory");
     fs::path save_directory(save_directory_str);
-    fs::create_directory(save_directory);
+    deac_io::ensure_result_directory(save_directory);
 
     //Write to log file
     #ifndef ZEROT
@@ -2192,12 +2158,10 @@ int main (int argc, char *argv[]) {
     #endif
     std::string log_filename_str = string_format("%s_log_%s.dat",deac_prefix.c_str(),uuid_str.c_str());
     fs::path log_filename = save_directory / log_filename_str;
-    std::ofstream log_ofs(log_filename.c_str(), std::ios_base::out | std::ios_base::app );
-
-    //Input parameters
-    log_ofs << "uuid: " << uuid_str << std::endl;
-    log_ofs << "isf_file: " << isf_file << std::endl;
-    log_ofs.close();
+    std::ostringstream initial_log;
+    initial_log << "uuid: " << uuid_str << std::endl;
+    initial_log << "isf_file: " << isf_file << std::endl;
+    deac_io::append_text(log_filename, initial_log.str());
 
     deac( &rng, imaginary_time, isf, isf_error, frequency, temperature,
             number_of_generations, number_of_timeslices, population_size, genome_size,
@@ -2209,7 +2173,14 @@ int main (int argc, char *argv[]) {
             self_adapting_differential_weight, stop_minimum_fitness,
             track_stats, seed_int, uuid_str, spectra_type, save_directory);
 
-    free(numpy_data);
-    free(frequency);
     return 0;
+}
+
+int main (int argc, char *argv[]) {
+    try {
+        return deac_main(argc, argv);
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << std::endl;
+        return 1;
+    }
 }

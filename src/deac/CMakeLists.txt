@@ -293,6 +293,15 @@ add_test(
     NAME deac_unit_population_projection
     COMMAND deac_population_projection_test)
 
+add_executable(deac_result_io_test
+    ${CMAKE_SOURCE_DIR}/../test/result_io_test.cpp)
+target_include_directories(deac_result_io_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+add_test(
+    NAME deac_unit_result_io
+    COMMAND deac_result_io_test)
+
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     set(DEAC_SMOKE_TEST "${CMAKE_SOURCE_DIR}/../test/deac_smoke_test.py")
@@ -317,6 +326,7 @@ if(Python3_Interpreter_FOUND)
             uneven_isf_arrays
             too_few_timeslices
             nonfinite_isf
+            missing_isf
             positive_isf_single_particle
             bad_third_moment_error
             bad_crossover_probability
@@ -328,10 +338,16 @@ if(Python3_Interpreter_FOUND)
             too_small_population
             too_small_genome
             bad_omega_max
+            missing_frequency
             short_frequency_file
             nonfinite_frequency
             negative_frequency
-            unsorted_frequency)
+            unsorted_frequency
+            nested_output
+            save_directory_is_file
+            unwritable_save_directory
+            log_destination_is_directory
+            result_destination_is_directory)
     if(USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF)
         list(APPEND DEAC_SMOKE_CASES negative_first_moment)
     else()
