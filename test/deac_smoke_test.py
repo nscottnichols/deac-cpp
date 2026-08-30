@@ -668,6 +668,7 @@ def main():
     parser.add_argument("--workdir", required=True)
     parser.add_argument("--detailed-balance", action="store_true")
     parser.add_argument("--zero-temperature", action="store_true")
+    parser.add_argument("--expected-version", required=True)
     parser.add_argument(
         "--case",
         required=True,
@@ -686,6 +687,7 @@ def main():
             [exe, "--help"], workdir, expected_output="Usage: deac-cpp"
         )
         for expected_output in (
+            "--build-identity",
             "--self_adapting_differential_weight_probability",
             "Must be finite and in [0, 2].",
             "Negative values are allowed.",
@@ -724,9 +726,10 @@ def main():
                     )
     elif args.case == "version":
         result = run_command([exe, "-v"], workdir)
-        if result.stdout.strip() != "2.0.0-rc1":
+        if result.stdout.strip() != args.expected_version:
             raise AssertionError(
-                f"expected -v to print only the version, got {result.stdout!r}"
+                "expected -v to print only configured version "
+                f"{args.expected_version!r}, got {result.stdout!r}"
             )
     elif args.case == "bad_spectra":
         fixture = workdir / "tiny-isf.bin"

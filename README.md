@@ -56,6 +56,38 @@ As above, and with further details below, but you should consider using the foll
 Executables will be installed to `CMAKE_INSTALL_PREFIX` location or, if the install is skipped, they will be located in `build/deac`.
 Executables produced are `deac.e`, `deacd.e`, `deac-zT.e`, and `deac-zTd.e` for `CMAKE_BUILD_TYPE=Release|Debug|ZeroT|ZeroTDebug` respectively.
 
+### Build identity and provenance
+
+`deac.e --version` (or `-v`) retains the legacy one-line semantic-version
+output. For provenance checks, every executable also provides a byte-stable,
+single-line JSON identity:
+
+```console
+$ deac.e --build-identity
+{"schema_version":1,"semantic_version":"2.0.0-rc1","source_sha":"0123456789abcdef0123456789abcdef01234567","source_state":"clean"}
+```
+
+Schema 1 has exactly four fields in the order shown. `source_sha` is the full,
+lowercase 40-hex commit at build time when Git metadata is trustworthy.
+`source_state` is `clean` when the tracked commit and build-relevant `VERSION`
+and `src/` inputs agree, or `dirty` when those inputs contain staged,
+unstaged, or untracked changes (Git-ignored files do not count). A source
+archive with no matching repository metadata reports `source_sha: null` and
+`source_state: "unavailable"`; it never borrows the SHA of an enclosing Git
+checkout.
+
+CMake writes the same canonical bytes to
+`build/deac/deac-build-identity.json`. Each ordinary `cmake --build build`
+runs a small identity refresh, recompiles its tiny identity-only source, and
+relinks the executable, while also watching the relevant source files plus
+worktree-aware Git HEAD, index, packed refs, and loose refs. This intentional
+identity rebuild avoids filesystem-timestamp races, so
+editing, staging, reverting, committing (including an empty commit after
+`git pack-refs`), or checking out source updates the executable and receipt in
+that same build without a manually repeated configure command. Git identity
+probes ignore inherited repository-redirection environment variables; archive
+builds therefore cannot be assigned metadata from an unrelated checkout.
+
 ### Zero-temperature mode
 
 `ZeroT` and `ZeroTDebug` restore the original zero-temperature problem: one

@@ -134,11 +134,24 @@ elseif(CMAKE_BUILD_TYPE MATCHES Debug)
     set(exe deacd.e)
 endif()
 
+# Generate a dedicated identity object and matching build-tree receipt.  Its
+# symbolic refresh dependency deliberately recompiles this tiny object and
+# relinks the executable on every ordinary build, avoiding timestamp races.
+include("${CMAKE_SOURCE_DIR}/cmake/DeacBuildIdentity.cmake")
+deac_add_build_identity(
+    SOURCE_ROOT "${CMAKE_SOURCE_DIR}/.."
+    GENERATED_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    IDENTITY_NAME deac
+    RECEIPT "${CMAKE_CURRENT_BINARY_DIR}/deac-build-identity.json")
+
 # Find source files ( better to list explicitly https://stackoverflow.com/questions/1027247/specify-source-files-globally-with-glob )
-file( GLOB DEAC_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp )
+file(GLOB DEAC_SRC CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
+list(REMOVE_ITEM DEAC_SRC "${DEAC_BUILD_IDENTITY_IMPLEMENTATION_SOURCE}")
 if ("${GPU_BACKEND}" STREQUAL "cuda")
     file( GLOB DEAC_CUDA ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cu )
-    add_executable(${exe} ${DEAC_SRC} ${DEAC_CUDA})
+    add_executable(${exe}
+        ${DEAC_SRC}
+        ${DEAC_CUDA})
     set_target_properties( ${exe} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
     #if(APPLE)
@@ -152,11 +165,14 @@ else()
     add_executable(${exe} ${DEAC_SRC})
 endif()
 
+deac_target_add_build_identity(${exe})
+
 # Define headers for target
 target_include_directories(${exe} PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
-    PRIVATE src)
+    PRIVATE
+        src)
 
 if(USE_BLAS AND "${GPU_BACKEND}" STREQUAL "cuda")
     target_link_libraries(${exe} CUDA::cublas)
@@ -375,6 +391,8 @@ if(NOT USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT)
         add_executable(deac_invalid_normalization_evolution_test_exe
             ${DEAC_SRC})
     endif()
+    deac_target_add_build_identity(
+        deac_invalid_normalization_evolution_test_exe)
     target_compile_definitions(
         deac_invalid_normalization_evolution_test_exe PRIVATE
         DEAC_TEST_FORCE_INVALID_NORMALIZATION_TRIALS=1)
@@ -411,6 +429,8 @@ find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     set(DEAC_SMOKE_TEST "${CMAKE_SOURCE_DIR}/../test/deac_smoke_test.py")
     set(DEAC_PARITY_TEST "${CMAKE_SOURCE_DIR}/../test/deac_parity_test.py")
+    set(DEAC_BUILD_IDENTITY_TEST
+        "${CMAKE_SOURCE_DIR}/../test/deac_build_identity_test.py")
     set(DEAC_SMOKE_VARIANT_ARGS)
     if(USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF)
         list(APPEND DEAC_SMOKE_VARIANT_ARGS --detailed-balance)
@@ -487,6 +507,7 @@ if(Python3_Interpreter_FOUND)
                 --exe $<TARGET_FILE:${exe}>
                 --workdir ${CMAKE_CURRENT_BINARY_DIR}/smoke/${test_case}
                 --case ${test_case}
+                --expected-version ${DEAC_BUILD_IDENTITY_SEMANTIC_VERSION}
                 ${DEAC_SMOKE_VARIANT_ARGS}
         )
     endforeach()
@@ -512,6 +533,34 @@ if(Python3_Interpreter_FOUND)
         )
     endif()
 
+    set(DEAC_BUILD_IDENTITY_GIT_ARGS)
+    if(Git_FOUND)
+        list(APPEND DEAC_BUILD_IDENTITY_GIT_ARGS
+            --git "${GIT_EXECUTABLE}")
+    endif()
+    set(DEAC_BUILD_IDENTITY_CONFIG_ARGS)
+    if(CMAKE_CONFIGURATION_TYPES)
+        list(APPEND DEAC_BUILD_IDENTITY_CONFIG_ARGS
+            --build-config $<CONFIG>)
+    endif()
+    add_test(
+        NAME deac_build_identity
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${DEAC_BUILD_IDENTITY_TEST}
+            --exe $<TARGET_FILE:${exe}>
+            --receipt ${DEAC_BUILD_IDENTITY_RECEIPT}
+            --source-root ${CMAKE_SOURCE_DIR}/..
+            --workdir ${CMAKE_CURRENT_BINARY_DIR}/build-identity-test
+            --identity-module
+                ${CMAKE_SOURCE_DIR}/cmake/DeacBuildIdentity.cmake
+            --cmake ${CMAKE_COMMAND}
+            --cxx-compiler ${CMAKE_CXX_COMPILER}
+            --generator ${CMAKE_GENERATOR}
+            --make-program ${CMAKE_MAKE_PROGRAM}
+            ${DEAC_BUILD_IDENTITY_CONFIG_ARGS}
+            ${DEAC_BUILD_IDENTITY_GIT_ARGS}
+    )
     add_test(
         NAME deac_first_moment_fitness
         COMMAND

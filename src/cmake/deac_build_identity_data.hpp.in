@@ -1,0 +1,13 @@
+#pragma once
+
+#include <string_view>
+
+// Canonical identity SHA-256: @DEAC_BUILD_IDENTITY_CANONICAL_DIGEST@
+namespace deac_build_identity::generated {
+
+inline constexpr std::string_view semantic_version =
+    "@DEAC_BUILD_IDENTITY_SEMANTIC_VERSION@";
+inline constexpr std::string_view canonical_json =
+    R"DEACID(@DEAC_BUILD_IDENTITY_CANONICAL_JSON@)DEACID";
+
+}  // namespace deac_build_identity::generated
