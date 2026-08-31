@@ -11,6 +11,116 @@ function(_deac_build_receipt_require_plain value label)
     endif()
 endfunction()
 
+function(_deac_build_receipt_require_single_command value label)
+    if("${value}" MATCHES "[;\r\n]")
+        message(FATAL_ERROR
+            "build-receipt ${label} contains shell control syntax")
+    endif()
+
+    # Rule templates may quote or escape literal path characters.  Reject
+    # control operators and command substitution only when the shell would
+    # interpret them, while leaving CMake's <PLACEHOLDER> and $<GENEX>
+    # syntax untouched.
+    string(LENGTH "${value}" _length)
+    set(_index 0)
+    set(_quote "")
+    set(_escaped false)
+    while(_index LESS _length)
+        string(SUBSTRING "${value}" ${_index} 1 _character)
+        math(EXPR _next_index "${_index} + 1")
+        set(_next_character "")
+        if(_next_index LESS _length)
+            string(SUBSTRING "${value}" ${_next_index} 1 _next_character)
+        endif()
+
+        if(_escaped)
+            set(_escaped false)
+        elseif(_quote STREQUAL "'")
+            if(_character STREQUAL "'")
+                set(_quote "")
+            endif()
+        elseif(_quote STREQUAL "\"")
+            if(_character STREQUAL "\\")
+                set(_escaped true)
+            elseif(_character STREQUAL "\"")
+                set(_quote "")
+            elseif(_character STREQUAL "`" OR
+                    (_character STREQUAL "$" AND
+                     _next_character STREQUAL "("))
+                message(FATAL_ERROR
+                    "build-receipt ${label} contains shell control syntax")
+            endif()
+        elseif(_character STREQUAL "\\")
+            set(_escaped true)
+        elseif(_character STREQUAL "'" OR _character STREQUAL "\"")
+            set(_quote "${_character}")
+        elseif(_character MATCHES "[|&`]" OR
+                (_character STREQUAL "$" AND
+                 _next_character STREQUAL "("))
+            message(FATAL_ERROR
+                "build-receipt ${label} contains shell control syntax")
+        endif()
+        math(EXPR _index "${_index} + 1")
+    endwhile()
+    if(_escaped OR NOT _quote STREQUAL "")
+        message(FATAL_ERROR
+            "build-receipt ${label} has incomplete shell quoting")
+    endif()
+endfunction()
+
+function(_deac_build_receipt_snapshot_named_tool
+        variable output_arguments output_fingerprint_material)
+    if(NOT DEFINED ${variable} OR "${${variable}}" STREQUAL "")
+        message(FATAL_ERROR "build receipt requires ${variable}")
+    endif()
+    _deac_build_receipt_require_plain(
+        "${${variable}}" "${variable} executable identity")
+    if(NOT IS_ABSOLUTE "${${variable}}")
+        message(FATAL_ERROR
+            "build-receipt ${variable} must be an absolute executable path")
+    endif()
+    get_filename_component(_tool_real "${${variable}}" REALPATH)
+    if(NOT EXISTS "${_tool_real}" OR IS_DIRECTORY "${_tool_real}")
+        message(FATAL_ERROR
+            "build-receipt ${variable} is not a regular file: ${${variable}}")
+    endif()
+    file(SHA256 "${_tool_real}" _tool_sha256)
+    _deac_build_receipt_require_plain(
+        "${_tool_real}" "${variable} executable identity")
+
+    set(_arguments
+        "-DDEAC_BUILD_RECEIPT_CONFIGURED_${variable}_PATH:FILEPATH=${${variable}}"
+        "-DDEAC_BUILD_RECEIPT_CONFIGURED_${variable}_REAL_PATH:FILEPATH=${_tool_real}"
+        "-DDEAC_BUILD_RECEIPT_CONFIGURED_${variable}_SHA256:STRING=${_tool_sha256}")
+    set(_fingerprint_material "")
+    foreach(_field PATH REAL_PATH SHA256)
+        if(_field STREQUAL "PATH")
+            set(_value "${${variable}}")
+        elseif(_field STREQUAL "REAL_PATH")
+            set(_value "${_tool_real}")
+        else()
+            set(_value "${_tool_sha256}")
+        endif()
+        string(LENGTH "${_value}" _value_length)
+        string(APPEND _fingerprint_material
+            "${variable}.${_field}:${_value_length}:${_value}\n")
+    endforeach()
+    set(${output_arguments} "${_arguments}" PARENT_SCOPE)
+    set(${output_fingerprint_material}
+        "${_fingerprint_material}" PARENT_SCOPE)
+endfunction()
+
+function(_deac_build_receipt_reject_unsupported_languages)
+    foreach(_unsupported_language CUDA HIP)
+        if(_unsupported_language IN_LIST ARGN)
+            message(FATAL_ERROR
+                "build receipts fail closed for the native CMake "
+                "${_unsupported_language} language until its intermediate "
+                "device-link rules are represented and compiler-gated")
+        endif()
+    endforeach()
+endfunction()
+
 function(_deac_build_receipt_snapshot_tool
         language output_arguments output_fingerprint_material)
     if(NOT DEFINED CMAKE_${language}_COMPILER OR
@@ -114,15 +224,29 @@ function(_deac_build_receipt_reject_launchers target_name)
             "LINK_WHAT_YOU_USE")
     endif()
 
-    get_target_property(
-        _interprocedural_optimization
-        "${target_name}" INTERPROCEDURAL_OPTIMIZATION)
-    if(_interprocedural_optimization AND
-            NOT _interprocedural_optimization MATCHES "-NOTFOUND$")
-        message(FATAL_ERROR
-            "build receipts do not yet support target ${target_name} "
-            "INTERPROCEDURAL_OPTIMIZATION")
+    set(_ipo_properties INTERPROCEDURAL_OPTIMIZATION)
+    if(CMAKE_CONFIGURATION_TYPES)
+        set(_ipo_configurations ${CMAKE_CONFIGURATION_TYPES})
+    else()
+        set(_ipo_configurations "${CMAKE_BUILD_TYPE}")
     endif()
+    foreach(_configuration IN LISTS _ipo_configurations)
+        string(TOUPPER "${_configuration}" _configuration_upper)
+        list(APPEND _ipo_properties
+            "INTERPROCEDURAL_OPTIMIZATION_${_configuration_upper}")
+    endforeach()
+    list(REMOVE_DUPLICATES _ipo_properties)
+    foreach(_ipo_property IN LISTS _ipo_properties)
+        get_target_property(
+            _interprocedural_optimization
+            "${target_name}" "${_ipo_property}")
+        if(_interprocedural_optimization AND
+                NOT _interprocedural_optimization MATCHES "-NOTFOUND$")
+            message(FATAL_ERROR
+                "build receipts do not yet support target ${target_name} "
+                "${_ipo_property}")
+        endif()
+    endforeach()
 
     foreach(_launcher_property
             RULE_LAUNCH_COMPILE RULE_LAUNCH_CUSTOM RULE_LAUNCH_LINK)
@@ -212,10 +336,8 @@ function(_deac_build_receipt_rule_fingerprint
             message(FATAL_ERROR "build receipt requires ${_variable}")
         endif()
         set(_template "${${_variable}}")
-        if(_template MATCHES "[;\r\n]")
-            message(FATAL_ERROR
-                "build receipt does not support multi-command ${_variable}")
-        endif()
+        _deac_build_receipt_require_single_command(
+            "${_template}" "${_variable}")
         if(_rule STREQUAL "COMPILE_OBJECT")
             set(_allowed_prefix "<CMAKE_${language}_COMPILER>")
             foreach(_placeholder DEFINES INCLUDES SOURCE OBJECT FLAGS)
@@ -274,10 +396,8 @@ function(_deac_build_receipt_rule_fingerprint
             message(FATAL_ERROR "build receipt requires ${_variable}")
         endif()
         set(_template "${${_variable}}")
-        if(_template MATCHES "[;\r\n]")
-            message(FATAL_ERROR
-                "build receipt does not support multi-command ${_variable}")
-        endif()
+        _deac_build_receipt_require_single_command(
+            "${_template}" "${_variable}")
         if(_rule STREQUAL "ARCHIVE_FINISH")
             set(_allowed_prefix "<CMAKE_RANLIB>")
         else()
@@ -418,17 +538,10 @@ function(deac_target_add_build_receipt target_name)
     endforeach()
 
     get_property(_enabled_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
-    foreach(_unsupported_language CUDA HIP)
-        if(_unsupported_language IN_LIST _enabled_languages)
-            message(FATAL_ERROR
-                "build receipts fail closed for the native CMake "
-                "${_unsupported_language} language until its intermediate "
-                "device-link rules are represented and compiler-gated")
-        endif()
-    endforeach()
+    _deac_build_receipt_reject_unsupported_languages(${_enabled_languages})
     set(_receipt_languages)
     set(_tool_arguments)
-    set(_toolchain_fingerprint_material "deac-build-toolchain-v1\n")
+    set(_toolchain_fingerprint_material "deac-build-toolchain-v2\n")
     foreach(_language CXX CUDA)
         if(_language IN_LIST _enabled_languages)
             _deac_build_receipt_snapshot_tool(
@@ -447,6 +560,17 @@ function(deac_target_add_build_receipt target_name)
         message(FATAL_ERROR "build receipt requires the CXX language")
     endif()
     string(JOIN "," _receipt_languages_csv ${_receipt_languages})
+
+    set(_archive_tools CMAKE_AR CMAKE_RANLIB)
+    foreach(_archive_tool IN LISTS _archive_tools)
+        _deac_build_receipt_snapshot_named_tool(
+            "${_archive_tool}" _archive_tool_arguments
+            _archive_tool_fingerprint)
+        list(APPEND _tool_arguments ${_archive_tool_arguments})
+        string(APPEND _toolchain_fingerprint_material
+            "${_archive_tool_fingerprint}")
+    endforeach()
+    string(JOIN "," _archive_tools_csv ${_archive_tools})
 
     get_filename_component(_cmake_real "${CMAKE_COMMAND}" REALPATH)
     if(NOT EXISTS "${_cmake_real}" OR IS_DIRECTORY "${_cmake_real}")
@@ -472,8 +596,9 @@ function(deac_target_add_build_receipt target_name)
     string(SHA256 _toolchain_fingerprint
         "${_toolchain_fingerprint_material}")
 
-    # Changing compiler or CMake bytes followed by a required reconfigure must
-    # invalidate every object, even when the compiler pathname is unchanged.
+    # Changing compiler, archive-tool, or CMake bytes followed by a required
+    # reconfigure must invalidate every object, even when a tool pathname is
+    # unchanged.
     # The same definition is visible in the File API compile groups recorded
     # below, binding that invalidation key into the receipt itself.
     foreach(_fingerprinted_target
@@ -510,6 +635,8 @@ function(deac_target_add_build_receipt target_name)
         "${_configuration_directory}/${_receipt_identifier}.refresh")
     set(_rebuild
         "${_configuration_directory}/${_receipt_identifier}.rebuild")
+    set(_compiled_marker
+        "${_configuration_directory}/${_receipt_identifier}.compiled")
 
     # Source properties are keyed by the literal path passed to CMake.  A
     # property attached to the $<CONFIG>-spelled source is therefore not
@@ -548,12 +675,14 @@ function(deac_target_add_build_receipt target_name)
             "-DDEAC_BUILD_RECEIPT_CACHE_KEYS:STRING=${_cache_keys_csv}"
             "-DDEAC_BUILD_RECEIPT_DEPENDENCY_TARGETS:STRING=${_dependency_targets_csv}"
             "-DDEAC_BUILD_RECEIPT_LANGUAGES:STRING=${_receipt_languages_csv}"
+            "-DDEAC_BUILD_RECEIPT_ARCHIVE_TOOLS:STRING=${_archive_tools_csv}"
             "-DDEAC_BUILD_RECEIPT_TOOLCHAIN_FINGERPRINT:STRING=${_toolchain_fingerprint}"
             "-DDEAC_BUILD_RECEIPT_CMAKE_PATH:FILEPATH=${CMAKE_COMMAND}"
             "-DDEAC_BUILD_RECEIPT_CMAKE_REAL_PATH:FILEPATH=${_cmake_real}"
             "-DDEAC_BUILD_RECEIPT_CMAKE_SHA256:STRING=${_cmake_sha256}"
             "-DDEAC_BUILD_RECEIPT_OUTPUT_SOURCE:FILEPATH=${_generated_source}"
             "-DDEAC_BUILD_RECEIPT_OUTPUT_RECEIPT:FILEPATH=${_receipt}"
+            "-DDEAC_BUILD_RECEIPT_PREVIOUS_COMPILE_MARKER:FILEPATH=${_compiled_marker}"
             ${_git_argument}
             ${_tool_arguments}
             -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/GenerateDeacBuildReceipt.cmake"
@@ -569,8 +698,10 @@ function(deac_target_add_build_receipt target_name)
     add_custom_command(
         # This symbolic output separates receipt generation from the normal
         # generated-source relationship that CMake otherwise treats as
-        # timestamp-only.  Object and link rules depend on the always-missing
-        # token, so coarse filesystem timestamps cannot suppress a rebuild.
+        # timestamp-only.  Make object and link rules depend on the
+        # always-missing token, so coarse filesystem timestamps cannot suppress
+        # a rebuild.  Ninja additionally observes the explicitly touched
+        # generated source from the refresh edge.
         OUTPUT "${_rebuild}"
         COMMAND "${CMAKE_COMMAND}" -E true
         DEPENDS "${_refresh}"
@@ -585,23 +716,26 @@ function(deac_target_add_build_receipt target_name)
     target_include_directories("${target_name}" PRIVATE
         "${_support_directory}")
 
-    # This catches persistent compiler/CMake replacement after receipt
-    # generation but before the final link.  As with any ordinary build graph,
-    # an adversarial swap-and-restore between process invocations is outside
-    # CMake's attestation boundary.
+    # This catches persistent compiler/archive-tool/CMake replacement after
+    # receipt generation but before the final link.  As with any ordinary
+    # build graph, an adversarial swap-and-restore between process invocations
+    # is outside CMake's attestation boundary.
     add_custom_command(TARGET "${target_name}" PRE_LINK
         COMMAND
             "${CMAKE_COMMAND}"
             "-DDEAC_BUILD_RECEIPT_LANGUAGES:STRING=${_receipt_languages_csv}"
+            "-DDEAC_BUILD_RECEIPT_ARCHIVE_TOOLS:STRING=${_archive_tools_csv}"
             "-DDEAC_BUILD_RECEIPT_CMAKE_PATH:FILEPATH=${CMAKE_COMMAND}"
             "-DDEAC_BUILD_RECEIPT_CMAKE_REAL_PATH:FILEPATH=${_cmake_real}"
             "-DDEAC_BUILD_RECEIPT_CMAKE_SHA256:STRING=${_cmake_sha256}"
             ${_tool_arguments}
             -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/VerifyDeacBuildReceiptTools.cmake"
+        COMMAND "${CMAKE_COMMAND}" -E touch "${_compiled_marker}"
         COMMENT "Verifying build-receipt tool bytes for ${target_name}"
         VERBATIM)
     set_property(TARGET "${target_name}" APPEND PROPERTY
-        ADDITIONAL_CLEAN_FILES "${_generated_source};${_receipt}")
+        ADDITIONAL_CLEAN_FILES
+            "${_generated_source};${_receipt};${_compiled_marker}")
 
     set(DEAC_BUILD_RECEIPT "${_receipt}" PARENT_SCOPE)
     set(DEAC_BUILD_RECEIPT_GENERATED_SOURCE

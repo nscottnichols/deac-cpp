@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.27)
 
 foreach(_required_variable
         DEAC_BUILD_RECEIPT_LANGUAGES
+        DEAC_BUILD_RECEIPT_ARCHIVE_TOOLS
         DEAC_BUILD_RECEIPT_CMAKE_PATH
         DEAC_BUILD_RECEIPT_CMAKE_REAL_PATH
         DEAC_BUILD_RECEIPT_CMAKE_SHA256)
@@ -25,6 +26,31 @@ function(_deac_verify_build_receipt_tool label path expected_real expected_sha25
             "rerun CMake before building")
     endif()
 endfunction()
+
+string(REPLACE "," ";" _archive_tools
+    "${DEAC_BUILD_RECEIPT_ARCHIVE_TOOLS}")
+foreach(_tool IN LISTS _archive_tools)
+    if(NOT _tool MATCHES "^CMAKE_[A-Z0-9_]+$")
+        message(FATAL_ERROR "invalid build-receipt archive tool: ${_tool}")
+    endif()
+    set(_path_variable
+        "DEAC_BUILD_RECEIPT_CONFIGURED_${_tool}_PATH")
+    set(_real_path_variable
+        "DEAC_BUILD_RECEIPT_CONFIGURED_${_tool}_REAL_PATH")
+    set(_sha256_variable
+        "DEAC_BUILD_RECEIPT_CONFIGURED_${_tool}_SHA256")
+    foreach(_variable
+            ${_path_variable} ${_real_path_variable} ${_sha256_variable})
+        if(NOT DEFINED ${_variable} OR "${${_variable}}" STREQUAL "")
+            message(FATAL_ERROR "${_variable} is required")
+        endif()
+    endforeach()
+    _deac_verify_build_receipt_tool(
+        "${_tool} executable"
+        "${${_path_variable}}"
+        "${${_real_path_variable}}"
+        "${${_sha256_variable}}")
+endforeach()
 
 _deac_verify_build_receipt_tool(
     "CMake executable"

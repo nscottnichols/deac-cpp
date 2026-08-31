@@ -803,6 +803,7 @@ if(Python3_Interpreter_FOUND)
                 --ninja ${DEAC_NINJA_EXECUTABLE}
                 --solver-source-root ${CMAKE_SOURCE_DIR}
                 --cxx-compiler ${CMAKE_CXX_COMPILER}
+                --archiver ${CMAKE_AR}
                 --workdir
                     ${CMAKE_CURRENT_BINARY_DIR}/build-receipt-fixture-test
         )

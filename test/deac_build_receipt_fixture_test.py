@@ -30,6 +30,14 @@ def write(path, contents, *, executable=False):
         path.chmod(0o755)
 
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def copy_fixture_modules(solver_source, fixture_source):
     module_names = [
         "DeacBuildIdentity.cmake",
@@ -75,6 +83,26 @@ int main() {
 """,
     )
     write(
+        fixture_source / "src" / "dependency_two.cpp",
+        "int receipt_dependency_two() { return 23; }\n",
+    )
+    write(
+        fixture_source / "src" / "probe_two.cpp",
+        """#include "build_identity.hpp"
+#include <iostream>
+
+int receipt_dependency_two();
+
+int main() {
+    if (receipt_dependency_two() != 23) {
+        return 2;
+    }
+    std::cout << deac_build_identity::build_receipt_json() << '\\n';
+    return 0;
+}
+""",
+    )
+    write(
         fixture_source / "src" / "CMakeLists.txt",
         """cmake_minimum_required(VERSION 3.27)
 project(deac_build_receipt_fixture LANGUAGES CXX)
@@ -82,12 +110,69 @@ project(deac_build_receipt_fixture LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 set(GPU_BACKEND none CACHE STRING "fixture backend")
+set(DEAC_FIXTURE_ARCHIVER "" CACHE FILEPATH "effective fixture CMAKE_AR")
+set(DEAC_FIXTURE_RULE_ATTACK "" CACHE STRING "fixture rule attack")
+set(DEAC_FIXTURE_NATIVE_LANGUAGE_SHAPE "" CACHE STRING "native language shape")
+option(DEAC_FIXTURE_PARALLEL_CONSUMERS "add a second receipt consumer" OFF)
+option(DEAC_FIXTURE_DEPENDENCY_IPO_RELEASE "enable dependency Release IPO" OFF)
+
+# CMake's persisted compiler-information file restores CMAKE_AR as a normal
+# variable on every reconfigure, shadowing a changed -DCMAKE_AR cache entry.
+# Rebind both scopes so the fixture can exercise a genuine effective archiver
+# transition in one build tree.
+if(NOT DEAC_FIXTURE_ARCHIVER STREQUAL "")
+    set(CMAKE_AR "${DEAC_FIXTURE_ARCHIVER}" CACHE FILEPATH
+        "effective fixture CMAKE_AR" FORCE)
+    set(CMAKE_AR "${DEAC_FIXTURE_ARCHIVER}")
+endif()
 
 add_library(receipt_dependency STATIC dependency.cpp)
 add_executable(receipt_probe probe.cpp)
 target_link_libraries(receipt_probe PRIVATE receipt_dependency)
+if(DEAC_FIXTURE_DEPENDENCY_IPO_RELEASE)
+    set_property(TARGET receipt_dependency PROPERTY
+        INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+endif()
+if(DEAC_FIXTURE_PARALLEL_CONSUMERS)
+    add_library(receipt_dependency_two STATIC dependency_two.cpp)
+    add_executable(receipt_probe_two probe_two.cpp)
+    target_link_libraries(receipt_probe_two PRIVATE receipt_dependency_two)
+endif()
+
+if(DEAC_FIXTURE_RULE_ATTACK STREQUAL "compile-and")
+    string(APPEND CMAKE_CXX_COMPILE_OBJECT
+        " && \\\"${CMAKE_COMMAND}\\\" -E false")
+elseif(DEAC_FIXTURE_RULE_ATTACK STREQUAL "link-or")
+    string(APPEND CMAKE_CXX_LINK_EXECUTABLE
+        " || \\\"${CMAKE_COMMAND}\\\" -E true")
+elseif(DEAC_FIXTURE_RULE_ATTACK STREQUAL "archive-pipe")
+    string(APPEND CMAKE_CXX_ARCHIVE_CREATE
+        " | \\\"${CMAKE_COMMAND}\\\" -E true")
+elseif(DEAC_FIXTURE_RULE_ATTACK STREQUAL "quoted-pipe")
+    string(APPEND CMAKE_CXX_COMPILE_OBJECT " \\\"literal|argument\\\"")
+elseif(NOT DEAC_FIXTURE_RULE_ATTACK STREQUAL "")
+    message(FATAL_ERROR "unknown fixture rule attack")
+endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeacBuildReceipt.cmake")
+if(DEAC_FIXTURE_NATIVE_LANGUAGE_SHAPE MATCHES "^(CUDA|HIP)$")
+    _deac_build_receipt_reject_unsupported_languages(
+        CXX "${DEAC_FIXTURE_NATIVE_LANGUAGE_SHAPE}")
+elseif(NOT DEAC_FIXTURE_NATIVE_LANGUAGE_SHAPE STREQUAL "")
+    message(FATAL_ERROR "invalid native language shape")
+endif()
+set(DEAC_FIXTURE_CACHE_KEYS
+    CMAKE_AR
+    CMAKE_BUILD_TYPE
+    CMAKE_CONFIGURATION_TYPES
+    CMAKE_CXX_COMPILER
+    CMAKE_CXX_FLAGS
+    CMAKE_EXE_LINKER_FLAGS
+    CMAKE_GENERATOR
+    CMAKE_HOME_DIRECTORY
+    CMAKE_PREFIX_PATH
+    CMAKE_RANLIB
+    GPU_BACKEND)
 deac_target_add_build_receipt(receipt_probe
     SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.."
     GENERATED_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/receipt"
@@ -95,17 +180,19 @@ deac_target_add_build_receipt(receipt_probe
     RECEIPT
         "${CMAKE_CURRENT_BINARY_DIR}/receipt/$<CONFIG>/build-receipt.json"
     BACKEND "${GPU_BACKEND}"
-    CACHE_KEYS
-        CMAKE_BUILD_TYPE
-        CMAKE_CONFIGURATION_TYPES
-        CMAKE_CXX_COMPILER
-        CMAKE_CXX_FLAGS
-        CMAKE_EXE_LINKER_FLAGS
-        CMAKE_GENERATOR
-        CMAKE_HOME_DIRECTORY
-        CMAKE_PREFIX_PATH
-        GPU_BACKEND
+    CACHE_KEYS ${DEAC_FIXTURE_CACHE_KEYS}
     DEPENDENCY_TARGETS receipt_dependency)
+if(DEAC_FIXTURE_PARALLEL_CONSUMERS)
+    deac_target_add_build_receipt(receipt_probe_two
+        SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.."
+        GENERATED_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/receipt"
+        IDENTITY_NAME fixture
+        RECEIPT
+            "${CMAKE_CURRENT_BINARY_DIR}/receipt/$<CONFIG>/build-receipt-two.json"
+        BACKEND "${GPU_BACKEND}"
+        CACHE_KEYS ${DEAC_FIXTURE_CACHE_KEYS}
+        DEPENDENCY_TARGETS receipt_dependency_two)
+endif()
 """,
     )
 
@@ -115,6 +202,14 @@ def compiler_shim_contents(real_compiler, marker):
         "#!/bin/sh\n"
         f"# receipt fixture compiler marker: {marker}\n"
         f"exec {shlex.quote(str(real_compiler))} \"$@\"\n"
+    )
+
+
+def archive_shim_contents(real_archiver, marker):
+    return (
+        "#!/bin/sh\n"
+        f"# receipt fixture archiver marker: {marker}\n"
+        f"exec {shlex.quote(str(real_archiver))} \"$@\"\n"
     )
 
 
@@ -136,13 +231,13 @@ def configure(cmake, source, build, compiler, *extra, check=True):
     )
 
 
-def build(cmake, build_directory, *, config=None, check=True):
+def build(cmake, build_directory, *, config=None, parallel=1, check=True):
     command = [
         cmake,
         "--build",
         build_directory,
         "--parallel",
-        "1",
+        str(parallel),
         "--verbose",
     ]
     if config is not None:
@@ -162,15 +257,67 @@ def parse_receipt(path):
     expected = hashlib.sha256(payload.encode()).hexdigest()
     if document["receipt_sha256"] != expected:
         raise AssertionError("fixture receipt digest does not bind its payload")
+    expected_keys = [
+        "archive_tools",
+        "backend",
+        "build_system",
+        "cache_entries",
+        "compile_groups",
+        "link",
+        "source_identity",
+        "target",
+        "target_dependencies",
+        "toolchains",
+    ]
+    if list(document["receipt"]) != expected_keys:
+        raise AssertionError("fixture receipt payload keys are not canonical")
     return document
 
 
-def assert_static_dependency(document, fingerprint):
+def archive_tool(document, name):
+    tools = document["receipt"]["archive_tools"]
+    if [tool.get("name") for tool in tools] != ["CMAKE_AR", "CMAKE_RANLIB"]:
+        raise AssertionError(f"unexpected archive tools: {tools!r}")
+    tool = next(tool for tool in tools if tool["name"] == name)
+    if list(tool) != ["name", "path", "real_path", "sha256"]:
+        raise AssertionError(f"noncanonical archive tool: {tool!r}")
+    if len(tool["sha256"]) != 64 or any(
+        character not in "0123456789abcdef" for character in tool["sha256"]
+    ):
+        raise AssertionError(f"invalid archive tool digest: {tool!r}")
+    if not tool["real_path"].startswith("<"):
+        if (
+            not tool["path"].startswith("<")
+            and Path(tool["path"]).resolve() != Path(tool["real_path"])
+        ):
+            raise AssertionError(f"archive tool paths disagree: {tool!r}")
+        if sha256_file(tool["real_path"]) != tool["sha256"]:
+            raise AssertionError(f"archive tool digest disagrees: {tool!r}")
+    return tool
+
+
+def assert_no_git_source(document, version):
+    expected = {
+        "schema_version": 1,
+        "semantic_version": version,
+        "source_sha": None,
+        "source_state": "unavailable",
+    }
+    if document["receipt"]["source_identity"] != expected:
+        raise AssertionError(
+            "no-Git fixture acquired unexpected source identity: "
+            f"{document['receipt']['source_identity']!r}"
+        )
+
+
+def assert_static_dependency(
+    document, fingerprint, expected_name="receipt_dependency"
+):
     dependencies = document["receipt"]["target_dependencies"]
     if len(dependencies) != 1:
         raise AssertionError(f"unexpected fixture dependencies: {dependencies!r}")
     dependency = dependencies[0]
-    if dependency["name"] != "receipt_dependency":
+    if dependency["name"] != expected_name:
         raise AssertionError(f"unexpected fixture dependency: {dependency!r}")
     if dependency["type"] != "STATIC_LIBRARY":
         raise AssertionError(f"dependency is not a static library: {dependency!r}")
@@ -180,8 +327,11 @@ def assert_static_dependency(document, fingerprint):
         raise TypeError("static dependency archive fragments are malformed")
     groups = dependency["compile_groups"]
     sources = [source for group in groups for source in group["sources"]]
-    if not any(source.endswith("/dependency.cpp") for source in sources):
-        raise AssertionError("static dependency source is absent from the receipt")
+    expected_source = expected_name.removeprefix("receipt_") + ".cpp"
+    if not any(source.endswith("/" + expected_source) for source in sources):
+        raise AssertionError(
+            f"static dependency source {expected_source!r} is absent from the receipt"
+        )
     definition = f"DEAC_BUILD_TOOLCHAIN_FINGERPRINT_SHA256={fingerprint}"
     if any(group["definitions"].count(definition) != 1 for group in groups):
         raise AssertionError("static dependency does not bind the tool fingerprint")
@@ -202,6 +352,21 @@ def assert_build_actions(result, required):
         raise AssertionError(
             f"build output omitted required actions {missing!r}:\n{output}"
         )
+
+
+def receipt_fingerprint(document):
+    return document["receipt"]["target"]["toolchain_fingerprint_sha256"]
+
+
+def cache_value(document, name):
+    matches = [
+        entry["value"]
+        for entry in document["receipt"]["cache_entries"]
+        if entry["name"] == name
+    ]
+    if len(matches) != 1:
+        raise AssertionError(f"expected one {name} cache entry, got {matches!r}")
+    return matches[0]
 
 
 def test_single_config_refresh_and_replacement(
@@ -230,6 +395,9 @@ def test_single_config_refresh_and_replacement(
     first_fingerprint = first_receipt["receipt"]["target"][
         "toolchain_fingerprint_sha256"
     ]
+    archive_tool(first_receipt, "CMAKE_AR")
+    archive_tool(first_receipt, "CMAKE_RANLIB")
+    assert_no_git_source(first_receipt, "1.2.3")
     assert_static_dependency(first_receipt, first_fingerprint)
     executable = build_directory / "receipt_probe"
     assert_embedded_matches(executable, receipt_path)
@@ -250,6 +418,7 @@ def test_single_config_refresh_and_replacement(
         raise AssertionError("material receipt refresh did not change its digest")
     if changed_receipt["receipt"]["source_identity"]["semantic_version"] != "1.2.4":
         raise AssertionError("material receipt refresh retained the old version")
+    assert_no_git_source(changed_receipt, "1.2.4")
     assert_embedded_matches(executable, receipt_path)
 
     write(
@@ -284,7 +453,165 @@ def test_single_config_refresh_and_replacement(
     ]
     if replacement_fingerprint == first_fingerprint:
         raise AssertionError("compiler replacement did not change the fingerprint")
+    assert_no_git_source(replacement_receipt, "1.2.4")
     assert_static_dependency(replacement_receipt, replacement_fingerprint)
+    assert_embedded_matches(build_directory / "receipt_probe", receipt_path)
+
+
+def test_single_config_ninja(cmake, ninja, source, workdir, real_compiler):
+    build_directory = workdir / "ninja-single-build"
+    configure(
+        cmake,
+        source,
+        build_directory,
+        real_compiler,
+        "-G",
+        "Ninja",
+        f"-DCMAKE_MAKE_PROGRAM={ninja}",
+    )
+    required = [
+        "GenerateDeacBuildReceipt.cmake",
+        "fixture_receipt_probe_build_receipt.cpp.o",
+        "-o receipt_probe",
+    ]
+    first_build = build(cmake, build_directory)
+    assert_build_actions(first_build, required)
+    second_build = build(cmake, build_directory)
+    assert_build_actions(second_build, required)
+
+    receipt_path = build_directory / "receipt" / "Release" / "build-receipt.json"
+    document = parse_receipt(receipt_path)
+    generator = document["receipt"]["build_system"]["generator"]
+    if generator["name"] != "Ninja" or generator["multi_config"]:
+        raise AssertionError(f"unexpected single-config Ninja receipt: {generator!r}")
+    assert_no_git_source(document, "1.2.4")
+    assert_static_dependency(document, receipt_fingerprint(document))
+    assert_embedded_matches(build_directory / "receipt_probe", receipt_path)
+
+
+def test_material_flag_reconfiguration(cmake, source, workdir, real_compiler):
+    build_directory = workdir / "material-flag-build"
+    configure(cmake, source, build_directory, real_compiler)
+    build(cmake, build_directory)
+    receipt_path = build_directory / "receipt" / "Release" / "build-receipt.json"
+    first_receipt = parse_receipt(receipt_path)
+
+    flag = "-DDEAC_FIXTURE_MATERIAL_FLAG=17"
+    configure(
+        cmake,
+        source,
+        build_directory,
+        real_compiler,
+        f"-DCMAKE_CXX_FLAGS={flag}",
+    )
+    changed_build = build(cmake, build_directory)
+    assert_build_actions(
+        changed_build,
+        [
+            flag,
+            "dependency.cpp.o",
+            "probe.cpp.o",
+            "fixture_receipt_probe_build_receipt.cpp.o",
+            "Linking CXX static library libreceipt_dependency.a",
+            "Linking CXX executable receipt_probe",
+        ],
+    )
+    changed_receipt = parse_receipt(receipt_path)
+    if changed_receipt["receipt_sha256"] == first_receipt["receipt_sha256"]:
+        raise AssertionError("material flag reconfigure did not change the receipt")
+    if receipt_fingerprint(changed_receipt) != receipt_fingerprint(first_receipt):
+        raise AssertionError("material flags unexpectedly changed the tool fingerprint")
+    if cache_value(changed_receipt, "CMAKE_CXX_FLAGS") != flag:
+        raise AssertionError("material flag is absent from the receipt cache")
+    if flag not in json.dumps(changed_receipt, separators=(",", ":")):
+        raise AssertionError("material flag is absent from effective command data")
+    assert_no_git_source(changed_receipt, "1.2.4")
+    assert_embedded_matches(build_directory / "receipt_probe", receipt_path)
+
+
+def test_archive_tool_reconfiguration(
+    cmake, source, workdir, real_compiler, real_archiver
+):
+    build_directory = workdir / "archive-tool-build"
+    tool_directory = workdir / "archive-tools"
+    ar_one = tool_directory / "ar-one"
+    ar_two = tool_directory / "ar-two"
+    write(
+        ar_one,
+        archive_shim_contents(real_archiver, "one"),
+        executable=True,
+    )
+    write(
+        ar_two,
+        archive_shim_contents(real_archiver, "two"),
+        executable=True,
+    )
+
+    configure(
+        cmake,
+        source,
+        build_directory,
+        real_compiler,
+        f"-DDEAC_FIXTURE_ARCHIVER={ar_one}",
+    )
+    first_build = build(cmake, build_directory)
+    assert_build_actions(
+        first_build,
+        [str(ar_one), "Linking CXX static library libreceipt_dependency.a"],
+    )
+    receipt_path = build_directory / "receipt" / "Release" / "build-receipt.json"
+    first_receipt = parse_receipt(receipt_path)
+    first_ar = archive_tool(first_receipt, "CMAKE_AR")
+    if first_ar["path"] != str(ar_one):
+        raise AssertionError(f"receipt recorded the wrong first archiver: {first_ar!r}")
+    if cache_value(first_receipt, "CMAKE_AR") != str(ar_one):
+        raise AssertionError("receipt cache omitted the first effective archiver")
+    assert_embedded_matches(build_directory / "receipt_probe", receipt_path)
+
+    write(
+        ar_one,
+        archive_shim_contents(real_archiver, "tampered"),
+        executable=True,
+    )
+    rejected = build(cmake, build_directory, check=False)
+    if rejected.returncode == 0:
+        raise AssertionError("persistent CMAKE_AR replacement was accepted")
+    rejected_output = rejected.stdout + rejected.stderr
+    if "CMAKE_AR executable changed after configuration" not in rejected_output:
+        raise AssertionError(
+            "CMAKE_AR replacement failed for an unexpected reason:\n"
+            + rejected_output
+        )
+
+    configure(
+        cmake,
+        source,
+        build_directory,
+        real_compiler,
+        f"-DDEAC_FIXTURE_ARCHIVER={ar_two}",
+    )
+    second_build = build(cmake, build_directory)
+    assert_build_actions(
+        second_build,
+        [
+            str(ar_two),
+            "dependency.cpp.o",
+            "Linking CXX static library libreceipt_dependency.a",
+            "Linking CXX executable receipt_probe",
+        ],
+    )
+    second_receipt = parse_receipt(receipt_path)
+    second_ar = archive_tool(second_receipt, "CMAKE_AR")
+    if second_ar["path"] != str(ar_two) or second_ar["sha256"] != sha256_file(ar_two):
+        raise AssertionError(f"receipt recorded the wrong second archiver: {second_ar!r}")
+    if cache_value(second_receipt, "CMAKE_AR") != str(ar_two):
+        raise AssertionError("receipt cache omitted the second effective archiver")
+    if receipt_fingerprint(second_receipt) == receipt_fingerprint(first_receipt):
+        raise AssertionError("archiver reconfigure did not invalidate the fingerprint")
+    if second_receipt["receipt_sha256"] == first_receipt["receipt_sha256"]:
+        raise AssertionError("archiver reconfigure did not change the receipt identity")
+    assert_static_dependency(second_receipt, receipt_fingerprint(second_receipt))
+    assert_no_git_source(second_receipt, "1.2.4")
     assert_embedded_matches(build_directory / "receipt_probe", receipt_path)
 
 
@@ -390,12 +717,67 @@ def test_ninja_multi_config(cmake, ninja, source, workdir, compiler_shim):
                 "path-list cache value was not normalized elementwise: "
                 f"{entries.get('CMAKE_PREFIX_PATH')!r}"
             )
+        assert_no_git_source(document, "1.2.4")
+        assert_static_dependency(document, receipt_fingerprint(document))
     assert_embedded_matches(
         build_directory / "Release" / "receipt_probe", release_receipt
     )
     assert_embedded_matches(
         build_directory / "Debug" / "receipt_probe", debug_receipt
     )
+
+
+def test_parallel_receipt_consumers(
+    cmake, ninja, solver_source, workdir, real_compiler
+):
+    source = workdir / "parallel-source"
+    create_fixture_source(solver_source, source)
+    build_directory = workdir / "parallel-build"
+    configure(
+        cmake,
+        source,
+        build_directory,
+        real_compiler,
+        "-G",
+        "Ninja",
+        f"-DCMAKE_MAKE_PROGRAM={ninja}",
+        "-DDEAC_FIXTURE_PARALLEL_CONSUMERS=ON",
+    )
+    result = build(cmake, build_directory, parallel=4)
+    assert_build_actions(
+        result,
+        [
+            "fixture_receipt_probe_build_receipt.cpp.o",
+            "fixture_receipt_probe_two_build_receipt.cpp.o",
+            "-o receipt_probe ",
+            "-o receipt_probe_two",
+        ],
+    )
+
+    receipt_root = build_directory / "receipt" / "Release"
+    checks = [
+        (
+            "receipt_probe",
+            "receipt_dependency",
+            receipt_root / "build-receipt.json",
+        ),
+        (
+            "receipt_probe_two",
+            "receipt_dependency_two",
+            receipt_root / "build-receipt-two.json",
+        ),
+    ]
+    for executable_name, dependency_name, receipt_path in checks:
+        document = parse_receipt(receipt_path)
+        if document["receipt"]["target"]["name"] != executable_name:
+            raise AssertionError(f"parallel receipt names the wrong target: {document!r}")
+        assert_no_git_source(document, "1.2.3")
+        assert_static_dependency(
+            document,
+            receipt_fingerprint(document),
+            expected_name=dependency_name,
+        )
+        assert_embedded_matches(build_directory / executable_name, receipt_path)
 
 
 def assert_configure_rejected(cmake, source, build_directory, compiler, arguments, text):
@@ -416,7 +798,9 @@ def assert_configure_rejected(cmake, source, build_directory, compiler, argument
         )
 
 
-def test_rule_override_rejections(cmake, source, workdir, real_compiler):
+def test_rule_override_rejections(
+    cmake, ninja, source, workdir, real_compiler
+):
     compile_rule = (
         "/usr/bin/env <CMAKE_CXX_COMPILER> <DEFINES> <INCLUDES> <FLAGS> "
         "-o <OBJECT> -c <SOURCE>"
@@ -459,6 +843,80 @@ def test_rule_override_rejections(cmake, source, workdir, real_compiler):
             expected,
         )
 
+    project_rule_attacks = [
+        ("compile-and", "CMAKE_CXX_COMPILE_OBJECT"),
+        ("link-or", "CMAKE_CXX_LINK_EXECUTABLE"),
+        ("archive-pipe", "CMAKE_CXX_ARCHIVE_CREATE"),
+    ]
+    for attack, expected in project_rule_attacks:
+        assert_configure_rejected(
+            cmake,
+            source,
+            workdir / f"rejected-project-rule-{attack}",
+            real_compiler,
+            [f"-DDEAC_FIXTURE_RULE_ATTACK={attack}"],
+            expected,
+        )
+
+    # A literal operator inside a quoted argument remains one represented
+    # command and must not be confused with an active shell pipeline.
+    configure(
+        cmake,
+        source,
+        workdir / "accepted-quoted-pipe",
+        real_compiler,
+        "-DDEAC_FIXTURE_RULE_ATTACK=quoted-pipe",
+    )
+
+    assert_configure_rejected(
+        cmake,
+        source,
+        workdir / "rejected-generic-ipo",
+        real_compiler,
+        ["-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON"],
+        "INTERPROCEDURAL_OPTIMIZATION",
+    )
+    assert_configure_rejected(
+        cmake,
+        source,
+        workdir / "rejected-release-ipo",
+        real_compiler,
+        ["-DCMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE=ON"],
+        "INTERPROCEDURAL_OPTIMIZATION_RELEASE",
+    )
+    assert_configure_rejected(
+        cmake,
+        source,
+        workdir / "rejected-dependency-release-ipo",
+        real_compiler,
+        ["-DDEAC_FIXTURE_DEPENDENCY_IPO_RELEASE=ON"],
+        "INTERPROCEDURAL_OPTIMIZATION_RELEASE",
+    )
+    assert_configure_rejected(
+        cmake,
+        source,
+        workdir / "rejected-multi-release-ipo",
+        real_compiler,
+        [
+            "-G",
+            "Ninja Multi-Config",
+            f"-DCMAKE_MAKE_PROGRAM={ninja}",
+            "-DCMAKE_CONFIGURATION_TYPES=Debug;Release;RelWithDebInfo",
+            "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE=ON",
+        ],
+        "INTERPROCEDURAL_OPTIMIZATION_RELEASE",
+    )
+
+    for language in ("CUDA", "HIP"):
+        assert_configure_rejected(
+            cmake,
+            source,
+            workdir / f"rejected-native-{language.lower()}",
+            real_compiler,
+            [f"-DDEAC_FIXTURE_NATIVE_LANGUAGE_SHAPE={language}"],
+            f"native CMake {language} language",
+        )
+
     override = workdir / "user-rules.cmake"
     write(override, "# intentionally empty override route\n")
     assert_configure_rejected(
@@ -495,6 +953,7 @@ def main():
     parser.add_argument("--ninja", required=True)
     parser.add_argument("--solver-source-root", required=True)
     parser.add_argument("--cxx-compiler", required=True)
+    parser.add_argument("--archiver", required=True)
     parser.add_argument("--workdir", required=True)
     args = parser.parse_args()
 
@@ -505,17 +964,31 @@ def main():
     source = workdir / "fixture-source"
     solver_source = Path(args.solver_source_root).resolve()
     real_compiler = Path(args.cxx_compiler).resolve()
+    real_archiver = Path(args.archiver).resolve()
+    ninja = Path(args.ninja).resolve()
     compiler_shim = workdir / "compiler-shim"
     create_fixture_source(solver_source, source)
 
     test_single_config_refresh_and_replacement(
         args.cmake, source, workdir, compiler_shim, real_compiler
     )
+    test_single_config_ninja(
+        args.cmake, ninja, source, workdir, real_compiler
+    )
+    test_material_flag_reconfiguration(
+        args.cmake, source, workdir, real_compiler
+    )
+    test_archive_tool_reconfiguration(
+        args.cmake, source, workdir, real_compiler, real_archiver
+    )
     test_ninja_multi_config(
-        args.cmake, Path(args.ninja).resolve(), source, workdir, compiler_shim
+        args.cmake, ninja, source, workdir, compiler_shim
+    )
+    test_parallel_receipt_consumers(
+        args.cmake, ninja, solver_source, workdir, real_compiler
     )
     test_rule_override_rejections(
-        args.cmake, source, workdir, real_compiler
+        args.cmake, ninja, source, workdir, real_compiler
     )
 
 

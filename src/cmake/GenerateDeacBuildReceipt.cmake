@@ -10,12 +10,14 @@ foreach(_required_variable
         DEAC_BUILD_RECEIPT_BACKEND
         DEAC_BUILD_RECEIPT_CACHE_KEYS
         DEAC_BUILD_RECEIPT_LANGUAGES
+        DEAC_BUILD_RECEIPT_ARCHIVE_TOOLS
         DEAC_BUILD_RECEIPT_TOOLCHAIN_FINGERPRINT
         DEAC_BUILD_RECEIPT_CMAKE_PATH
         DEAC_BUILD_RECEIPT_CMAKE_REAL_PATH
         DEAC_BUILD_RECEIPT_CMAKE_SHA256
         DEAC_BUILD_RECEIPT_OUTPUT_SOURCE
-        DEAC_BUILD_RECEIPT_OUTPUT_RECEIPT)
+        DEAC_BUILD_RECEIPT_OUTPUT_RECEIPT
+        DEAC_BUILD_RECEIPT_PREVIOUS_COMPILE_MARKER)
     if(NOT DEFINED ${_required_variable} OR
             "${${_required_variable}}" STREQUAL "")
         message(FATAL_ERROR "${_required_variable} is required")
@@ -215,6 +217,50 @@ function(_deac_receipt_normalize_path output value)
         endif()
     endforeach()
     set(${output} "${_path}" PARENT_SCOPE)
+endfunction()
+
+function(_deac_receipt_configured_tool_json output tool)
+    if(NOT tool MATCHES "^CMAKE_[A-Z0-9_]+$")
+        message(FATAL_ERROR "invalid build-receipt archive tool: ${tool}")
+    endif()
+    set(_path_variable
+        "DEAC_BUILD_RECEIPT_CONFIGURED_${tool}_PATH")
+    set(_real_path_variable
+        "DEAC_BUILD_RECEIPT_CONFIGURED_${tool}_REAL_PATH")
+    set(_sha256_variable
+        "DEAC_BUILD_RECEIPT_CONFIGURED_${tool}_SHA256")
+    foreach(_variable
+            ${_path_variable} ${_real_path_variable} ${_sha256_variable})
+        if(NOT DEFINED ${_variable} OR "${${_variable}}" STREQUAL "")
+            message(FATAL_ERROR "build-receipt missing ${_variable}")
+        endif()
+    endforeach()
+
+    get_filename_component(_real_path "${${_path_variable}}" REALPATH)
+    if(NOT EXISTS "${_real_path}" OR IS_DIRECTORY "${_real_path}")
+        message(FATAL_ERROR
+            "build-receipt ${tool} is no longer a regular file")
+    endif()
+    file(SHA256 "${_real_path}" _sha256)
+    if(NOT _real_path STREQUAL "${${_real_path_variable}}" OR
+            NOT _sha256 STREQUAL "${${_sha256_variable}}")
+        message(FATAL_ERROR
+            "build-receipt ${tool} executable changed after configuration; "
+            "rerun CMake before building")
+    endif()
+
+    _deac_receipt_normalize_path(_path_json_value "${${_path_variable}}")
+    _deac_receipt_normalize_path(_real_path_json_value "${_real_path}")
+    _deac_receipt_json_quote(_name_json "${tool}")
+    _deac_receipt_json_quote(_path_json "${_path_json_value}")
+    _deac_receipt_json_quote(_real_path_json "${_real_path_json_value}")
+    _deac_receipt_json_quote(_sha256_json "${_sha256}")
+    string(CONCAT _tool_json
+        "{\"name\":" "${_name_json}" ","
+        "\"path\":" "${_path_json}" ","
+        "\"real_path\":" "${_real_path_json}" ","
+        "\"sha256\":" "${_sha256_json}" "}")
+    set(${output} "${_tool_json}" PARENT_SCOPE)
 endfunction()
 
 function(_deac_receipt_normalize_path_list output value)
@@ -1032,6 +1078,26 @@ foreach(_language IN LISTS _used_languages)
 endforeach()
 string(APPEND _toolchains_json "]")
 
+string(REPLACE "," ";" _archive_tools
+    "${DEAC_BUILD_RECEIPT_ARCHIVE_TOOLS}")
+set(_archive_tools_sorted ${_archive_tools})
+list(REMOVE_DUPLICATES _archive_tools_sorted)
+list(SORT _archive_tools_sorted)
+if(NOT "${_archive_tools}" STREQUAL "${_archive_tools_sorted}")
+    message(FATAL_ERROR
+        "build-receipt archive tools must be unique and sorted")
+endif()
+set(_archive_tools_json "[")
+set(_archive_tool_separator "")
+foreach(_archive_tool IN LISTS _archive_tools)
+    _deac_receipt_configured_tool_json(
+        _archive_tool_json "${_archive_tool}")
+    string(APPEND _archive_tools_json
+        "${_archive_tool_separator}${_archive_tool_json}")
+    set(_archive_tool_separator ",")
+endforeach()
+string(APPEND _archive_tools_json "]")
+
 get_filename_component(_cmake_real "${DEAC_BUILD_RECEIPT_CMAKE_PATH}" REALPATH)
 if(NOT EXISTS "${_cmake_real}" OR IS_DIRECTORY "${_cmake_real}")
     message(FATAL_ERROR "build-receipt CMake executable is unavailable")
@@ -1091,7 +1157,8 @@ _deac_receipt_json_quote(
     _toolchain_fingerprint_json
     "${DEAC_BUILD_RECEIPT_TOOLCHAIN_FINGERPRINT}")
 string(CONCAT _payload
-    "{\"backend\":" "${_backend_json}" ","
+    "{\"archive_tools\":" "${_archive_tools_json}" ","
+    "\"backend\":" "${_backend_json}" ","
     "\"build_system\":" "${_build_system_json}" ","
     "\"cache_entries\":" "${_cache_json}" ","
     "\"compile_groups\":" "${_compile_groups_json}" ","
@@ -1127,4 +1194,35 @@ configure_file(
     "${CMAKE_CURRENT_LIST_DIR}/deac_build_receipt_data.cpp.in"
     "${DEAC_BUILD_RECEIPT_OUTPUT_SOURCE}"
     @ONLY)
+# Ninja's custom-command `restat` suppresses dependent compile and link edges
+# when canonical receipt bytes are unchanged.  Refresh the generated source's
+# timestamp explicitly so an ordinary selected-config Ninja build still
+# recompiles and relinks the authoritative embedded receipt.  On a coarse
+# filesystem, wait until the clock is newer than the marker written after the
+# previous receipt-object compilation.  The separate symbolic dependency
+# protects Makefile generators without this wait.
+if(_generator_name MATCHES "^Ninja" AND
+        EXISTS "${DEAC_BUILD_RECEIPT_PREVIOUS_COMPILE_MARKER}")
+    file(TIMESTAMP
+        "${DEAC_BUILD_RECEIPT_PREVIOUS_COMPILE_MARKER}"
+        _previous_compile_epoch "%s" UTC)
+    string(TIMESTAMP _current_epoch "%s" UTC)
+    set(_clock_wait_attempts 0)
+    while(_current_epoch LESS_EQUAL _previous_compile_epoch)
+        if(_clock_wait_attempts GREATER_EQUAL 5)
+            message(FATAL_ERROR
+                "build-receipt clock did not advance beyond the previous compile")
+        endif()
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}" -E sleep 1
+            RESULT_VARIABLE _sleep_result)
+        if(NOT _sleep_result EQUAL 0)
+            message(FATAL_ERROR
+                "build-receipt could not wait for timestamp advancement")
+        endif()
+        math(EXPR _clock_wait_attempts "${_clock_wait_attempts} + 1")
+        string(TIMESTAMP _current_epoch "%s" UTC)
+    endwhile()
+endif()
+file(TOUCH "${DEAC_BUILD_RECEIPT_OUTPUT_SOURCE}")
 file(WRITE "${DEAC_BUILD_RECEIPT_OUTPUT_RECEIPT}" "${_canonical_json}\n")

@@ -7,6 +7,7 @@ from pathlib import Path
 
 TOP_LEVEL_KEYS = ["schema_version", "receipt_sha256", "receipt"]
 RECEIPT_KEYS = [
+    "archive_tools",
     "backend",
     "build_system",
     "cache_entries",
@@ -149,6 +150,31 @@ def validate_receipt(
     expected_dependency_target,
 ):
     receipt = document["receipt"]
+    archive_tools = receipt["archive_tools"]
+    if not isinstance(archive_tools, list):
+        raise TypeError("archive tools must be a list")
+    archive_tool_names = []
+    for tool in archive_tools:
+        if list(tool) != ["name", "path", "real_path", "sha256"]:
+            raise AssertionError(f"noncanonical archive tool: {tool!r}")
+        for key in ("name", "path", "real_path", "sha256"):
+            assert_string(tool[key], f"archive tool {key}")
+        archive_tool_names.append(tool["name"])
+        if not is_sha256(tool["sha256"]):
+            raise AssertionError("archive tool digest is not lowercase SHA-256")
+        if not tool["real_path"].startswith("<"):
+            if (
+                not tool["path"].startswith("<")
+                and Path(tool["path"]).resolve() != Path(tool["real_path"])
+            ):
+                raise AssertionError("archive tool path and real path disagree")
+            if sha256_file(tool["real_path"]) != tool["sha256"]:
+                raise AssertionError("archive tool digest disagrees with current bytes")
+    if archive_tool_names != ["CMAKE_AR", "CMAKE_RANLIB"]:
+        raise AssertionError(
+            f"unexpected archive tool identities: {archive_tool_names!r}"
+        )
+
     if receipt["backend"] != expected_backend:
         raise AssertionError(
             f"receipt backend {receipt['backend']!r} != {expected_backend!r}"
