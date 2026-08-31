@@ -12,7 +12,7 @@ function(_deac_build_receipt_require_plain value label)
 endfunction()
 
 function(_deac_build_receipt_require_single_command value label)
-    if("${value}" MATCHES "[;\r\n]")
+    if("${value}" MATCHES "[\r\n]")
         message(FATAL_ERROR
             "build-receipt ${label} contains shell control syntax")
     endif()
@@ -33,7 +33,40 @@ function(_deac_build_receipt_require_single_command value label)
             string(SUBSTRING "${value}" ${_next_index} 1 _next_character)
         endif()
 
-        if(_escaped)
+        set(_handled_cmake_semicolon false)
+        if(_quote STREQUAL "" AND _character STREQUAL "\\")
+            # A backslash protecting CMake's list-valued semicolon is consumed
+            # before the generated recipe reaches the shell.  Therefore the
+            # rule template needs an even, nonzero run here so the emitted
+            # command retains an odd (shell-escaping) run.
+            set(_scan_index ${_index})
+            set(_backslash_count 0)
+            set(_scan_character "\\")
+            while(_scan_index LESS _length AND
+                    _scan_character STREQUAL "\\")
+                math(EXPR _backslash_count "${_backslash_count} + 1")
+                math(EXPR _scan_index "${_scan_index} + 1")
+                set(_scan_character "")
+                if(_scan_index LESS _length)
+                    string(SUBSTRING
+                        "${value}" ${_scan_index} 1 _scan_character)
+                endif()
+            endwhile()
+            if(_scan_character STREQUAL ";")
+                math(EXPR _backslash_remainder
+                    "${_backslash_count} % 2")
+                if(_backslash_remainder EQUAL 1)
+                    message(FATAL_ERROR
+                        "build-receipt ${label} contains shell control syntax")
+                endif()
+                set(_index ${_scan_index})
+                set(_handled_cmake_semicolon true)
+            endif()
+        endif()
+
+        if(_handled_cmake_semicolon)
+            # The scan already consumed the safe escaped semicolon.
+        elseif(_escaped)
             set(_escaped false)
         elseif(_quote STREQUAL "'")
             if(_character STREQUAL "'")
@@ -54,7 +87,7 @@ function(_deac_build_receipt_require_single_command value label)
             set(_escaped true)
         elseif(_character STREQUAL "'" OR _character STREQUAL "\"")
             set(_quote "${_character}")
-        elseif(_character MATCHES "[|&`]" OR
+        elseif(_character MATCHES "[;|&`]" OR
                 (_character STREQUAL "$" AND
                  _next_character STREQUAL "("))
             message(FATAL_ERROR
@@ -119,6 +152,11 @@ function(_deac_build_receipt_reject_unsupported_languages)
                 "device-link rules are represented and compiler-gated")
         endif()
     endforeach()
+endfunction()
+
+function(_deac_build_receipt_query_enabled_languages output)
+    get_property(_enabled_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+    set(${output} "${_enabled_languages}" PARENT_SCOPE)
 endfunction()
 
 function(_deac_build_receipt_snapshot_tool
@@ -537,7 +575,7 @@ function(deac_target_add_build_receipt target_name)
         _deac_build_receipt_reject_launchers("${_validated_target}")
     endforeach()
 
-    get_property(_enabled_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+    _deac_build_receipt_query_enabled_languages(_enabled_languages)
     _deac_build_receipt_reject_unsupported_languages(${_enabled_languages})
     set(_receipt_languages)
     set(_tool_arguments)

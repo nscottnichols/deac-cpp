@@ -149,15 +149,32 @@ elseif(DEAC_FIXTURE_RULE_ATTACK STREQUAL "archive-pipe")
     string(APPEND CMAKE_CXX_ARCHIVE_CREATE
         " | \\\"${CMAKE_COMMAND}\\\" -E true")
 elseif(DEAC_FIXTURE_RULE_ATTACK STREQUAL "quoted-pipe")
-    string(APPEND CMAKE_CXX_COMPILE_OBJECT " \\\"literal|argument\\\"")
+    string(APPEND CMAKE_CXX_COMPILE_OBJECT
+        " \\\"-DDEAC_RULE_LITERAL=literal|argument\\\"")
+elseif(DEAC_FIXTURE_RULE_ATTACK STREQUAL "compile-semicolon")
+    string(APPEND CMAKE_CXX_COMPILE_OBJECT " ; deac_receipt_attack")
+elseif(DEAC_FIXTURE_RULE_ATTACK STREQUAL "quoted-semicolon")
+    string(APPEND CMAKE_CXX_COMPILE_OBJECT
+        " \\\"-DDEAC_RULE_LITERAL=literal\\\\;argument\\\"")
+elseif(DEAC_FIXTURE_RULE_ATTACK STREQUAL "escaped-semicolon")
+    string(APPEND CMAKE_CXX_COMPILE_OBJECT
+        " -DDEAC_RULE_LITERAL=literal\\\\\\\\;argument")
+elseif(DEAC_FIXTURE_RULE_ATTACK STREQUAL "compile-dollar-paren")
+    string(APPEND CMAKE_CXX_COMPILE_OBJECT " $(deac_receipt_attack)")
+elseif(DEAC_FIXTURE_RULE_ATTACK STREQUAL "compile-backtick")
+    string(APPEND CMAKE_CXX_COMPILE_OBJECT " `deac_receipt_attack`")
 elseif(NOT DEAC_FIXTURE_RULE_ATTACK STREQUAL "")
     message(FATAL_ERROR "unknown fixture rule attack")
 endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeacBuildReceipt.cmake")
 if(DEAC_FIXTURE_NATIVE_LANGUAGE_SHAPE MATCHES "^(CUDA|HIP)$")
-    _deac_build_receipt_reject_unsupported_languages(
-        CXX "${DEAC_FIXTURE_NATIVE_LANGUAGE_SHAPE}")
+    # Native toolchains are unavailable in this fixture environment.  Shape
+    # the internal query, then exercise the normal target integration below.
+    function(_deac_build_receipt_query_enabled_languages output)
+        set(${output}
+            "CXX;${DEAC_FIXTURE_NATIVE_LANGUAGE_SHAPE}" PARENT_SCOPE)
+    endfunction()
 elseif(NOT DEAC_FIXTURE_NATIVE_LANGUAGE_SHAPE STREQUAL "")
     message(FATAL_ERROR "invalid native language shape")
 endif()
@@ -205,10 +222,11 @@ def compiler_shim_contents(real_compiler, marker):
     )
 
 
-def archive_shim_contents(real_archiver, marker):
+def archive_shim_contents(real_archiver, marker, invocation_log):
     return (
         "#!/bin/sh\n"
         f"# receipt fixture archiver marker: {marker}\n"
+        f"printf '%s\\n' \"$*\" >> {shlex.quote(str(invocation_log))}\n"
         f"exec {shlex.quote(str(real_archiver))} \"$@\"\n"
     )
 
@@ -523,7 +541,12 @@ def test_material_flag_reconfiguration(cmake, source, workdir, real_compiler):
         raise AssertionError("material flags unexpectedly changed the tool fingerprint")
     if cache_value(changed_receipt, "CMAKE_CXX_FLAGS") != flag:
         raise AssertionError("material flag is absent from the receipt cache")
-    if flag not in json.dumps(changed_receipt, separators=(",", ":")):
+    effective_compile_fragments = [
+        fragment["fragment"]
+        for group in changed_receipt["receipt"]["compile_groups"]
+        for fragment in group["command_fragments"]
+    ]
+    if not any(flag in fragment for fragment in effective_compile_fragments):
         raise AssertionError("material flag is absent from effective command data")
     assert_no_git_source(changed_receipt, "1.2.4")
     assert_embedded_matches(build_directory / "receipt_probe", receipt_path)
@@ -536,14 +559,16 @@ def test_archive_tool_reconfiguration(
     tool_directory = workdir / "archive-tools"
     ar_one = tool_directory / "ar-one"
     ar_two = tool_directory / "ar-two"
+    ar_one_log = tool_directory / "ar-one.invocations"
+    ar_two_log = tool_directory / "ar-two.invocations"
     write(
         ar_one,
-        archive_shim_contents(real_archiver, "one"),
+        archive_shim_contents(real_archiver, "one", ar_one_log),
         executable=True,
     )
     write(
         ar_two,
-        archive_shim_contents(real_archiver, "two"),
+        archive_shim_contents(real_archiver, "two", ar_two_log),
         executable=True,
     )
 
@@ -557,8 +582,18 @@ def test_archive_tool_reconfiguration(
     first_build = build(cmake, build_directory)
     assert_build_actions(
         first_build,
-        [str(ar_one), "Linking CXX static library libreceipt_dependency.a"],
+        [
+            f"{ar_one} qc libreceipt_dependency.a",
+            "Linking CXX static library libreceipt_dependency.a",
+        ],
     )
+    if not ar_one_log.is_file() or not any(
+        invocation.startswith("qc libreceipt_dependency.a ")
+        for invocation in ar_one_log.read_text(encoding="utf-8").splitlines()
+    ):
+        raise AssertionError("ar-one did not create the fixture static archive")
+    if ar_two_log.exists():
+        raise AssertionError("ar-two ran before the archiver reconfiguration")
     receipt_path = build_directory / "receipt" / "Release" / "build-receipt.json"
     first_receipt = parse_receipt(receipt_path)
     first_ar = archive_tool(first_receipt, "CMAKE_AR")
@@ -570,7 +605,7 @@ def test_archive_tool_reconfiguration(
 
     write(
         ar_one,
-        archive_shim_contents(real_archiver, "tampered"),
+        archive_shim_contents(real_archiver, "tampered", ar_one_log),
         executable=True,
     )
     rejected = build(cmake, build_directory, check=False)
@@ -594,12 +629,17 @@ def test_archive_tool_reconfiguration(
     assert_build_actions(
         second_build,
         [
-            str(ar_two),
+            f"{ar_two} qc libreceipt_dependency.a",
             "dependency.cpp.o",
             "Linking CXX static library libreceipt_dependency.a",
             "Linking CXX executable receipt_probe",
         ],
     )
+    if not ar_two_log.is_file() or not any(
+        invocation.startswith("qc libreceipt_dependency.a ")
+        for invocation in ar_two_log.read_text(encoding="utf-8").splitlines()
+    ):
+        raise AssertionError("ar-two did not recreate the fixture static archive")
     second_receipt = parse_receipt(receipt_path)
     second_ar = archive_tool(second_receipt, "CMAKE_AR")
     if second_ar["path"] != str(ar_two) or second_ar["sha256"] != sha256_file(ar_two):
@@ -847,6 +887,9 @@ def test_rule_override_rejections(
         ("compile-and", "CMAKE_CXX_COMPILE_OBJECT"),
         ("link-or", "CMAKE_CXX_LINK_EXECUTABLE"),
         ("archive-pipe", "CMAKE_CXX_ARCHIVE_CREATE"),
+        ("compile-semicolon", "CMAKE_CXX_COMPILE_OBJECT"),
+        ("compile-dollar-paren", "CMAKE_CXX_COMPILE_OBJECT"),
+        ("compile-backtick", "CMAKE_CXX_COMPILE_OBJECT"),
     ]
     for attack, expected in project_rule_attacks:
         assert_configure_rejected(
@@ -858,15 +901,18 @@ def test_rule_override_rejections(
             expected,
         )
 
-    # A literal operator inside a quoted argument remains one represented
-    # command and must not be confused with an active shell pipeline.
-    configure(
-        cmake,
-        source,
-        workdir / "accepted-quoted-pipe",
-        real_compiler,
-        "-DDEAC_FIXTURE_RULE_ATTACK=quoted-pipe",
-    )
+    # A literal operator inside a quoted or escaped argument remains one
+    # represented command and must not be confused with active shell control.
+    for accepted in ("quoted-pipe", "quoted-semicolon", "escaped-semicolon"):
+        accepted_build = workdir / f"accepted-{accepted}"
+        configure(
+            cmake,
+            source,
+            accepted_build,
+            real_compiler,
+            f"-DDEAC_FIXTURE_RULE_ATTACK={accepted}",
+        )
+        build(cmake, accepted_build)
 
     assert_configure_rejected(
         cmake,
