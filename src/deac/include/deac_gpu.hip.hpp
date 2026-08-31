@@ -327,7 +327,11 @@ __global__ void gpu_deac_gemv_simple(int m, int n, double alpha, double* __restr
         for (int j = 0; j < n; j++) {
             sum += A[row + j*lda] * x[j*incx];
         }
-        y[row*incy] = alpha * sum + beta * y[row*incy];
+        if (beta == 0.0) {
+            y[row*incy] = alpha * sum;
+        } else {
+            y[row*incy] = alpha * sum + beta * y[row*incy];
+        }
     }
 }
 
@@ -347,38 +351,6 @@ __global__ void gpu_deac_gemv_atomic(int m, int n, double alpha, double* __restr
         }
     }
 }
-
-__global__ void gpu_deac_gemv(int m, int n, double alpha, double* __restrict__ A, int lda, double* __restrict__ x, int incx, double beta, double* __restrict__ y, int incy) {
-    __shared__ double As[TILE_WIDTH][TILE_WIDTH];
-    int tx = hipThreadIdx_x;
-    int by = hipBlockIdx_y, ty = hipThreadIdx_y;
-    int row = by * hipBlockDim_y + ty;
-
-    double sum = 0.0;
-    if (row < m) {
-        for (int i = 0; i < (n + TILE_WIDTH - 1) / TILE_WIDTH; ++i) {
-            if (i*TILE_WIDTH + tx < n && row < m) {
-                As[ty][tx] = A[row + (i*TILE_WIDTH + tx) * lda];
-            } else {
-                As[ty][tx] = 0.0;
-            }
-            __syncthreads();
-
-            for (int k = 0; k < TILE_WIDTH; ++k) {
-                if (i*TILE_WIDTH + k < n) {
-                    sum += As[ty][k] * x[(i*TILE_WIDTH + k)*incx];
-                }
-            }
-            __syncthreads();
-        }
-        if (beta == 0.0) {
-            y[row * incy] = alpha * sum;
-        } else {
-            y[row * incy] = alpha * sum + beta * y[row * incy];
-        }
-    }
-}
-
 
 __global__
 void gpu_get_minimum(double* __restrict__ minimum, double* __restrict__ array, size_t N) {
@@ -684,9 +656,12 @@ void gpu_matmul(hipStream_t s, int m, int n, int k, double alpha, double* __rest
 }
 
 void gpu_deac_gemv(hipStream_t s, int m, int n, double alpha, double* __restrict__ A, double* __restrict__ x, double beta, double* __restrict__ y) {
-    //hipLaunchKernelGGL(gpu_deac_gemv_simple, dim3((m + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE), dim3(GPU_BLOCK_SIZE), 0, s, m, n, alpha, A, m, x, 1, beta, y, 1);
-    //hipLaunchKernelGGL(gpu_deac_gemv_atomic, dim3((n + TILE_WIDTH - 1) / TILE_WIDTH), dim3(TILE_WIDTH), 0, s, m, n, alpha, A, m, x, 1, beta, y, 1);
-    hipLaunchKernelGGL(gpu_deac_gemv, dim3((n + TILE_WIDTH - 1) / TILE_WIDTH, (n + TILE_WIDTH - 1) / TILE_WIDTH), dim3(TILE_WIDTH, TILE_WIDTH), 0, s, m, n, alpha, A, m, x, 1, beta, y, 1);
+    // One thread owns each output row.  The former tiled kernel placed block
+    // barriers inside `row < m`, so a partial final row tile could deadlock.
+    // Its unused x grid dimension also raced multiple blocks on each output.
+    hipLaunchKernelGGL(gpu_deac_gemv_simple,
+            dim3((m + GPU_BLOCK_SIZE - 1) / GPU_BLOCK_SIZE), dim3(GPU_BLOCK_SIZE),
+            0, s, m, n, alpha, A, m, x, 1, beta, y, 1);
 }
 
 
