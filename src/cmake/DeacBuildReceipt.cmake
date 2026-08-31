@@ -511,6 +511,25 @@ function(deac_target_add_build_receipt target_name)
     set(_rebuild
         "${_configuration_directory}/${_receipt_identifier}.rebuild")
 
+    # Source properties are keyed by the literal path passed to CMake.  A
+    # property attached to the $<CONFIG>-spelled source is therefore not
+    # applied to the concrete source path emitted by Makefile generators.
+    # Register each configured source explicitly, while exposing only the
+    # selected configuration to the target graph.
+    set(_configured_receipt_sources)
+    foreach(_configuration IN LISTS _receipt_configurations)
+        set(_configured_source
+            "${DEAC_RECEIPT_GENERATED_DIRECTORY}/${_configuration}/${_receipt_identifier}.cpp")
+        set(_configured_rebuild
+            "${DEAC_RECEIPT_GENERATED_DIRECTORY}/${_configuration}/${_receipt_identifier}.rebuild")
+        set_source_files_properties(
+            "${_configured_source}" PROPERTIES
+            GENERATED TRUE
+            OBJECT_DEPENDS "${_configured_rebuild}")
+        list(APPEND _configured_receipt_sources
+            "$<$<CONFIG:${_configuration}>:${_configured_source}>")
+    endforeach()
+
     add_custom_command(
         # The command deliberately never creates this symbolic primary output.
         # A single $<CONFIG>-qualified edge keeps Ninja Multi-Config graphs
@@ -559,14 +578,10 @@ function(deac_target_add_build_receipt target_name)
     set_source_files_properties(
         "${_refresh}" "${_rebuild}"
         PROPERTIES GENERATED TRUE SYMBOLIC TRUE)
-    set_source_files_properties(
-        "${_generated_source}" PROPERTIES
-        GENERATED TRUE
-        OBJECT_DEPENDS "${_rebuild}")
     set_property(TARGET "${target_name}" APPEND PROPERTY
         LINK_DEPENDS "${_rebuild}")
     target_sources("${target_name}" PRIVATE
-        "${_generated_source}" "${_rebuild}")
+        ${_configured_receipt_sources} "${_rebuild}")
     target_include_directories("${target_name}" PRIVATE
         "${_support_directory}")
 

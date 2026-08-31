@@ -137,7 +137,14 @@ def configure(cmake, source, build, compiler, *extra, check=True):
 
 
 def build(cmake, build_directory, *, config=None, check=True):
-    command = [cmake, "--build", build_directory, "--parallel", "2", "--verbose"]
+    command = [
+        cmake,
+        "--build",
+        build_directory,
+        "--parallel",
+        "1",
+        "--verbose",
+    ]
     if config is not None:
         command.extend(["--config", config])
     return run(command, build_directory, check=check)
@@ -207,15 +214,17 @@ def test_single_config_refresh_and_replacement(
         executable=True,
     )
     configure(cmake, source, build_directory, compiler_shim)
+    receipt_actions = [
+        "Embedding effective build receipt",
+        (
+            "Building CXX object "
+            "CMakeFiles/receipt_probe.dir/generated/receipt/Release/"
+            "fixture_receipt_probe_build_receipt.cpp.o"
+        ),
+        "Linking CXX executable receipt_probe",
+    ]
     first_build = build(cmake, build_directory)
-    assert_build_actions(
-        first_build,
-        [
-            "Embedding effective build receipt",
-            "build_receipt.cpp",
-            "receipt_probe",
-        ],
-    )
+    assert_build_actions(first_build, receipt_actions)
     receipt_path = build_directory / "receipt" / "Release" / "build-receipt.json"
     first_receipt = parse_receipt(receipt_path)
     first_fingerprint = first_receipt["receipt"]["target"][
@@ -226,18 +235,22 @@ def test_single_config_refresh_and_replacement(
     assert_embedded_matches(executable, receipt_path)
 
     second_build = build(cmake, build_directory)
-    assert_build_actions(
-        second_build,
-        [
-            "Embedding effective build receipt",
-            (
-                "Building CXX object "
-                "CMakeFiles/receipt_probe.dir/generated/receipt/Release/"
-                "fixture_receipt_probe_build_receipt.cpp.o"
-            ),
-            "Linking CXX executable receipt_probe",
-        ],
-    )
+    assert_build_actions(second_build, receipt_actions)
+    assert_embedded_matches(executable, receipt_path)
+
+    # Refresh a material build-time input without reconfiguring.  The same
+    # generated graph must compile the new receipt object before relinking;
+    # comparing only the freely replaceable adjacent JSON would miss a stale
+    # embedded receipt.
+    write(source / "VERSION", "1.2.4\n")
+    changed_build = build(cmake, build_directory)
+    assert_build_actions(changed_build, receipt_actions)
+    changed_receipt = parse_receipt(receipt_path)
+    if changed_receipt["receipt_sha256"] == first_receipt["receipt_sha256"]:
+        raise AssertionError("material receipt refresh did not change its digest")
+    if changed_receipt["receipt"]["source_identity"]["semantic_version"] != "1.2.4":
+        raise AssertionError("material receipt refresh retained the old version")
+    assert_embedded_matches(executable, receipt_path)
 
     write(
         compiler_shim,
