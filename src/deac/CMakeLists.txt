@@ -739,6 +739,7 @@ if(Python3_Interpreter_FOUND)
             normalize_nonfinite_target
             missing_isf
             positive_isf_single_particle
+            bad_first_moment_error
             bad_third_moment_error
             bad_crossover_probability
             bad_self_adapting_crossover_probability

@@ -26,6 +26,7 @@ def run_zero_target(
     detailed_balance,
     zero_temperature,
     run_label=None,
+    first_moment_error=None,
 ):
     save_dir = workdir / f"results-{run_label or seed}"
     command = [
@@ -59,8 +60,10 @@ def run_zero_target(
         seed,
         "--uuid",
         seed,
-        str(fixture),
     ]
+    if first_moment_error is not None:
+        command.extend(["--first_moment_error", first_moment_error])
+    command.append(str(fixture))
     result = subprocess.run(
         command,
         cwd=workdir,
@@ -94,9 +97,21 @@ def run_zero_target(
     log_text = (save_dir / f"{prefix}_log_{seed}.dat").read_text()
     if "first_moment: 0\n" not in log_text:
         raise AssertionError("zero first moment was not recorded as active")
-    if "first_moment_error: 1\n" not in log_text:
-        raise AssertionError("unit first-moment uncertainty was not recorded")
-    return minima[1] < minima[0], minima
+    effective_error = 1.0 if first_moment_error is None else float(first_moment_error)
+    error_lines = [
+        line
+        for line in log_text.splitlines()
+        if line.startswith("first_moment_error: ")
+    ]
+    if len(error_lines) != 1 or float(error_lines[0].split(": ", 1)[1]) != effective_error:
+        raise AssertionError(
+            "effective first-moment uncertainty was not recorded exactly once: "
+            f"expected={effective_error}, lines={error_lines}"
+        )
+    binary_artifacts = {
+        path.name: path.read_bytes() for path in sorted(save_dir.glob("*.bin"))
+    }
+    return minima[1] < minima[0], minima, binary_artifacts
 
 
 def main():
@@ -131,8 +146,10 @@ def main():
 
     accepted_improved_trial = False
     first_minima = None
+    first_artifacts = None
+    unit_runs = {}
     for seed in args.seeds:
-        improved, minima = run_zero_target(
+        improved, minima, artifacts = run_zero_target(
             exe,
             workdir,
             fixture,
@@ -141,14 +158,16 @@ def main():
             args.zero_temperature,
         )
         accepted_improved_trial |= improved
+        unit_runs[seed] = (minima, artifacts)
         if first_minima is None:
             first_minima = minima
+            first_artifacts = artifacts
     if not accepted_improved_trial:
         raise AssertionError(
             "zero first-moment regression did not accept an improved evolved trial"
         )
 
-    _, repeated_minima = run_zero_target(
+    _, repeated_minima, repeated_artifacts = run_zero_target(
         exe,
         workdir,
         fixture,
@@ -157,10 +176,59 @@ def main():
         args.zero_temperature,
         run_label=f"{args.seeds[0]}-repeat",
     )
-    if repeated_minima != first_minima:
+    if repeated_minima != first_minima or repeated_artifacts != first_artifacts:
         raise AssertionError(
             "zero first-moment fitness was not deterministic for a fixed seed: "
             f"first={first_minima}, repeated={repeated_minima}"
+        )
+
+    _, explicit_unit_minima, explicit_unit_artifacts = run_zero_target(
+        exe,
+        workdir,
+        fixture,
+        args.seeds[0],
+        args.detailed_balance,
+        args.zero_temperature,
+        run_label=f"{args.seeds[0]}-explicit-unit",
+        first_moment_error="1.0",
+    )
+    if (
+        explicit_unit_minima != first_minima
+        or explicit_unit_artifacts != first_artifacts
+    ):
+        raise AssertionError(
+            "omitting --first_moment_error did not preserve the unit-error "
+            "fitness and binary artifacts"
+        )
+
+    scaled_improved_trial = False
+    for seed in args.seeds:
+        improved, scaled_minima, _ = run_zero_target(
+            exe,
+            workdir,
+            fixture,
+            seed,
+            args.detailed_balance,
+            args.zero_temperature,
+            run_label=f"{seed}-scaled",
+            first_moment_error="0.25",
+        )
+        if not improved:
+            continue
+        scaled_improved_trial = True
+        unit_minima, _ = unit_runs[seed]
+        if scaled_minima[0] == unit_minima[0]:
+            raise AssertionError(
+                "custom first-moment uncertainty did not affect initial fitness"
+            )
+        if scaled_minima[1] == unit_minima[1]:
+            raise AssertionError(
+                "custom first-moment uncertainty did not affect accepted evolved fitness"
+            )
+    if not scaled_improved_trial:
+        raise AssertionError(
+            "custom first-moment uncertainty regression did not accept an "
+            "improved evolved trial"
         )
 
 

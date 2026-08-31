@@ -167,7 +167,8 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double * const isf, double * const isf_error, double * frequency,
         double temperature, size_t number_of_generations, size_t number_of_timeslices, size_t population_size,
         size_t genome_size, bool normalize, bool use_negative_first_moment, 
-        double first_moment, double third_moment, double third_moment_error,
+        double first_moment, double first_moment_error,
+        double third_moment, double third_moment_error,
         double crossover_probability,
         double self_adapting_crossover_probability,
         double differential_weight, 
@@ -585,11 +586,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #endif
     #endif
 
-    // The CLI does not yet expose an uncertainty for the first moment. Use a
-    // unit standard deviation consistently on every backend until it does.
-    constexpr double first_moment_error = 1.0;
     if (use_first_moment) {
-        std::cout << "WARNING: setting first_moment_error to 1.0." << std::endl;
         first_moments_term_positive_frequency = (double*) malloc(bytes_first_moments_term);
         #ifdef DEAC_TWO_SIDED_POPULATION
             first_moments_term_negative_frequency = (double*) malloc(bytes_first_moments_term);
@@ -2097,6 +2094,12 @@ int deac_main (int argc, char *argv[]) {
         .help("Set first frequency moment and use in fitness function.")
         .default_value(-1.0)
         .action([](const std::string& value) { return std::stod(value); });
+    program.add_argument("--first_moment_error")
+        .help("Set the finite, positive standard deviation for an active "
+              "first frequency moment. Defaults to 1.0 and must not be "
+              "supplied when first_moment is negative.")
+        .default_value(1.0)
+        .action([](const std::string& value) { return std::stod(value); });
     program.add_argument("--third_moment")
         .help("Set third frequency moment and use in fitness function.")
         .default_value(-1.0)
@@ -2175,6 +2178,23 @@ int deac_main (int argc, char *argv[]) {
                 stop_minimum_fitness});
     } catch (const std::invalid_argument& error) {
         fail_with_error(error.what());
+    }
+
+    double first_moment = program.get<double>("--first_moment");
+    double first_moment_error = program.get<double>("--first_moment_error");
+    if (!std::isfinite(first_moment)) {
+        fail_with_error("first_moment must be finite");
+    }
+    if (first_moment >= 0.0
+            && (!std::isfinite(first_moment_error)
+                || first_moment_error <= 0.0)) {
+        fail_with_error(
+                "first_moment_error must be finite and positive when "
+                "first_moment is used");
+    }
+    if (first_moment < 0.0 && program.is_used("--first_moment_error")) {
+        fail_with_error(
+                "--first_moment_error requires an active --first_moment");
     }
 
     std::string uuid_str = program.get<std::string>("--uuid");
@@ -2312,12 +2332,8 @@ int deac_main (int argc, char *argv[]) {
                     "bosonic detailed-balance build");
         }
     #endif
-    double first_moment = program.get<double>("--first_moment");
     double third_moment = program.get<double>("--third_moment");
     double third_moment_error = program.get<double>("--third_moment_error");
-    if (!std::isfinite(first_moment)) {
-        fail_with_error("first_moment must be finite");
-    }
     if (!std::isfinite(third_moment)) {
         fail_with_error("third_moment must be finite");
     }
@@ -2346,8 +2362,8 @@ int deac_main (int argc, char *argv[]) {
 
     deac( &rng, imaginary_time, isf, isf_error, frequency, temperature,
             number_of_generations, number_of_timeslices, population_size, genome_size,
-            normalize, use_negative_first_moment, first_moment, third_moment,
-            third_moment_error, crossover_probability,
+            normalize, use_negative_first_moment, first_moment, first_moment_error,
+            third_moment, third_moment_error, crossover_probability,
             self_adapting_crossover_probability, differential_weight,
             self_adapting_differential_weight_probability,
             stop_minimum_fitness,
