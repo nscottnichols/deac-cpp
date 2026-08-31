@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18.0)
+cmake_minimum_required(VERSION 3.27.0)
 
 project(deac.e LANGUAGES CXX)
 
@@ -262,6 +262,66 @@ if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.0)
     message("Linking filesystem libraries -lstdc++fs for older compilers")
     target_link_libraries(${exe} stdc++fs)
 endif()
+
+# Embed a target-specific attribution receipt generated from CMake's final
+# codemodel, toolchain, and cache replies.  The adjacent JSON is diagnostic;
+# the executable's --build-receipt response is authoritative.
+include("${CMAKE_SOURCE_DIR}/cmake/DeacBuildReceipt.cmake")
+set(DEAC_BUILD_RECEIPT_CACHE_KEYS
+    BUILD_SHARED_LIBS
+    CMAKE_AR
+    CMAKE_BUILD_TYPE
+    CMAKE_CONFIGURATION_TYPES
+    CMAKE_CUDA_ARCHITECTURES
+    CMAKE_CUDA_COMPILER
+    CMAKE_CUDA_FLAGS
+    CMAKE_CXX_COMPILER
+    CMAKE_CXX_COMPILER_LAUNCHER
+    CMAKE_CXX_FLAGS
+    CMAKE_EXE_LINKER_FLAGS
+    CMAKE_GENERATOR
+    CMAKE_GENERATOR_INSTANCE
+    CMAKE_GENERATOR_PLATFORM
+    CMAKE_GENERATOR_TOOLSET
+    CMAKE_HIP_ARCHITECTURES
+    CMAKE_HOME_DIRECTORY
+    CMAKE_INTERPROCEDURAL_OPTIMIZATION
+    CMAKE_LINKER
+    CMAKE_MAKE_PROGRAM
+    CMAKE_PREFIX_PATH
+    CMAKE_RANLIB
+    CMAKE_SYSROOT
+    CMAKE_SYSROOT_COMPILE
+    CMAKE_SYSROOT_LINK
+    CMAKE_TOOLCHAIN_FILE
+    DEAC_MODEL
+    GPU_BACKEND
+    GPU_BLOCK_SIZE
+    MAX_GPU_STREAMS
+    MKLROOT
+    SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
+    STATIC
+    SUB_GROUP_SIZE
+    SYCL_FLAGS
+    USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT
+    USE_BLAS
+    USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+    USE_SYCL_MATMUL_WA)
+foreach(_configuration
+        DEBUG RELEASE MINSIZEREL RELWITHDEBINFO ZEROT ZEROTDEBUG)
+    list(APPEND DEAC_BUILD_RECEIPT_CACHE_KEYS
+        "CMAKE_CXX_FLAGS_${_configuration}"
+        "CMAKE_EXE_LINKER_FLAGS_${_configuration}")
+endforeach()
+deac_target_add_build_receipt(${exe}
+    SOURCE_ROOT "${CMAKE_SOURCE_DIR}/.."
+    GENERATED_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/receipt"
+    IDENTITY_NAME deac
+    RECEIPT
+        "${CMAKE_CURRENT_BINARY_DIR}/receipt/$<CONFIG>/deac-build-receipt.json"
+    BACKEND "${GPU_BACKEND}"
+    CACHE_KEYS ${DEAC_BUILD_RECEIPT_CACHE_KEYS}
+    DEPENDENCY_TARGETS ${DEAC_BUILD_IDENTITY_OBJECT_TARGET})
 
 # 'make install' to the correct locations (provided by GNUInstallDirs).
 install(TARGETS ${exe} EXPORT ${exe}Config
@@ -576,6 +636,11 @@ if(Python3_Interpreter_FOUND)
     set(DEAC_PARITY_TEST "${CMAKE_SOURCE_DIR}/../test/deac_parity_test.py")
     set(DEAC_BUILD_IDENTITY_TEST
         "${CMAKE_SOURCE_DIR}/../test/deac_build_identity_test.py")
+    set(DEAC_BUILD_RECEIPT_TEST
+        "${CMAKE_SOURCE_DIR}/../test/deac_build_receipt_test.py")
+    set(DEAC_BUILD_RECEIPT_FIXTURE_TEST
+        "${CMAKE_SOURCE_DIR}/../test/deac_build_receipt_fixture_test.py")
+    find_program(DEAC_NINJA_EXECUTABLE NAMES ninja)
     set(DEAC_SMOKE_VARIANT_ARGS)
     if(USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF)
         list(APPEND DEAC_SMOKE_VARIANT_ARGS --detailed-balance)
@@ -712,6 +777,36 @@ if(Python3_Interpreter_FOUND)
             ${DEAC_BUILD_IDENTITY_CONFIG_ARGS}
             ${DEAC_BUILD_IDENTITY_GIT_ARGS}
     )
+    add_test(
+        NAME deac_build_receipt
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${DEAC_BUILD_RECEIPT_TEST}
+            --exe $<TARGET_FILE:${exe}>
+            --receipt ${DEAC_BUILD_RECEIPT}
+            --build-dir ${CMAKE_BINARY_DIR}
+            --source-dir ${CMAKE_SOURCE_DIR}
+            --workdir ${CMAKE_CURRENT_BINARY_DIR}/build-receipt-test
+            --cmake ${CMAKE_COMMAND}
+            --expected-backend ${GPU_BACKEND}
+            --expected-target ${exe}
+            --expected-dependency-target ${DEAC_BUILD_IDENTITY_OBJECT_TARGET}
+            ${DEAC_BUILD_IDENTITY_CONFIG_ARGS}
+    )
+    if(DEAC_NINJA_EXECUTABLE)
+        add_test(
+            NAME deac_build_receipt_fixture
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${DEAC_BUILD_RECEIPT_FIXTURE_TEST}
+                --cmake ${CMAKE_COMMAND}
+                --ninja ${DEAC_NINJA_EXECUTABLE}
+                --solver-source-root ${CMAKE_SOURCE_DIR}
+                --cxx-compiler ${CMAKE_CXX_COMPILER}
+                --workdir
+                    ${CMAKE_CURRENT_BINARY_DIR}/build-receipt-fixture-test
+        )
+    endif()
     add_test(
         NAME deac_first_moment_fitness
         COMMAND

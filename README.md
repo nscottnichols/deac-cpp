@@ -99,6 +99,15 @@ that same build without a manually repeated configure command. Git identity
 probes ignore inherited repository-redirection environment variables; archive
 builds therefore cannot be assigned metadata from an unrelated checkout.
 
+Build attribution is available separately through `deac.e --build-receipt`.
+It reports the embedded canonical schema-1 receipt for the effective CMake
+target, including source identity, backend and material cache inputs, target
+and direct-dependency compile groups, final-link fragments, generator and
+configuration, and compiler-driver identity and SHA-256. See
+[BUILD_RECEIPT.md](BUILD_RECEIPT.md) for the schema, CMake 3.27 requirement,
+path handling, verification behavior, and security boundary. The embedded
+response is authoritative; the matching build-tree JSON is diagnostic only.
+
 ### Zero-temperature mode
 
 `ZeroT` and `ZeroTDebug` restore the original zero-temperature problem: one
