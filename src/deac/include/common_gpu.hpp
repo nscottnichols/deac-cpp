@@ -1,6 +1,6 @@
 #ifndef COMMON_GPU_H 
 #define COMMON_GPU_H
-#include <cassert>
+#include "gpu_status.hpp"
 
 #define IS_POWER_OF_TWO(x) ((x != 0) && ((x & (x - 1)) == 0))
 
@@ -27,7 +27,12 @@
     #endif
     #ifdef USE_HIP
         #include "hip/hip_runtime.h"
-        #define GPU_ASSERT(x) (assert((x)==hipSuccess))
+        #define GPU_ASSERT(expression)                              \
+            DEAC_GPU_STATUS_CHECK(                                 \
+                    expression, hipSuccess, "HIP", "runtime",    \
+                    [](hipError_t status) {                        \
+                        return hipGetErrorString(status);          \
+                    })
         typedef hipStream_t deac_stream_t;
         #define deac_stream_create(x) hipStreamCreate(&x)
         #define deac_stream_destroy(x) hipStreamDestroy(x)
@@ -40,7 +45,11 @@
         #ifdef USE_BLAS
             #include <hipblas/hipblas.h>
             typedef hipblasHandle_t deac_blas_handle_t;
-            #define GPU_BLAS_ASSERT(x) (assert((x)==HIPBLAS_STATUS_SUCCESS))
+            #define GPU_BLAS_ASSERT(expression)                    \
+                DEAC_GPU_STATUS_CHECK(                             \
+                        expression, HIPBLAS_STATUS_SUCCESS,        \
+                        "HIP", "BLAS",                          \
+                        deac_gpu_status::no_description{})
             #define deac_create_blas_handle(x) hipblasCreate(&x)
             #define deac_destroy_blas_handle(x) hipblasDestroy(x)
             #define deac_set_stream(x, y) hipblasSetStream(x, y)
@@ -48,7 +57,12 @@
     #endif
     #ifdef USE_CUDA
         #include <cuda_runtime.h>
-        #define GPU_ASSERT(x) (assert((x)==cudaSuccess))
+        #define GPU_ASSERT(expression)                             \
+            DEAC_GPU_STATUS_CHECK(                                \
+                    expression, cudaSuccess, "CUDA", "runtime", \
+                    [](cudaError_t status) {                      \
+                        return cudaGetErrorString(status);        \
+                    })
         typedef cudaStream_t deac_stream_t;
         #define deac_stream_create(x) cudaStreamCreate(&x)
         #define deac_stream_destroy(x) cudaStreamDestroy(x)
@@ -61,7 +75,11 @@
         #ifdef USE_BLAS
             #include "cublas_v2.h"
             typedef cublasHandle_t deac_blas_handle_t;
-            #define GPU_BLAS_ASSERT(x) (assert((x)==CUBLAS_STATUS_SUCCESS))
+            #define GPU_BLAS_ASSERT(expression)                    \
+                DEAC_GPU_STATUS_CHECK(                             \
+                        expression, CUBLAS_STATUS_SUCCESS,         \
+                        "CUDA", "BLAS",                         \
+                        deac_gpu_status::no_description{})
             #define deac_create_blas_handle(x) cublasCreate(&x)
             #define deac_destroy_blas_handle(x) cublasDestroy(x)
             #define deac_set_stream(x, y) cublasSetStream(x, y)

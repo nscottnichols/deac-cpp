@@ -309,6 +309,31 @@ add_test(
     NAME deac_unit_normalization
     COMMAND deac_normalization_test)
 
+find_package(Python3 COMPONENTS Interpreter)
+foreach(status_mode IN ITEMS debug ndebug)
+    set(status_target deac_gpu_status_${status_mode}_test)
+    add_executable(${status_target}
+        ${CMAKE_SOURCE_DIR}/../test/gpu_status_test.cpp)
+    set_target_properties(${status_target} PROPERTIES
+        CXX_STANDARD 14
+        CXX_STANDARD_REQUIRED TRUE
+        CXX_EXTENSIONS FALSE)
+    target_include_directories(${status_target} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    if(status_mode STREQUAL "ndebug")
+        target_compile_definitions(${status_target} PRIVATE
+            DEAC_TEST_WITH_NDEBUG=1)
+    endif()
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME deac_unit_gpu_status_${status_mode}
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/../test/gpu_status_driver_test.py
+                --exe $<TARGET_FILE:${status_target}>)
+    endif()
+endforeach()
+
 if(NOT "${GPU_BACKEND}" STREQUAL "none")
     set(DEAC_GPU_NORMALIZATION_TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/../test/gpu_normalization_test.cpp)
@@ -447,8 +472,13 @@ if(NOT USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT)
     endif()
 endif()
 
-find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+    add_test(
+        NAME deac_gpu_status_source_policy
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/../test/gpu_status_policy_test.py
+            --source-root ${CMAKE_SOURCE_DIR}/..)
     set(DEAC_SMOKE_TEST "${CMAKE_SOURCE_DIR}/../test/deac_smoke_test.py")
     set(DEAC_PARITY_TEST "${CMAKE_SOURCE_DIR}/../test/deac_parity_test.py")
     set(DEAC_BUILD_IDENTITY_TEST
