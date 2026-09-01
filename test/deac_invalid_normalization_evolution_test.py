@@ -108,6 +108,7 @@ def main():
     parser.add_argument("--workdir", required=True)
     parser.add_argument("--detailed-balance", action="store_true")
     parser.add_argument("--zero-temperature", action="store_true")
+    parser.add_argument("--expect-poisoned-gpu-fitness", action="store_true")
     args = parser.parse_args()
 
     workdir = Path(args.workdir)
@@ -126,7 +127,7 @@ def main():
 
     initial_dir = workdir / "initial"
     forced_dir = workdir / "forced"
-    run_solver(
+    reference = run_solver(
         args.reference_exe,
         workdir,
         fixture,
@@ -157,6 +158,40 @@ def main():
     if "test_invalid_normalization_fitness: DBL_MAX" not in forced.stdout:
         raise AssertionError(
             f"forced rows did not receive DBL_MAX fitness:\n{forced.stdout}"
+        )
+    poison_markers = (
+        "test_poisoned_gpu_fitness_buffers: old,new",
+        "test_poisoned_gpu_fitness_initial: finite",
+        "test_poisoned_gpu_fitness_evolved: finite",
+    )
+    reference_marker_counts = {
+        marker: reference.stdout.count(marker) for marker in poison_markers
+    }
+    leaked_markers = {
+        marker: count
+        for marker, count in reference_marker_counts.items()
+        if count != 0
+    }
+    if leaked_markers:
+        raise AssertionError(
+            "production solver unexpectedly enabled the poison seam: "
+            f"{leaked_markers}\n{reference.stdout}"
+        )
+    forced_marker_counts = {
+        marker: forced.stdout.count(marker) for marker in poison_markers
+    }
+    if args.expect_poisoned_gpu_fitness and any(
+        count != 1 for count in forced_marker_counts.values()
+    ):
+        raise AssertionError(
+            "forced GPU run did not prove finite initial and evolved scoring "
+            "after poisoning both buffers exactly once: "
+            f"observed={forced_marker_counts}\n{forced.stdout}"
+        )
+    if not args.expect_poisoned_gpu_fitness and any(forced_marker_counts.values()):
+        raise AssertionError(
+            "non-GPU helper unexpectedly enabled the poison seam: "
+            f"{forced_marker_counts}\n{forced.stdout}"
         )
 
     output_prefix = prefix(args.detailed_balance, args.zero_temperature)

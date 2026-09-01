@@ -88,6 +88,7 @@ endfunction()
 foreach(_deac_consumer IN ITEMS
         deac.e
         deac_gpu_normalization_test
+        deac_gpu_fitness_test
         deac_invalid_normalization_evolution_test_exe)
     _deac_assert_literal_count(_deac_graph_text
         "${_deac_consumer} -> deac_hipblas_link_contract" 1)

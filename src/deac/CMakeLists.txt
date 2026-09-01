@@ -413,6 +413,40 @@ if(NOT "${GPU_BACKEND}" STREQUAL "none")
     add_test(
         NAME deac_unit_gpu_normalization
         COMMAND deac_gpu_normalization_test)
+
+    set(DEAC_GPU_FITNESS_TEST_SOURCES
+        ${CMAKE_SOURCE_DIR}/../test/gpu_fitness_test.cpp)
+    if("${GPU_BACKEND}" STREQUAL "cuda")
+        list(APPEND DEAC_GPU_FITNESS_TEST_SOURCES
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deac_gpu.cu)
+    endif()
+    add_executable(deac_gpu_fitness_test
+        ${DEAC_GPU_FITNESS_TEST_SOURCES})
+    list(APPEND DEAC_HIPBLAS_CONSUMER_TARGETS
+        deac_gpu_fitness_test)
+    target_include_directories(deac_gpu_fitness_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    if("${GPU_BACKEND}" STREQUAL "cuda")
+        set_target_properties(deac_gpu_fitness_test PROPERTIES
+            CUDA_SEPARABLE_COMPILATION ON)
+    endif()
+    if(USE_BLAS AND "${GPU_BACKEND}" STREQUAL "cuda")
+        target_link_libraries(deac_gpu_fitness_test CUDA::cublas)
+    endif()
+    if(USE_BLAS AND "${GPU_BACKEND}" STREQUAL "sycl")
+        target_link_libraries(deac_gpu_fitness_test
+            ${MKL_SYCL_BLAS_LIBRARY}
+            ${MKL_SYCL_LIBRARY}
+            ${MKL_INTEL_ILP64_LIBRARY}
+            ${MKL_SEQUENTIAL_LIBRARY}
+            ${MKL_CORE_LIBRARY}
+            pthread
+            m
+            dl)
+    endif()
+    add_test(
+        NAME deac_unit_gpu_fitness
+        COMMAND deac_gpu_fitness_test)
 endif()
 
 add_executable(deac_moment_fitness_test
@@ -492,6 +526,11 @@ if(NOT USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT)
     target_compile_definitions(
         deac_invalid_normalization_evolution_test_exe PRIVATE
         DEAC_TEST_FORCE_INVALID_NORMALIZATION_TRIALS=1)
+    if(NOT "${GPU_BACKEND}" STREQUAL "none")
+        target_compile_definitions(
+            deac_invalid_normalization_evolution_test_exe PRIVATE
+            DEAC_TEST_POISON_GPU_FITNESS=1)
+    endif()
     target_include_directories(
         deac_invalid_normalization_evolution_test_exe PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -618,6 +657,11 @@ if(Python3_Interpreter_FOUND)
         )
     endforeach()
     if(NOT USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT)
+        set(DEAC_INVALID_NORMALIZATION_TEST_ARGS)
+        if(NOT "${GPU_BACKEND}" STREQUAL "none")
+            list(APPEND DEAC_INVALID_NORMALIZATION_TEST_ARGS
+                --expect-poisoned-gpu-fitness)
+        endif()
         add_test(
             NAME deac_normalization_evolution
             COMMAND
@@ -636,6 +680,7 @@ if(Python3_Interpreter_FOUND)
                 --forced-exe $<TARGET_FILE:deac_invalid_normalization_evolution_test_exe>
                 --workdir ${CMAKE_CURRENT_BINARY_DIR}/invalid-normalization-evolution
                 ${DEAC_SMOKE_VARIANT_ARGS}
+                ${DEAC_INVALID_NORMALIZATION_TEST_ARGS}
         )
     endif()
 
