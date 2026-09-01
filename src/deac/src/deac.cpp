@@ -51,6 +51,10 @@
     throw std::runtime_error(error_message);
 }
 
+#ifdef DEAC_TEST_POISON_GPU_FITNESS
+    #define DEAC_TEST_GPU_CALL(expression) GPU_ASSERT(expression)
+#endif
+
 void print_build_identity(std::ostream& output) {
     output << deac_build_identity::canonical_json() << std::endl;
 }
@@ -870,6 +874,61 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         GPU_ASSERT(deac_malloc_device(double, d_fitness_new, population_size, default_stream));
         GPU_ASSERT(deac_wait(default_stream));
 
+        #ifdef DEAC_TEST_POISON_GPU_FITNESS
+            // Test-only full-solver seam: poison both destinations at their
+            // production allocation point, before either scoring pass can
+            // define them.  The shared GPU status path evaluates and checks
+            // each call exactly once in every build type.
+            std::fill(
+                    fitness_old, fitness_old + population_size,
+                    std::numeric_limits<double>::quiet_NaN());
+            DEAC_TEST_GPU_CALL(deac_memcpy_host_to_device(
+                    d_fitness_old, fitness_old,
+                    bytes_fitness, default_stream));
+            DEAC_TEST_GPU_CALL(deac_memcpy_host_to_device(
+                    d_fitness_new, fitness_old,
+                    bytes_fitness, default_stream));
+            DEAC_TEST_GPU_CALL(deac_wait(default_stream));
+            const auto test_require_poisoned_gpu_fitness =
+                    [&](double* device_fitness, const char* buffer) {
+                std::fill(
+                        fitness_old, fitness_old + population_size, 0.0);
+                DEAC_TEST_GPU_CALL(deac_memcpy_device_to_host(
+                        fitness_old, device_fitness,
+                        bytes_fitness, default_stream));
+                DEAC_TEST_GPU_CALL(deac_wait(default_stream));
+                if (!std::all_of(
+                        fitness_old, fitness_old + population_size,
+                        [](double value) { return std::isnan(value); })) {
+                    fail_with_error(
+                            std::string("GPU fitness buffer was not poisoned: ")
+                            + buffer);
+                }
+            };
+            test_require_poisoned_gpu_fitness(d_fitness_old, "old");
+            test_require_poisoned_gpu_fitness(d_fitness_new, "new");
+            std::cout << "test_poisoned_gpu_fitness_buffers: old,new\n";
+            const auto test_require_finite_gpu_fitness =
+                    [&](double* device_fitness, const char* phase) {
+                std::fill(
+                        fitness_old, fitness_old + population_size,
+                        std::numeric_limits<double>::quiet_NaN());
+                DEAC_TEST_GPU_CALL(deac_memcpy_device_to_host(
+                        fitness_old, device_fitness,
+                        bytes_fitness, default_stream));
+                DEAC_TEST_GPU_CALL(deac_wait(default_stream));
+                if (!std::all_of(
+                        fitness_old, fitness_old + population_size,
+                        [](double value) { return std::isfinite(value); })) {
+                    fail_with_error(
+                            std::string("poisoned GPU fitness remained non-finite ")
+                            + phase);
+                }
+                std::cout << "test_poisoned_gpu_fitness_" << phase
+                          << ": finite\n";
+            };
+        #endif
+
         gpu_deac_reduced_chi_squared(default_stream, d_isf_model, d_isf, d_isf_error, d_fitness_old, population_size, number_of_timeslices, 0, 0.0);
         GPU_ASSERT(deac_wait(default_stream));
 
@@ -889,6 +948,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             gpu_deac_add_scalar_reduced_chi_squared(default_stream, d_third_moments, third_moment, third_moment_error, d_fitness_old, population_size);
             GPU_ASSERT(deac_wait(default_stream));
         }
+        #ifdef DEAC_TEST_POISON_GPU_FITNESS
+            test_require_finite_gpu_fitness(d_fitness_old, "initial");
+        #endif
     #else
         for (size_t i=0; i<population_size; i++) {
             double _fitness = reduced_chi_square_statistic(isf,
@@ -1475,6 +1537,9 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 gpu_deac_add_scalar_reduced_chi_squared(default_stream, d_third_moments, third_moment, third_moment_error, d_fitness_new, population_size);
                 GPU_ASSERT(deac_wait(default_stream));
             }
+            #ifdef DEAC_TEST_POISON_GPU_FITNESS
+                test_require_finite_gpu_fitness(d_fitness_new, "evolved");
+            #endif
         #else
             // Fitness set in rejection step
         #endif

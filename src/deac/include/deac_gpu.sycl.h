@@ -549,7 +549,11 @@ void gpu_deac_reduced_chi_squared(sycl::queue q, const double* __restrict__ calc
 
             // Have the first thread in the block write the result for this row to global memory
             if (tid == 0) {
-                reduced_chi_squared[row] = sdata[0]/(n - ddof) + beta*reduced_chi_squared[row];
+                if (beta == 0.0) {
+                    reduced_chi_squared[row] = sdata[0]/(n - ddof);
+                } else {
+                    reduced_chi_squared[row] = sdata[0]/(n - ddof) + beta*reduced_chi_squared[row];
+                }
             }
         });
     });

@@ -13,6 +13,7 @@ endforeach()
 set(_deac_hipblas_consumers
     deac.e
     deac_gpu_normalization_test
+    deac_gpu_fitness_test
     deac_invalid_normalization_evolution_test_exe)
 foreach(_deac_consumer IN LISTS _deac_hipblas_consumers)
     add_executable("${_deac_consumer}" EXCLUDE_FROM_ALL dummy.cpp)
