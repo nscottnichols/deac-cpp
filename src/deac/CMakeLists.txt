@@ -322,6 +322,7 @@ deac_target_add_build_receipt(${exe}
     BACKEND "${GPU_BACKEND}"
     CACHE_KEYS ${DEAC_BUILD_RECEIPT_CACHE_KEYS}
     DEPENDENCY_TARGETS ${DEAC_BUILD_IDENTITY_OBJECT_TARGET})
+set(DEAC_PRIMARY_BUILD_RECEIPT "${DEAC_BUILD_RECEIPT}")
 
 # 'make install' to the correct locations (provided by GNUInstallDirs).
 install(TARGETS ${exe} EXPORT ${exe}Config
@@ -618,6 +619,19 @@ if(NOT USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT)
         target_link_libraries(
             deac_invalid_normalization_evolution_test_exe stdc++fs)
     endif()
+    deac_target_add_build_receipt(
+        deac_invalid_normalization_evolution_test_exe
+        SOURCE_ROOT "${CMAKE_SOURCE_DIR}/.."
+        GENERATED_DIRECTORY
+            "${CMAKE_CURRENT_BINARY_DIR}/generated/receipt"
+        IDENTITY_NAME deac
+        RECEIPT
+            "${CMAKE_CURRENT_BINARY_DIR}/receipt/$<CONFIG>/deac-invalid-normalization-build-receipt.json"
+        BACKEND "${GPU_BACKEND}"
+        CACHE_KEYS ${DEAC_BUILD_RECEIPT_CACHE_KEYS}
+        DEPENDENCY_TARGETS ${DEAC_BUILD_IDENTITY_OBJECT_TARGET})
+    set(DEAC_INVALID_NORMALIZATION_BUILD_RECEIPT
+        "${DEAC_BUILD_RECEIPT}")
 endif()
 
 # The HIP+BLAS package, includes, and link dependency are represented by one
@@ -759,6 +773,16 @@ if(Python3_Interpreter_FOUND)
         list(APPEND DEAC_BUILD_IDENTITY_CONFIG_ARGS
             --build-config $<CONFIG>)
     endif()
+    set(DEAC_BUILD_RECEIPT_HELPER_ARGS)
+    if(TARGET deac_invalid_normalization_evolution_test_exe)
+        list(APPEND DEAC_BUILD_RECEIPT_HELPER_ARGS
+            --helper-exe
+                $<TARGET_FILE:deac_invalid_normalization_evolution_test_exe>
+            --helper-receipt
+                ${DEAC_INVALID_NORMALIZATION_BUILD_RECEIPT}
+            --expected-helper-target
+                deac_invalid_normalization_evolution_test_exe)
+    endif()
     add_test(
         NAME deac_build_identity
         COMMAND
@@ -783,7 +807,7 @@ if(Python3_Interpreter_FOUND)
             ${Python3_EXECUTABLE}
             ${DEAC_BUILD_RECEIPT_TEST}
             --exe $<TARGET_FILE:${exe}>
-            --receipt ${DEAC_BUILD_RECEIPT}
+            --receipt ${DEAC_PRIMARY_BUILD_RECEIPT}
             --build-dir ${CMAKE_BINARY_DIR}
             --source-dir ${CMAKE_SOURCE_DIR}
             --workdir ${CMAKE_CURRENT_BINARY_DIR}/build-receipt-test
@@ -791,6 +815,7 @@ if(Python3_Interpreter_FOUND)
             --expected-backend ${GPU_BACKEND}
             --expected-target ${exe}
             --expected-dependency-target ${DEAC_BUILD_IDENTITY_OBJECT_TARGET}
+            ${DEAC_BUILD_RECEIPT_HELPER_ARGS}
             ${DEAC_BUILD_IDENTITY_CONFIG_ARGS}
     )
     if(DEAC_NINJA_EXECUTABLE)

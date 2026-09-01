@@ -24,6 +24,9 @@ SOURCE_IDENTITY_KEYS = [
     "source_sha",
     "source_state",
 ]
+INVALID_NORMALIZATION_DEFINITION = (
+    "DEAC_TEST_FORCE_INVALID_NORMALIZATION_TRIALS=1"
+)
 
 
 def run(command, cwd, *, check=True):
@@ -95,7 +98,13 @@ def is_sha256(value):
     )
 
 
-def validate_compile_groups(compile_groups, *, label, fingerprint=None):
+def validate_compile_groups(
+    compile_groups,
+    *,
+    label,
+    fingerprint=None,
+    expect_invalid_normalization_definition=False,
+):
     if not isinstance(compile_groups, list) or not compile_groups:
         raise AssertionError(f"{label} has no effective compile groups")
     compiled_sources = []
@@ -127,11 +136,32 @@ def validate_compile_groups(compile_groups, *, label, fingerprint=None):
                 assert_string(fragment["role"], f"{label} compile fragment role")
         if not isinstance(group["definitions"], list):
             raise TypeError(f"{label} definitions must be a list")
+        expected_invalid_definition_count = (
+            1 if expect_invalid_normalization_definition else 0
+        )
+        if (
+            group["definitions"].count(INVALID_NORMALIZATION_DEFINITION)
+            != expected_invalid_definition_count
+        ):
+            expectation = "exactly once" if expected_invalid_definition_count else "never"
+            raise AssertionError(
+                f"{label} compile group must contain the test-only invalid "
+                f"normalization definition {expectation}"
+            )
         if fingerprint is not None:
             expected = f"DEAC_BUILD_TOOLCHAIN_FINGERPRINT_SHA256={fingerprint}"
-            if group["definitions"].count(expected) != 1:
+            observed_fingerprints = [
+                definition
+                for definition in group["definitions"]
+                if definition.startswith(
+                    "DEAC_BUILD_TOOLCHAIN_FINGERPRINT_SHA256="
+                )
+            ]
+            if observed_fingerprints != [expected]:
                 raise AssertionError(
-                    f"{label} compile group does not bind the toolchain fingerprint"
+                    f"{label} compile group must bind exactly one expected "
+                    "toolchain fingerprint; observed "
+                    f"{observed_fingerprints!r}"
                 )
         if not isinstance(group["sources"], list) or not group["sources"]:
             raise AssertionError(f"{label} compile group has no sources")
@@ -148,6 +178,7 @@ def validate_receipt(
     expected_backend,
     expected_target,
     expected_dependency_target,
+    expect_invalid_normalization_definition,
 ):
     receipt = document["receipt"]
     archive_tools = receipt["archive_tools"]
@@ -249,7 +280,12 @@ def validate_receipt(
         raise AssertionError("CMake source root was not canonicalized in the cache")
 
     compiled_sources, used_languages = validate_compile_groups(
-        receipt["compile_groups"], label="target", fingerprint=fingerprint
+        receipt["compile_groups"],
+        label="target",
+        fingerprint=fingerprint,
+        expect_invalid_normalization_definition=(
+            expect_invalid_normalization_definition
+        ),
     )
     if not any(source.endswith("/deac/src/deac.cpp") for source in compiled_sources):
         raise AssertionError("receipt does not bind the primary solver source")
@@ -269,7 +305,9 @@ def validate_receipt(
     if dependency["archive"] is not None or dependency["link"] is not None:
         raise AssertionError("identity object dependency unexpectedly archives or links")
     dependency_sources, dependency_languages = validate_compile_groups(
-        dependency["compile_groups"], label="dependency"
+        dependency["compile_groups"],
+        label="dependency",
+        fingerprint=fingerprint,
     )
     used_languages.update(dependency_languages)
     if not any(source.endswith("/deac/src/build_identity.cpp") for source in dependency_sources):
@@ -315,22 +353,17 @@ def validate_receipt(
         raise AssertionError("receipt leaked its relocatable source-tree pathname")
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--exe", required=True)
-    parser.add_argument("--receipt", required=True)
-    parser.add_argument("--build-dir", required=True)
-    parser.add_argument("--source-dir", required=True)
-    parser.add_argument("--workdir", required=True)
-    parser.add_argument("--cmake", required=True)
-    parser.add_argument("--expected-backend", required=True)
-    parser.add_argument("--expected-target", required=True)
-    parser.add_argument("--expected-dependency-target", required=True)
-    parser.add_argument("--build-config")
-    args = parser.parse_args()
-
-    exe = Path(args.exe).resolve()
-    receipt_path = Path(args.receipt).resolve()
+def validate_receipt_endpoint(
+    *,
+    exe,
+    receipt_path,
+    build_dir,
+    source_dir,
+    expected_backend,
+    expected_target,
+    expected_dependency_target,
+    expect_invalid_normalization_definition,
+):
     first = run([exe, "--build-receipt"], exe.parent)
     second = run([exe, "--build-receipt"], exe.parent)
     if first.stderr or second.stderr:
@@ -343,12 +376,71 @@ def main():
     validate_receipt(
         document,
         exe=exe,
+        build_dir=build_dir,
+        source_dir=source_dir,
+        expected_backend=expected_backend,
+        expected_target=expected_target,
+        expected_dependency_target=expected_dependency_target,
+        expect_invalid_normalization_definition=(
+            expect_invalid_normalization_definition
+        ),
+    )
+    return first.stdout
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--exe", required=True)
+    parser.add_argument("--receipt", required=True)
+    parser.add_argument("--build-dir", required=True)
+    parser.add_argument("--source-dir", required=True)
+    parser.add_argument("--workdir", required=True)
+    parser.add_argument("--cmake", required=True)
+    parser.add_argument("--expected-backend", required=True)
+    parser.add_argument("--expected-target", required=True)
+    parser.add_argument("--expected-dependency-target", required=True)
+    parser.add_argument("--helper-exe")
+    parser.add_argument("--helper-receipt")
+    parser.add_argument("--expected-helper-target")
+    parser.add_argument("--build-config")
+    args = parser.parse_args()
+
+    helper_arguments = (
+        args.helper_exe,
+        args.helper_receipt,
+        args.expected_helper_target,
+    )
+    if any(argument is not None for argument in helper_arguments) and not all(
+        argument is not None for argument in helper_arguments
+    ):
+        parser.error(
+            "--helper-exe, --helper-receipt, and --expected-helper-target "
+            "must be provided together"
+        )
+
+    exe = Path(args.exe).resolve()
+    receipt_path = Path(args.receipt).resolve()
+    embedded_receipt = validate_receipt_endpoint(
+        exe=exe,
+        receipt_path=receipt_path,
         build_dir=Path(args.build_dir),
         source_dir=Path(args.source_dir),
         expected_backend=args.expected_backend,
         expected_target=args.expected_target,
         expected_dependency_target=args.expected_dependency_target,
+        expect_invalid_normalization_definition=False,
     )
+    if args.helper_exe is not None:
+        validate_receipt_endpoint(
+            exe=Path(args.helper_exe).resolve(),
+            receipt_path=Path(args.helper_receipt).resolve(),
+            build_dir=Path(args.build_dir),
+            source_dir=Path(args.source_dir),
+            expected_backend=args.expected_backend,
+            expected_target=args.expected_helper_target,
+            expected_dependency_target=args.expected_dependency_target,
+            expect_invalid_normalization_definition=True,
+        )
 
     workdir = Path(args.workdir)
     if workdir.exists():
@@ -360,7 +452,7 @@ def main():
     run(command, args.build_dir)
     installed = install_prefix / "bin" / exe.name
     installed_receipt = run([installed, "--build-receipt"], installed.parent)
-    if installed_receipt.stdout != first.stdout or installed_receipt.stderr:
+    if installed_receipt.stdout != embedded_receipt or installed_receipt.stderr:
         raise AssertionError("installed executable did not retain its embedded receipt")
 
 
