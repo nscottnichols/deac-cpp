@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.18.0)
 
 project(deac.e LANGUAGES CXX)
 
+include("${CMAKE_SOURCE_DIR}/cmake/DeacHipblas.cmake")
+
 # Set c++ standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
@@ -64,15 +66,6 @@ if (NOT "${GPU_BACKEND}" STREQUAL "none")
             message(FATAL_ERROR "GPU_BACKEND=hip requires HIP headers. Set HIP_PATH, ROCM_PATH, or CMAKE_PREFIX_PATH.")
         endif()
         include_directories("${HIP_RUNTIME_INCLUDE_DIR}")
-        if(USE_BLAS)
-            find_path(HIPBLAS_INCLUDE_DIR
-                NAMES hipblas/hipblas.h
-                HINTS "$ENV{HIP_PATH}/include" "$ENV{ROCM_PATH}/include" /opt/rocm/include)
-            if(NOT HIPBLAS_INCLUDE_DIR)
-                message(FATAL_ERROR "USE_BLAS with GPU_BACKEND=hip requires hipBLAS headers.")
-            endif()
-            include_directories("${HIPBLAS_INCLUDE_DIR}")
-        endif()
         add_definitions(-D USE_HIP=1)
     elseif("${GPU_BACKEND}" STREQUAL "sycl")
         add_definitions(-D USE_SYCL=1)
@@ -164,6 +157,7 @@ if ("${GPU_BACKEND}" STREQUAL "cuda")
 else()
     add_executable(${exe} ${DEAC_SRC})
 endif()
+set(DEAC_HIPBLAS_CONSUMER_TARGETS ${exe})
 
 deac_target_add_build_identity(${exe})
 
@@ -285,6 +279,57 @@ install(EXPORT ${exe}Config DESTINATION share/${exe}/cmake)
 export(TARGETS ${exe} FILE ${exe}Config.cmake)
 
 # Unit tests
+set(DEAC_HIPBLAS_CONFIGURE_TEST_RUNNER
+    "${CMAKE_SOURCE_DIR}/../test/cmake/RunHipblasConfigureTest.cmake")
+set(DEAC_HIPBLAS_CONFIGURE_TEST_SOURCE
+    "${CMAKE_SOURCE_DIR}/../test/cmake/hipblas_link_contract")
+function(deac_add_hipblas_configure_test test_mode expect_success)
+    add_test(
+        NAME deac_cmake_hipblas_${test_mode}
+        COMMAND
+            ${CMAKE_COMMAND}
+            "-DDEAC_TEST_CMAKE_COMMAND:FILEPATH=${CMAKE_COMMAND}"
+            "-DDEAC_TEST_SOURCE_DIR:PATH=${DEAC_HIPBLAS_CONFIGURE_TEST_SOURCE}"
+            "-DDEAC_TEST_BINARY_DIR:PATH=${CMAKE_CURRENT_BINARY_DIR}/hipblas-configure/${test_mode}"
+            "-DDEAC_TEST_CXX_COMPILER:FILEPATH=${CMAKE_CXX_COMPILER}"
+            "-DDEAC_TEST_GENERATOR:STRING=${CMAKE_GENERATOR}"
+            "-DDEAC_TEST_MAKE_PROGRAM:FILEPATH=${CMAKE_MAKE_PROGRAM}"
+            "-DDEAC_TEST_GENERATOR_PLATFORM:STRING=${CMAKE_GENERATOR_PLATFORM}"
+            "-DDEAC_TEST_GENERATOR_TOOLSET:STRING=${CMAKE_GENERATOR_TOOLSET}"
+            "-DDEAC_TEST_GENERATOR_INSTANCE:STRING=${CMAKE_GENERATOR_INSTANCE}"
+            "-DDEAC_TEST_HIPBLAS_MODULE:FILEPATH=${CMAKE_SOURCE_DIR}/cmake/DeacHipblas.cmake"
+            "-DDEAC_TEST_MODE:STRING=${test_mode}"
+            "-DDEAC_TEST_EXPECT_SUCCESS:BOOL=${expect_success}"
+            -P "${DEAC_HIPBLAS_CONFIGURE_TEST_RUNNER}")
+    set_tests_properties(deac_cmake_hipblas_${test_mode} PROPERTIES
+        LABELS "cmake;hipblas")
+endfunction()
+
+deac_add_hipblas_configure_test(imported_target TRUE)
+deac_add_hipblas_configure_test(compatibility_library TRUE)
+deac_add_hipblas_configure_test(missing_package FALSE)
+deac_add_hipblas_configure_test(header_only FALSE)
+deac_add_hipblas_configure_test(blas_off TRUE)
+deac_add_hipblas_configure_test(non_hip TRUE)
+add_test(
+    NAME deac_cmake_hipblas_project_targets
+    COMMAND
+        ${CMAKE_COMMAND}
+        "-DDEAC_TEST_CMAKE_COMMAND:FILEPATH=${CMAKE_COMMAND}"
+        "-DDEAC_TEST_PROJECT_SOURCE_DIR:PATH=${CMAKE_SOURCE_DIR}"
+        "-DDEAC_TEST_BINARY_DIR:PATH=${CMAKE_CURRENT_BINARY_DIR}/hipblas-configure/project_targets"
+        "-DDEAC_TEST_CXX_COMPILER:FILEPATH=${CMAKE_CXX_COMPILER}"
+        "-DDEAC_TEST_GENERATOR:STRING=${CMAKE_GENERATOR}"
+        "-DDEAC_TEST_MAKE_PROGRAM:FILEPATH=${CMAKE_MAKE_PROGRAM}"
+        "-DDEAC_TEST_GENERATOR_PLATFORM:STRING=${CMAKE_GENERATOR_PLATFORM}"
+        "-DDEAC_TEST_GENERATOR_TOOLSET:STRING=${CMAKE_GENERATOR_TOOLSET}"
+        "-DDEAC_TEST_GENERATOR_INSTANCE:STRING=${CMAKE_GENERATOR_INSTANCE}"
+        "-DDEAC_TEST_MOCK_INCLUDE_DIR:PATH=${DEAC_HIPBLAS_CONFIGURE_TEST_SOURCE}/mock-include"
+        "-DDEAC_TEST_MOCK_PACKAGE_DIR:PATH=${DEAC_HIPBLAS_CONFIGURE_TEST_SOURCE}/mock-package"
+        -P "${CMAKE_SOURCE_DIR}/../test/cmake/RunHipblasProjectConfigureTest.cmake")
+set_tests_properties(deac_cmake_hipblas_project_targets PROPERTIES
+    LABELS "cmake;hipblas")
+
 add_executable(deac_trapezoidal_weights_test
     ${CMAKE_SOURCE_DIR}/../test/trapezoidal_weights_test.cpp)
 target_include_directories(deac_trapezoidal_weights_test PRIVATE
@@ -343,6 +388,8 @@ if(NOT "${GPU_BACKEND}" STREQUAL "none")
     endif()
     add_executable(deac_gpu_normalization_test
         ${DEAC_GPU_NORMALIZATION_TEST_SOURCES})
+    list(APPEND DEAC_HIPBLAS_CONSUMER_TARGETS
+        deac_gpu_normalization_test)
     target_include_directories(deac_gpu_normalization_test PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include)
     if("${GPU_BACKEND}" STREQUAL "cuda")
@@ -438,6 +485,8 @@ if(NOT USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT)
         add_executable(deac_invalid_normalization_evolution_test_exe
             ${DEAC_SRC})
     endif()
+    list(APPEND DEAC_HIPBLAS_CONSUMER_TARGETS
+        deac_invalid_normalization_evolution_test_exe)
     deac_target_add_build_identity(
         deac_invalid_normalization_evolution_test_exe)
     target_compile_definitions(
@@ -471,6 +520,11 @@ if(NOT USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT)
             deac_invalid_normalization_evolution_test_exe stdc++fs)
     endif()
 endif()
+
+# The HIP+BLAS package, includes, and link dependency are represented by one
+# target-scoped contract shared by every target that compiles the GPU solver
+# implementation.  The helper is a no-op for every other configuration.
+deac_target_link_hipblas(${DEAC_HIPBLAS_CONSUMER_TARGETS})
 
 if(Python3_Interpreter_FOUND)
     add_test(
