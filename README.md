@@ -56,6 +56,17 @@ As above, and with further details below, but you should consider using the foll
 Executables will be installed to `CMAKE_INSTALL_PREFIX` location or, if the install is skipped, they will be located in `build/deac`.
 Executables produced are `deac.e`, `deacd.e`, `deac-zT.e`, and `deac-zTd.e` for `CMAKE_BUILD_TYPE=Release|Debug|ZeroT|ZeroTDebug` respectively.
 
+### Accelerator error handling
+
+CUDA and HIP runtime and BLAS operations are evaluated and checked in every
+build type, including Release builds with `NDEBUG`. A failed operation throws a
+`deac_gpu_status::status_error`; the command-line boundary reports the error
+and exits nonzero rather than continuing with invalid device state. Diagnostics
+identify the backend, runtime or BLAS category, failed expression, numeric
+status, available runtime description, and source file and line. SYCL retains
+its native synchronous and asynchronous exception behavior, including
+`wait_and_throw` at synchronization points.
+
 ### Build identity and provenance
 
 `deac.e --version` (or `-v`) retains the legacy one-line semantic-version
