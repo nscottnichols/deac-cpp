@@ -430,6 +430,13 @@ def run_validation_case(
             "first_moment is used"
         )
         for invalid_error in ("0", "-0", "-1", "nan", "inf", "-inf"):
+            # The bundled parser classifies a standalone -inf value as an
+            # option. std::stod accepts leading whitespace, which keeps this
+            # one edge case on the solver's semantic validation path while the
+            # other spellings retain canonical CLI coverage.
+            argument_value = (
+                f" {invalid_error}" if invalid_error == "-inf" else invalid_error
+            )
             command = deac_command(
                 exe,
                 workdir,
@@ -438,7 +445,7 @@ def run_validation_case(
                     "--first_moment",
                     "0",
                     "--first_moment_error",
-                    invalid_error,
+                    argument_value,
                 ],
                 zero_temperature=zero_temperature,
             )
