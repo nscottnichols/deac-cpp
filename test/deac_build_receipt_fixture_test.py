@@ -2003,11 +2003,24 @@ def test_nested_build_root_canonicalization(
 ):
     source = workdir / "nested-build-source"
     create_fixture_source(solver_source, source)
+    # Cover a two-byte ASCII component and a two-byte UTF-8 code point.
+    source_prefixes = [
+        source / "src" / component / "prefix"
+        for component in ("ab", "é")
+    ]
+    for prefix in source_prefixes:
+        prefix.mkdir(parents=True)
     receipts = []
     for suffix in ("a", "b"):
         # Put the build inside CMAKE_SOURCE_DIR so both canonical roots match;
         # BUILD_ROOT must win as the more-specific containing root.
         build_directory = source / "src" / f"nested-build-{suffix}"
+        build_prefixes = [
+            build_directory / component / "prefix"
+            for component in ("xy", "ü")
+        ]
+        for prefix in build_prefixes:
+            prefix.mkdir(parents=True)
         configure(
             cmake,
             source,
@@ -2016,6 +2029,8 @@ def test_nested_build_root_canonicalization(
             "-G",
             "Ninja",
             f"-DCMAKE_MAKE_PROGRAM={ninja}",
+            "-DCMAKE_PREFIX_PATH="
+            + ";".join(str(path) for path in source_prefixes + build_prefixes),
         )
         build(cmake, build_directory)
         receipt_path = (
@@ -2034,6 +2049,20 @@ def test_nested_build_root_canonicalization(
             raise AssertionError(
                 "nested generated source did not prefer the most-specific "
                 f"build root: {generated_sources!r}"
+            )
+        cache_entries = {
+            entry["name"]: entry["value"]
+            for entry in document["receipt"]["cache_entries"]
+        }
+        expected_prefix_path = (
+            "<SOURCE_ROOT>/ab/prefix;<SOURCE_ROOT>/é/prefix;"
+            "<BUILD_ROOT>/xy/prefix;<BUILD_ROOT>/ü/prefix"
+        )
+        if cache_entries.get("CMAKE_PREFIX_PATH") != expected_prefix_path:
+            raise AssertionError(
+                "two-byte path components were not tokenized against the "
+                "most-specific canonical root: "
+                f"{cache_entries.get('CMAKE_PREFIX_PATH')!r}"
             )
         receipts.append(receipt_path.read_bytes())
     if receipts[0] != receipts[1]:

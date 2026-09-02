@@ -274,7 +274,7 @@ function(_deac_receipt_normalize_path output value)
         file(RELATIVE_PATH _relative "${_root}" "${_path}")
         if((_relative STREQUAL "" OR
                 (NOT IS_ABSOLUTE "${_relative}" AND
-                 NOT _relative MATCHES "^\.\.(/|$)")))
+                 NOT _relative MATCHES "^[.][.](/|$)")))
             string(LENGTH "${_root}" _root_length)
             if(_root_length GREATER _best_root_length)
                 set(_best_root_length ${_root_length})
