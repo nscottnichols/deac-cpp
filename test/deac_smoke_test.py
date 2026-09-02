@@ -40,6 +40,7 @@ VALIDATION_CASES = [
     "normalize_signed_weights",
     "missing_isf",
     "positive_isf_single_particle",
+    "bad_first_moment_error",
     "bad_third_moment_error",
     "bad_crossover_probability",
     "bad_self_adapting_crossover_probability",
@@ -218,7 +219,9 @@ def run_deac_case(
         if case_name == "normalize_large_population":
             population_size = "1028"
     elif case_name == "first_moment":
-        extra_args.extend(["--first_moment", "0.5"])
+        extra_args.extend(
+            ["--first_moment", "0.5", "--first_moment_error", "0.25"]
+        )
     elif case_name == "third_moment":
         extra_args.extend(
             ["--third_moment", "0.5", "--third_moment_error", "0.1"]
@@ -304,6 +307,14 @@ def run_deac_case(
             )
         if "temperature: 0" not in log_text:
             raise AssertionError(f"expected {log_path} to record zero temperature")
+
+    if (
+        case_name == "first_moment"
+        and "first_moment_error: 0.25\n" not in log_text
+    ):
+        raise AssertionError(
+            f"expected {log_path} to record the effective first-moment error"
+        )
 
     if detailed_balance and case_name == "negative_first_moment":
         error_line = next(
@@ -411,6 +422,45 @@ def run_validation_case(
             expected_output = "minimum_fitness:"
         else:
             expected_output = "positive ISF values are not supported for single-particle spectra"
+    elif case_name == "bad_first_moment_error":
+        write_fixture(fixture)
+        save_dir = workdir / "results"
+        expected_output = (
+            "first_moment_error must be finite and positive when "
+            "first_moment is used"
+        )
+        for invalid_error in ("0", "-0", "-1", "nan", "inf", "-inf"):
+            # The bundled parser classifies a standalone -inf value as an
+            # option. std::stod accepts leading whitespace, which keeps this
+            # one edge case on the solver's semantic validation path while the
+            # other spellings retain canonical CLI coverage.
+            argument_value = (
+                f" {invalid_error}" if invalid_error == "-inf" else invalid_error
+            )
+            command = deac_command(
+                exe,
+                workdir,
+                fixture,
+                extra_args=[
+                    "--first_moment",
+                    "0",
+                    "--first_moment_error",
+                    argument_value,
+                ],
+                zero_temperature=zero_temperature,
+            )
+            run_command(
+                command,
+                workdir,
+                expected_returncode=1,
+                expected_output=expected_output,
+            )
+            if save_dir.exists():
+                raise AssertionError(
+                    "invalid active first-moment error created output directory "
+                    f"{save_dir}"
+                )
+        return
     elif case_name == "bad_third_moment_error":
         write_fixture(fixture)
         extra_args = ["--third_moment", "1.0", "--third_moment_error", "0.0"]
@@ -450,6 +500,7 @@ def run_validation_case(
             ["--self_adapting_differential_weight_shift", "0.1"],
             ["-m", "0.9"],
             ["--self_adapting_differential_weight", "0.9"],
+            ["--first_moment_error", "0.5"],
         ):
             command = deac_command(
                 exe,
@@ -688,6 +739,9 @@ def main():
         )
         for expected_output in (
             "--build-identity",
+            "--first_moment_error",
+            "finite, positive standard deviation",
+            "Defaults to 1.0",
             "--self_adapting_differential_weight_probability",
             "Must be finite and in [0, 2].",
             "Negative values are allowed.",

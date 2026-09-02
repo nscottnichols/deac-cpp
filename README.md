@@ -176,10 +176,13 @@ the incumbent population or its statistics.
 
 When `--first_moment` is non-negative, it is an active constraint, including
 the valid target value zero. The fitness contribution is
-`((candidate_first_moment - target_first_moment) / 1.0)^2` on every backend.
-The unit standard deviation is fixed because the CLI does not yet expose a
-first-moment uncertainty; negative `--first_moment` values disable the
-constraint.
+`((candidate_first_moment - target_first_moment) / first_moment_error)^2` on
+every backend. `--first_moment_error` is a standard deviation, defaults to
+`1.0` for backward compatibility, and must be finite and strictly positive
+when the constraint is active. Negative `--first_moment` values disable the
+constraint; explicitly supplying `--first_moment_error` in that state is
+rejected rather than silently ignored. The effective uncertainty is recorded
+in the run log whenever the constraint is active.
 	
 The general recommendation is to generate several spectra using different seeds (`--seed`) and average the final results. A sample bash script to generate a command file with multiple seeds can be found in the tools directory `tools/generate_commands.sh`.
 	

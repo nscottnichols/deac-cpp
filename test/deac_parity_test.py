@@ -52,6 +52,7 @@ def run_deac(
     normalize=False,
     negative_first_moment=False,
     first_moment=False,
+    first_moment_error=None,
     population_size="8",
     zero_temperature=False,
     detailed_balance=False,
@@ -89,6 +90,8 @@ def run_deac(
         command.append("--use_negative_first_moment")
     if first_moment:
         command.extend(["--first_moment", "0"])
+        if first_moment_error is not None:
+            command.extend(["--first_moment_error", first_moment_error])
     command.append(str(fixture))
     run_command(command, workdir)
     return save_dir
@@ -137,6 +140,8 @@ def assert_outputs_match(
     detailed_balance=False,
     zero_temperature=False,
     normalize=False,
+    first_moment=False,
+    first_moment_error=None,
 ):
     if zero_temperature:
         prefix = "deac-zT"
@@ -170,6 +175,16 @@ def assert_outputs_match(
             f"generation mismatch: reference={reference_generation}, "
             f"candidate={candidate_generation}"
         )
+
+    if first_moment:
+        expected_error = 1.0 if first_moment_error is None else float(first_moment_error)
+        for log_path in (reference_log, candidate_log):
+            actual_error = float(read_log_value(log_path, "first_moment_error"))
+            if actual_error != expected_error:
+                raise AssertionError(
+                    f"{log_path} recorded first_moment_error={actual_error}, "
+                    f"expected {expected_error}"
+                )
 
     reference_fitness = float(read_log_value(reference_log, "minimum_fitness"))
     candidate_fitness = float(read_log_value(candidate_log, "minimum_fitness"))
@@ -225,17 +240,20 @@ def main():
     write_doubles(frequency_file, [0.0, 0.7, 1.8, 3.0])
 
     cases = [
-        ("default", "17", False, False, False, "8"),
+        ("default", "17", False, False, False, None, "8"),
         # A zero-valued first moment is active. It previously divided the CPU
         # fitness by the target while GPU backends used a unit uncertainty.
-        ("first_moment_zero", "29", False, False, True, "8"),
+        ("first_moment_zero", "29", False, False, True, None, "8"),
+        # A non-unit uncertainty must reach the shared CPU and accelerator
+        # initial-population fitness paths with the same weighting.
+        ("first_moment_scaled", "31", False, False, True, "0.25", "8"),
         # Exercise both GEMV beta paths and a partial second work-group even
         # with the default GPU_BLOCK_SIZE=1024.
-        ("normalize_large_population", "19", True, False, False, "1028"),
+        ("normalize_large_population", "19", True, False, False, None, "1028"),
     ]
     if args.detailed_balance and not args.zero_temperature:
         cases.append(
-            ("negative_first_moment", "23", False, True, False, "8")
+            ("negative_first_moment", "23", False, True, False, None, "8")
         )
     for (
         case_name,
@@ -243,6 +261,7 @@ def main():
         normalize,
         negative_first_moment,
         first_moment,
+        first_moment_error,
         population_size,
     ) in cases:
         case_fixture = positive_fixture if normalize else fixture
@@ -255,6 +274,7 @@ def main():
             normalize=normalize,
             negative_first_moment=negative_first_moment,
             first_moment=first_moment,
+            first_moment_error=first_moment_error,
             population_size=population_size,
             zero_temperature=args.zero_temperature,
             detailed_balance=args.detailed_balance,
@@ -268,6 +288,7 @@ def main():
             normalize=normalize,
             negative_first_moment=negative_first_moment,
             first_moment=first_moment,
+            first_moment_error=first_moment_error,
             population_size=population_size,
             zero_temperature=args.zero_temperature,
             detailed_balance=args.detailed_balance,
@@ -278,9 +299,11 @@ def main():
             seed,
             args.absolute_tolerance,
             args.relative_tolerance,
-            args.detailed_balance,
-            args.zero_temperature,
-            normalize,
+            detailed_balance=args.detailed_balance,
+            zero_temperature=args.zero_temperature,
+            normalize=normalize,
+            first_moment=first_moment,
+            first_moment_error=first_moment_error,
         )
 
 
