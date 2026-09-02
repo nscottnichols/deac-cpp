@@ -30,6 +30,9 @@ INVALID_NORMALIZATION_DEFINITION = (
     "DEAC_TEST_FORCE_INVALID_NORMALIZATION_TRIALS=1"
 )
 POISON_GPU_FITNESS_DEFINITION = "DEAC_TEST_POISON_GPU_FITNESS=1"
+IDENTICAL_POPULATION_SCORING_DEFINITION = (
+    "DEAC_TEST_SCORE_IDENTICAL_POPULATION=1"
+)
 HIPBLAS_CACHE_KEYS = {
     "CMAKE_DISABLE_FIND_PACKAGE_hipblas",
     "DEAC_HIPBLAS_INCLUDE_DIR",
@@ -213,6 +216,7 @@ def validate_compile_groups(
     fingerprint=None,
     expect_invalid_normalization_definition=False,
     expect_poison_gpu_fitness_definition=False,
+    expect_identical_population_scoring_definition=False,
 ):
     if not isinstance(compile_groups, list) or not compile_groups:
         raise AssertionError(f"{label} has no effective compile groups")
@@ -251,6 +255,9 @@ def validate_compile_groups(
             ),
             POISON_GPU_FITNESS_DEFINITION: (
                 1 if expect_poison_gpu_fitness_definition else 0
+            ),
+            IDENTICAL_POPULATION_SCORING_DEFINITION: (
+                1 if expect_identical_population_scoring_definition else 0
             ),
         }
         for definition, expected_count in expected_test_definitions.items():
@@ -293,6 +300,7 @@ def validate_receipt(
     expected_link_library,
     expect_invalid_normalization_definition,
     expect_poison_gpu_fitness_definition,
+    expect_identical_population_scoring_definition,
 ):
     receipt = document["receipt"]
     archive_tools = receipt["archive_tools"]
@@ -409,6 +417,9 @@ def validate_receipt(
         expect_poison_gpu_fitness_definition=(
             expect_poison_gpu_fitness_definition
         ),
+        expect_identical_population_scoring_definition=(
+            expect_identical_population_scoring_definition
+        ),
     )
     if not any(source.endswith("/deac/src/deac.cpp") for source in compiled_sources):
         raise AssertionError("receipt does not bind the primary solver source")
@@ -454,6 +465,7 @@ def validate_receipt(
         fingerprint=fingerprint,
         expect_invalid_normalization_definition=False,
         expect_poison_gpu_fitness_definition=False,
+        expect_identical_population_scoring_definition=False,
     )
     used_languages.update(dependency_languages)
     if not any(source.endswith("/deac/src/build_identity.cpp") for source in dependency_sources):
@@ -531,6 +543,7 @@ def validate_receipt_endpoint(
     expected_link_library,
     expect_invalid_normalization_definition,
     expect_poison_gpu_fitness_definition,
+    expect_identical_population_scoring_definition,
 ):
     first = run([exe, "--build-receipt"], exe.parent)
     second = run([exe, "--build-receipt"], exe.parent)
@@ -555,6 +568,9 @@ def validate_receipt_endpoint(
         ),
         expect_poison_gpu_fitness_definition=(
             expect_poison_gpu_fitness_definition
+        ),
+        expect_identical_population_scoring_definition=(
+            expect_identical_population_scoring_definition
         ),
     )
     return first.stdout
@@ -605,6 +621,7 @@ def main():
         expected_link_library=args.expected_link_library,
         expect_invalid_normalization_definition=False,
         expect_poison_gpu_fitness_definition=False,
+        expect_identical_population_scoring_definition=False,
     )
     if args.helper_exe is not None:
         validate_receipt_endpoint(
@@ -618,6 +635,7 @@ def main():
             expected_link_library=args.expected_link_library,
             expect_invalid_normalization_definition=True,
             expect_poison_gpu_fitness_definition=(args.expected_backend != "none"),
+            expect_identical_population_scoring_definition=True,
         )
 
     workdir = Path(args.workdir)
