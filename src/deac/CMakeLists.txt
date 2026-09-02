@@ -895,6 +895,10 @@ if(Python3_Interpreter_FOUND)
                 --workdir
                     ${CMAKE_CURRENT_BINARY_DIR}/build-receipt-fixture-test
         )
+        # The fixture launches a broad adversarial File-API regeneration
+        # matrix.  Keep ordinary solver tests on the caller's short timeout,
+        # while allowing this integration test to finish on a loaded node.
+        set_tests_properties(deac_build_receipt_fixture PROPERTIES TIMEOUT 600)
     endif()
     add_test(
         NAME deac_first_moment_fitness
