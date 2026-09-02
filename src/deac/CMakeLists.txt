@@ -278,6 +278,7 @@ set(DEAC_BUILD_RECEIPT_CACHE_KEYS
     CMAKE_CXX_COMPILER
     CMAKE_CXX_COMPILER_LAUNCHER
     CMAKE_CXX_FLAGS
+    CMAKE_DISABLE_FIND_PACKAGE_hipblas
     CMAKE_EXE_LINKER_FLAGS
     CMAKE_GENERATOR
     CMAKE_GENERATOR_INSTANCE
@@ -294,9 +295,12 @@ set(DEAC_BUILD_RECEIPT_CACHE_KEYS
     CMAKE_SYSROOT_COMPILE
     CMAKE_SYSROOT_LINK
     CMAKE_TOOLCHAIN_FILE
+    DEAC_HIPBLAS_INCLUDE_DIR
+    DEAC_HIPBLAS_LIBRARY
     DEAC_MODEL
     GPU_BACKEND
     GPU_BLOCK_SIZE
+    HIP_RUNTIME_INCLUDE_DIR
     MAX_GPU_STREAMS
     MKLROOT
     SINGLE_PARTICLE_FERMIONIC_SPECTRAL_FUNCTION
@@ -306,24 +310,15 @@ set(DEAC_BUILD_RECEIPT_CACHE_KEYS
     USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT
     USE_BLAS
     USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-    USE_SYCL_MATMUL_WA)
+    USE_SYCL_MATMUL_WA
+    hipblas_DIR
+    hipblas_ROOT)
 foreach(_configuration
         DEBUG RELEASE MINSIZEREL RELWITHDEBINFO ZEROT ZEROTDEBUG)
     list(APPEND DEAC_BUILD_RECEIPT_CACHE_KEYS
         "CMAKE_CXX_FLAGS_${_configuration}"
         "CMAKE_EXE_LINKER_FLAGS_${_configuration}")
 endforeach()
-deac_target_add_build_receipt(${exe}
-    SOURCE_ROOT "${CMAKE_SOURCE_DIR}/.."
-    GENERATED_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/receipt"
-    IDENTITY_NAME deac
-    RECEIPT
-        "${CMAKE_CURRENT_BINARY_DIR}/receipt/$<CONFIG>/deac-build-receipt.json"
-    BACKEND "${GPU_BACKEND}"
-    CACHE_KEYS ${DEAC_BUILD_RECEIPT_CACHE_KEYS}
-    DEPENDENCY_TARGETS ${DEAC_BUILD_IDENTITY_OBJECT_TARGET})
-set(DEAC_PRIMARY_BUILD_RECEIPT "${DEAC_BUILD_RECEIPT}")
-
 # 'make install' to the correct locations (provided by GNUInstallDirs).
 install(TARGETS ${exe} EXPORT ${exe}Config
     ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -619,6 +614,67 @@ if(NOT USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT)
         target_link_libraries(
             deac_invalid_normalization_evolution_test_exe stdc++fs)
     endif()
+endif()
+
+# The HIP+BLAS package, includes, and link dependency are represented by one
+# target-scoped contract shared by every target that compiles the GPU solver
+# implementation.  The helper is a no-op for every other configuration.
+deac_target_link_hipblas(${DEAC_HIPBLAS_CONSUMER_TARGETS})
+
+# Receipt registration must follow every target graph mutation.  The identity
+# object is always a compiled dependency.  HIP+BLAS additionally contributes
+# an interface-only contract whose resolved provider is visible in the final
+# executable link fragments even though CMake omits interface targets from the
+# File API codemodel target list.
+set(DEAC_BUILD_RECEIPT_DEPENDENCY_TARGETS
+    ${DEAC_BUILD_IDENTITY_OBJECT_TARGET})
+set(DEAC_BUILD_RECEIPT_LINK_LIBRARY_NAMES)
+set(DEAC_BUILD_RECEIPT_LINK_LIBRARY_ARTIFACTS)
+if(USE_BLAS AND "${GPU_BACKEND}" STREQUAL "hip")
+    if(NOT TARGET deac_hipblas_link_contract)
+        message(FATAL_ERROR
+            "HIP+BLAS receipt registration requires the final hipBLAS contract.")
+    endif()
+    _deac_hipblas_validate_link_contract(deac_hipblas_link_contract)
+    list(APPEND DEAC_BUILD_RECEIPT_DEPENDENCY_TARGETS
+        deac_hipblas_link_contract)
+    get_target_property(DEAC_HIPBLAS_PROVIDER_TARGET
+        deac_hipblas_link_contract DEAC_HIPBLAS_PROVIDER_TARGET)
+    if(NOT TARGET "${DEAC_HIPBLAS_PROVIDER_TARGET}")
+        message(FATAL_ERROR
+            "The hipBLAS contract has no receipt-capable provider target.")
+    endif()
+    get_target_property(DEAC_HIPBLAS_PROVIDER_ARTIFACT
+        deac_hipblas_link_contract DEAC_HIPBLAS_PROVIDER_ARTIFACT)
+    if(NOT DEAC_HIPBLAS_PROVIDER_ARTIFACT OR
+            DEAC_HIPBLAS_PROVIDER_ARTIFACT MATCHES "-NOTFOUND$")
+        message(FATAL_ERROR
+            "The hipBLAS contract has no receipt-capable provider artifact.")
+    endif()
+    list(APPEND DEAC_BUILD_RECEIPT_LINK_LIBRARY_NAMES
+        "${DEAC_HIPBLAS_PROVIDER_TARGET}")
+    list(APPEND DEAC_BUILD_RECEIPT_LINK_LIBRARY_ARTIFACTS
+        "${DEAC_HIPBLAS_PROVIDER_ARTIFACT}")
+elseif(TARGET deac_hipblas_link_contract)
+    message(FATAL_ERROR
+        "A hipBLAS contract exists outside the HIP+BLAS configuration.")
+endif()
+deac_target_add_build_receipt(${exe}
+    SOURCE_ROOT "${CMAKE_SOURCE_DIR}/.."
+    GENERATED_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/receipt"
+    IDENTITY_NAME deac
+    RECEIPT
+        "${CMAKE_CURRENT_BINARY_DIR}/receipt/$<CONFIG>/deac-build-receipt.json"
+    BACKEND "${GPU_BACKEND}"
+    CACHE_KEYS ${DEAC_BUILD_RECEIPT_CACHE_KEYS}
+    DEPENDENCY_TARGETS ${DEAC_BUILD_RECEIPT_DEPENDENCY_TARGETS}
+    REQUIRED_LINK_LIBRARY_NAMES
+        ${DEAC_BUILD_RECEIPT_LINK_LIBRARY_NAMES}
+    REQUIRED_LINK_LIBRARY_ARTIFACTS
+        ${DEAC_BUILD_RECEIPT_LINK_LIBRARY_ARTIFACTS})
+set(DEAC_PRIMARY_BUILD_RECEIPT "${DEAC_BUILD_RECEIPT}")
+
+if(TARGET deac_invalid_normalization_evolution_test_exe)
     deac_target_add_build_receipt(
         deac_invalid_normalization_evolution_test_exe
         SOURCE_ROOT "${CMAKE_SOURCE_DIR}/.."
@@ -629,15 +685,14 @@ if(NOT USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT)
             "${CMAKE_CURRENT_BINARY_DIR}/receipt/$<CONFIG>/deac-invalid-normalization-build-receipt.json"
         BACKEND "${GPU_BACKEND}"
         CACHE_KEYS ${DEAC_BUILD_RECEIPT_CACHE_KEYS}
-        DEPENDENCY_TARGETS ${DEAC_BUILD_IDENTITY_OBJECT_TARGET})
+        DEPENDENCY_TARGETS ${DEAC_BUILD_RECEIPT_DEPENDENCY_TARGETS}
+        REQUIRED_LINK_LIBRARY_NAMES
+            ${DEAC_BUILD_RECEIPT_LINK_LIBRARY_NAMES}
+        REQUIRED_LINK_LIBRARY_ARTIFACTS
+            ${DEAC_BUILD_RECEIPT_LINK_LIBRARY_ARTIFACTS})
     set(DEAC_INVALID_NORMALIZATION_BUILD_RECEIPT
         "${DEAC_BUILD_RECEIPT}")
 endif()
-
-# The HIP+BLAS package, includes, and link dependency are represented by one
-# target-scoped contract shared by every target that compiles the GPU solver
-# implementation.  The helper is a no-op for every other configuration.
-deac_target_link_hipblas(${DEAC_HIPBLAS_CONSUMER_TARGETS})
 
 if(Python3_Interpreter_FOUND)
     add_test(
@@ -783,6 +838,13 @@ if(Python3_Interpreter_FOUND)
             --expected-helper-target
                 deac_invalid_normalization_evolution_test_exe)
     endif()
+    set(DEAC_BUILD_RECEIPT_LINK_LIBRARY_ARGS)
+    foreach(_link_library_artifact
+            IN LISTS DEAC_BUILD_RECEIPT_LINK_LIBRARY_ARTIFACTS)
+        list(APPEND DEAC_BUILD_RECEIPT_LINK_LIBRARY_ARGS
+            --expected-link-library
+                "${_link_library_artifact}")
+    endforeach()
     add_test(
         NAME deac_build_identity
         COMMAND
@@ -815,6 +877,7 @@ if(Python3_Interpreter_FOUND)
             --expected-backend ${GPU_BACKEND}
             --expected-target ${exe}
             --expected-dependency-target ${DEAC_BUILD_IDENTITY_OBJECT_TARGET}
+            ${DEAC_BUILD_RECEIPT_LINK_LIBRARY_ARGS}
             ${DEAC_BUILD_RECEIPT_HELPER_ARGS}
             ${DEAC_BUILD_IDENTITY_CONFIG_ARGS}
     )

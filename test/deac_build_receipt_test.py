@@ -1,6 +1,8 @@
 import argparse
 import hashlib
 import json
+import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -27,6 +29,15 @@ SOURCE_IDENTITY_KEYS = [
 INVALID_NORMALIZATION_DEFINITION = (
     "DEAC_TEST_FORCE_INVALID_NORMALIZATION_TRIALS=1"
 )
+POISON_GPU_FITNESS_DEFINITION = "DEAC_TEST_POISON_GPU_FITNESS=1"
+HIPBLAS_CACHE_KEYS = {
+    "CMAKE_DISABLE_FIND_PACKAGE_hipblas",
+    "DEAC_HIPBLAS_INCLUDE_DIR",
+    "DEAC_HIPBLAS_LIBRARY",
+    "HIP_RUNTIME_INCLUDE_DIR",
+    "hipblas_DIR",
+    "hipblas_ROOT",
+}
 
 
 def run(command, cwd, *, check=True):
@@ -55,6 +66,103 @@ def sha256_file(path):
 
 def canonical_json(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def normalized_absolute_native_arguments(fragment):
+    if os.name != "posix":
+        raise AssertionError(
+            "native-command link-fragment validation requires POSIX shell syntax"
+        )
+    try:
+        arguments = shlex.split(fragment, posix=True)
+    except ValueError as error:
+        raise AssertionError(
+            f"invalid native-command link fragment: {fragment!r}"
+        ) from error
+    return [
+        os.path.normpath(argument)
+        for argument in arguments
+        if os.path.isabs(argument)
+    ]
+
+
+def validate_expected_link_library(command_fragments, expected_link_library):
+    library_arguments = [
+        argument
+        for fragment in command_fragments
+        if fragment["role"] == "libraries"
+        for argument in normalized_absolute_native_arguments(fragment["fragment"])
+    ]
+    if expected_link_library is None:
+        return library_arguments
+    if not os.path.isabs(expected_link_library):
+        raise AssertionError(
+            "expected link-library path must be absolute: "
+            f"{expected_link_library!r}"
+        )
+    expected_library = os.path.normpath(expected_link_library)
+    if library_arguments.count(expected_library) != 1:
+        raise AssertionError(
+            "HIP+BLAS receipt must contain its resolved provider library "
+            f"exactly once; expected {expected_link_library!r}, got "
+            f"normalized absolute arguments {library_arguments!r}"
+        )
+    return library_arguments
+
+
+def validate_native_link_fragment_regression():
+    fixture_root = os.path.abspath("native link fragment fixture")
+    provider = os.path.join(fixture_root, "provider archives", "libprovider.a")
+    decoys = [
+        os.path.join(fixture_root, "libhipblas-decoy-one.a"),
+        os.path.join(fixture_root, "libhipblas-decoy-two.a"),
+    ]
+    fragments = [
+        {
+            "fragment": f"{shlex.quote(provider)} {shlex.quote(decoys[0])}",
+            "role": "libraries",
+        },
+        {"fragment": shlex.quote(decoys[1]), "role": "libraries"},
+    ]
+    observed = validate_expected_link_library(fragments, provider)
+    expected = [os.path.normpath(path) for path in (provider, *decoys)]
+    if observed != expected:
+        raise AssertionError(
+            "native-command link-fragment regression: expected "
+            f"{expected!r}, got {observed!r}"
+        )
+    if validate_expected_link_library(fragments, None) != expected:
+        raise AssertionError(
+            "native-command link-fragment regression changed the no-provider case"
+        )
+
+    rejection_cases = [
+        (
+            "missing",
+            fragments,
+            os.path.join(fixture_root, "provider archives", "missing-provider.a"),
+        ),
+        (
+            "duplicate",
+            [
+                *fragments,
+                {"fragment": shlex.quote(provider), "role": "libraries"},
+            ],
+            provider,
+        ),
+    ]
+    for label, rejected_fragments, rejected_provider in rejection_cases:
+        try:
+            validate_expected_link_library(rejected_fragments, rejected_provider)
+        except AssertionError as error:
+            if "exactly once" not in str(error):
+                raise AssertionError(
+                    f"native-command {label} regression failed unexpectedly"
+                ) from error
+        else:
+            raise AssertionError(
+                f"native-command link-fragment regression accepted {label} provider"
+            )
 
 
 def parse_receipt(raw):
@@ -104,6 +212,7 @@ def validate_compile_groups(
     label,
     fingerprint=None,
     expect_invalid_normalization_definition=False,
+    expect_poison_gpu_fitness_definition=False,
 ):
     if not isinstance(compile_groups, list) or not compile_groups:
         raise AssertionError(f"{label} has no effective compile groups")
@@ -136,18 +245,21 @@ def validate_compile_groups(
                 assert_string(fragment["role"], f"{label} compile fragment role")
         if not isinstance(group["definitions"], list):
             raise TypeError(f"{label} definitions must be a list")
-        expected_invalid_definition_count = (
-            1 if expect_invalid_normalization_definition else 0
-        )
-        if (
-            group["definitions"].count(INVALID_NORMALIZATION_DEFINITION)
-            != expected_invalid_definition_count
-        ):
-            expectation = "exactly once" if expected_invalid_definition_count else "never"
-            raise AssertionError(
-                f"{label} compile group must contain the test-only invalid "
-                f"normalization definition {expectation}"
-            )
+        expected_test_definitions = {
+            INVALID_NORMALIZATION_DEFINITION: (
+                1 if expect_invalid_normalization_definition else 0
+            ),
+            POISON_GPU_FITNESS_DEFINITION: (
+                1 if expect_poison_gpu_fitness_definition else 0
+            ),
+        }
+        for definition, expected_count in expected_test_definitions.items():
+            if group["definitions"].count(definition) != expected_count:
+                expectation = "exactly once" if expected_count else "never"
+                raise AssertionError(
+                    f"{label} compile group must contain the test-only "
+                    f"definition {definition} {expectation}"
+                )
         if fingerprint is not None:
             expected = f"DEAC_BUILD_TOOLCHAIN_FINGERPRINT_SHA256={fingerprint}"
             observed_fingerprints = [
@@ -178,7 +290,9 @@ def validate_receipt(
     expected_backend,
     expected_target,
     expected_dependency_target,
+    expected_link_library,
     expect_invalid_normalization_definition,
+    expect_poison_gpu_fitness_definition,
 ):
     receipt = document["receipt"]
     archive_tools = receipt["archive_tools"]
@@ -278,6 +392,12 @@ def validate_receipt(
     ]
     if len(home_entries) != 1 or home_entries[0]["value"] != "<SOURCE_ROOT>":
         raise AssertionError("CMake source root was not canonicalized in the cache")
+    missing_hipblas_keys = HIPBLAS_CACHE_KEYS.difference(names)
+    if missing_hipblas_keys:
+        raise AssertionError(
+            "receipt omits material HIP/hipBLAS cache keys: "
+            f"{sorted(missing_hipblas_keys)!r}"
+        )
 
     compiled_sources, used_languages = validate_compile_groups(
         receipt["compile_groups"],
@@ -286,6 +406,9 @@ def validate_receipt(
         expect_invalid_normalization_definition=(
             expect_invalid_normalization_definition
         ),
+        expect_poison_gpu_fitness_definition=(
+            expect_poison_gpu_fitness_definition
+        ),
     )
     if not any(source.endswith("/deac/src/deac.cpp") for source in compiled_sources):
         raise AssertionError("receipt does not bind the primary solver source")
@@ -293,25 +416,59 @@ def validate_receipt(
         raise AssertionError("receipt does not include its embedded receipt object")
 
     dependencies = receipt["target_dependencies"]
-    if not isinstance(dependencies, list) or len(dependencies) != 1:
-        raise AssertionError("receipt must bind its one direct target dependency")
-    dependency = dependencies[0]
-    if list(dependency) != ["archive", "compile_groups", "link", "name", "type"]:
-        raise AssertionError(f"noncanonical target dependency: {dependency!r}")
-    if dependency["name"] != expected_dependency_target:
-        raise AssertionError(f"unexpected target dependency: {dependency!r}")
-    if dependency["type"] != "OBJECT_LIBRARY":
-        raise AssertionError(f"unexpected dependency target type: {dependency!r}")
+    if not isinstance(dependencies, list):
+        raise TypeError("receipt target dependencies must be a list")
+    dependency_names = [dependency.get("name") for dependency in dependencies]
+    if dependency_names != sorted(set(dependency_names)):
+        raise AssertionError("receipt dependencies are not unique and sorted")
+    expected_dependencies = {expected_dependency_target: "OBJECT_LIBRARY"}
+    if expected_link_library is not None:
+        expected_dependencies["deac_hipblas_link_contract"] = "INTERFACE_LIBRARY"
+    if set(dependency_names) != set(expected_dependencies):
+        raise AssertionError(
+            "receipt dependency names changed: expected "
+            f"{sorted(expected_dependencies)!r}, got {dependency_names!r}"
+        )
+    dependency_by_name = {
+        dependency["name"]: dependency for dependency in dependencies
+    }
+    for dependency_name, dependency_type in expected_dependencies.items():
+        dependency = dependency_by_name[dependency_name]
+        if list(dependency) != [
+            "archive",
+            "compile_groups",
+            "link",
+            "name",
+            "type",
+        ]:
+            raise AssertionError(f"noncanonical target dependency: {dependency!r}")
+        if dependency["type"] != dependency_type:
+            raise AssertionError(f"unexpected dependency target type: {dependency!r}")
+
+    dependency = dependency_by_name[expected_dependency_target]
     if dependency["archive"] is not None or dependency["link"] is not None:
         raise AssertionError("identity object dependency unexpectedly archives or links")
     dependency_sources, dependency_languages = validate_compile_groups(
         dependency["compile_groups"],
         label="dependency",
         fingerprint=fingerprint,
+        expect_invalid_normalization_definition=False,
+        expect_poison_gpu_fitness_definition=False,
     )
     used_languages.update(dependency_languages)
     if not any(source.endswith("/deac/src/build_identity.cpp") for source in dependency_sources):
         raise AssertionError("receipt does not bind the embedded identity object source")
+    if expected_link_library is not None:
+        interface_dependency = dependency_by_name["deac_hipblas_link_contract"]
+        if (
+            interface_dependency["archive"] is not None
+            or interface_dependency["compile_groups"] != []
+            or interface_dependency["link"] is not None
+        ):
+            raise AssertionError(
+                "hipBLAS interface dependency has nonempty build artifacts: "
+                f"{interface_dependency!r}"
+            )
 
     link = receipt["link"]
     if list(link) != ["command_fragments", "language", "lto", "sysroot"]:
@@ -322,6 +479,15 @@ def validate_receipt(
         link["command_fragments"], list
     ):
         raise TypeError("link receipt has invalid types")
+    for fragment in link["command_fragments"]:
+        if list(fragment) != ["fragment", "role"]:
+            raise AssertionError(f"noncanonical link fragment: {fragment!r}")
+        assert_string(fragment["fragment"], "link fragment", nonempty=False)
+        if fragment["role"] is not None:
+            assert_string(fragment["role"], "link fragment role")
+    validate_expected_link_library(
+        link["command_fragments"], expected_link_library
+    )
 
     toolchains = receipt["toolchains"]
     if not isinstance(toolchains, list) or not toolchains:
@@ -362,7 +528,9 @@ def validate_receipt_endpoint(
     expected_backend,
     expected_target,
     expected_dependency_target,
+    expected_link_library,
     expect_invalid_normalization_definition,
+    expect_poison_gpu_fitness_definition,
 ):
     first = run([exe, "--build-receipt"], exe.parent)
     second = run([exe, "--build-receipt"], exe.parent)
@@ -381,14 +549,19 @@ def validate_receipt_endpoint(
         expected_backend=expected_backend,
         expected_target=expected_target,
         expected_dependency_target=expected_dependency_target,
+        expected_link_library=expected_link_library,
         expect_invalid_normalization_definition=(
             expect_invalid_normalization_definition
+        ),
+        expect_poison_gpu_fitness_definition=(
+            expect_poison_gpu_fitness_definition
         ),
     )
     return first.stdout
 
 
 def main():
+    validate_native_link_fragment_regression()
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", required=True)
     parser.add_argument("--receipt", required=True)
@@ -399,6 +572,7 @@ def main():
     parser.add_argument("--expected-backend", required=True)
     parser.add_argument("--expected-target", required=True)
     parser.add_argument("--expected-dependency-target", required=True)
+    parser.add_argument("--expected-link-library")
     parser.add_argument("--helper-exe")
     parser.add_argument("--helper-receipt")
     parser.add_argument("--expected-helper-target")
@@ -428,7 +602,9 @@ def main():
         expected_backend=args.expected_backend,
         expected_target=args.expected_target,
         expected_dependency_target=args.expected_dependency_target,
+        expected_link_library=args.expected_link_library,
         expect_invalid_normalization_definition=False,
+        expect_poison_gpu_fitness_definition=False,
     )
     if args.helper_exe is not None:
         validate_receipt_endpoint(
@@ -439,7 +615,9 @@ def main():
             expected_backend=args.expected_backend,
             expected_target=args.expected_helper_target,
             expected_dependency_target=args.expected_dependency_target,
+            expected_link_library=args.expected_link_library,
             expect_invalid_normalization_definition=True,
+            expect_poison_gpu_fitness_definition=(args.expected_backend != "none"),
         )
 
     workdir = Path(args.workdir)

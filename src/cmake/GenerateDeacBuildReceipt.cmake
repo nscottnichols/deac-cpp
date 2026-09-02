@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.27)
 
+include("${CMAKE_CURRENT_LIST_DIR}/DeacBuildReceipt.cmake")
+
 foreach(_required_variable
         DEAC_BUILD_RECEIPT_SOURCE_ROOT
         DEAC_BUILD_RECEIPT_CMAKE_SOURCE_ROOT
@@ -11,6 +13,7 @@ foreach(_required_variable
         DEAC_BUILD_RECEIPT_CACHE_KEYS
         DEAC_BUILD_RECEIPT_LANGUAGES
         DEAC_BUILD_RECEIPT_ARCHIVE_TOOLS
+        DEAC_BUILD_RECEIPT_REQUIRED_LINK_LIBRARY_COUNT
         DEAC_BUILD_RECEIPT_TOOLCHAIN_FINGERPRINT
         DEAC_BUILD_RECEIPT_CMAKE_PATH
         DEAC_BUILD_RECEIPT_CMAKE_REAL_PATH
@@ -23,22 +26,73 @@ foreach(_required_variable
         message(FATAL_ERROR "${_required_variable} is required")
     endif()
 endforeach()
-if(NOT DEFINED DEAC_BUILD_RECEIPT_DEPENDENCY_TARGETS)
-    message(FATAL_ERROR "DEAC_BUILD_RECEIPT_DEPENDENCY_TARGETS is required")
-endif()
+foreach(_required_list_variable
+        DEAC_BUILD_RECEIPT_CODEMODEL_DEPENDENCY_TARGETS
+        DEAC_BUILD_RECEIPT_INTERFACE_DEPENDENCY_TARGETS)
+    if(NOT DEFINED ${_required_list_variable})
+        message(FATAL_ERROR "${_required_list_variable} is required")
+    endif()
+endforeach()
 
 function(_deac_receipt_json_quote output value)
-    set(_value "${value}")
-    string(REPLACE "\\" "\\\\" _value "${_value}")
-    string(REPLACE "\"" "\\\"" _value "${_value}")
-    string(ASCII 8 _backspace)
-    string(ASCII 12 _form_feed)
-    string(REPLACE "${_backspace}" "\\b" _value "${_value}")
-    string(REPLACE "${_form_feed}" "\\f" _value "${_value}")
-    string(REPLACE "\n" "\\n" _value "${_value}")
-    string(REPLACE "\r" "\\r" _value "${_value}")
-    string(REPLACE "\t" "\\t" _value "${_value}")
-    set(${output} "\"${_value}\"" PARENT_SCOPE)
+    # Rebuild the string byte-by-byte.  The raw document reader rejects JSON
+    # NUL escapes before string(JSON) can truncate them; preserve JSON's short
+    # standard escapes and encode every other representable C0 control as
+    # \u00XX.
+    string(HEX "${value}" _value_hex)
+    string(LENGTH "${_value_hex}" _hex_length)
+    set(_quoted_value "")
+    if(_hex_length GREATER 0)
+        math(EXPR _last_byte_offset "${_hex_length} - 2")
+        foreach(_byte_offset RANGE 0 ${_last_byte_offset} 2)
+            string(SUBSTRING
+                "${_value_hex}" ${_byte_offset} 2 _byte_hex)
+            if(_byte_hex STREQUAL "08")
+                string(APPEND _quoted_value "\\b")
+            elseif(_byte_hex STREQUAL "09")
+                string(APPEND _quoted_value "\\t")
+            elseif(_byte_hex STREQUAL "0a")
+                string(APPEND _quoted_value "\\n")
+            elseif(_byte_hex STREQUAL "0c")
+                string(APPEND _quoted_value "\\f")
+            elseif(_byte_hex STREQUAL "0d")
+                string(APPEND _quoted_value "\\r")
+            elseif(_byte_hex MATCHES "^(0[0-9a-f]|1[0-9a-f])$")
+                string(APPEND _quoted_value "\\u00${_byte_hex}")
+            elseif(_byte_hex STREQUAL "22")
+                string(APPEND _quoted_value "\\\"")
+            elseif(_byte_hex STREQUAL "5c")
+                string(APPEND _quoted_value "\\\\")
+            else()
+                math(EXPR _byte_value "0x${_byte_hex}")
+                string(ASCII ${_byte_value} _byte)
+                string(APPEND _quoted_value "${_byte}")
+            endif()
+        endforeach()
+    endif()
+    set(${output} "\"${_quoted_value}\"" PARENT_SCOPE)
+endfunction()
+
+function(_deac_receipt_reject_raw_json_nul label document_hex)
+    # Anchor the repeated byte pairs so only an aligned 00 byte matches.
+    string(REGEX MATCH "^(..)*00" _raw_nul_prefix "${document_hex}")
+    if(NOT _raw_nul_prefix STREQUAL "")
+        message(FATAL_ERROR
+            "build-receipt ${label} contains a raw NUL byte")
+    endif()
+endfunction()
+
+function(_deac_receipt_reject_json_nul_escape label document)
+    # Removing every adjacent backslash pair leaves exactly the odd, semantic
+    # JSON escape introducers.  Do this in CMake's string implementation rather
+    # than a per-byte script loop over a potentially multi-megabyte reply.
+    string(REPLACE "\\\\" "" _unpaired_backslashes "${document}")
+    string(FIND "${_unpaired_backslashes}" "\\u0000" _nul_escape_position)
+    if(NOT _nul_escape_position EQUAL -1)
+        message(FATAL_ERROR
+            "build-receipt ${label} contains a JSON NUL escape that CMake "
+            "cannot preserve")
+    endif()
 endfunction()
 
 function(_deac_receipt_json_get output label document)
@@ -64,9 +118,12 @@ function(_deac_receipt_json_type output exists label document)
     if(_error STREQUAL "NOTFOUND")
         set(${output} "${_value}" PARENT_SCOPE)
         set(${exists} true PARENT_SCOPE)
-    else()
+    elseif(_error MATCHES "^member '.*' not found$")
         set(${output} "" PARENT_SCOPE)
         set(${exists} false PARENT_SCOPE)
+    else()
+        message(FATAL_ERROR
+            "build-receipt ${label} is malformed: ${_error}")
     endif()
 endfunction()
 
@@ -177,7 +234,10 @@ function(_deac_receipt_read_json output label path)
     if(_size GREATER 8388608)
         message(FATAL_ERROR "build-receipt ${label} exceeds 8 MiB")
     endif()
+    file(READ "${path}" _document_hex HEX)
+    _deac_receipt_reject_raw_json_nul("${label}" "${_document_hex}")
     file(READ "${path}" _document)
+    _deac_receipt_reject_json_nul_escape("${label}" "${_document}")
     string(JSON _type ERROR_VARIABLE _error TYPE "${_document}")
     if(NOT _error STREQUAL "NOTFOUND" OR NOT _type STREQUAL "OBJECT")
         message(FATAL_ERROR "build-receipt ${label} is not a JSON object")
@@ -196,26 +256,42 @@ function(_deac_receipt_normalize_path output value)
     else()
         cmake_path(NORMAL_PATH _path OUTPUT_VARIABLE _path)
     endif()
-    foreach(_root_kind SOURCE BUILD)
-        if(_root_kind STREQUAL "SOURCE")
-            set(_root "${DEAC_BUILD_RECEIPT_CMAKE_SOURCE_ROOT}")
-            set(_token "<SOURCE_ROOT>")
-        else()
+    set(_best_root_length -1)
+    set(_best_relative "")
+    set(_best_token "")
+    # Prefer BUILD on an equal root, then select whichever containing root is
+    # most specific.  This keeps an in-source build relocatable instead of
+    # leaking its build-directory suffix beneath <SOURCE_ROOT>.
+    foreach(_root_kind BUILD SOURCE)
+        if(_root_kind STREQUAL "BUILD")
             set(_root "${DEAC_BUILD_RECEIPT_BUILD_ROOT}")
             set(_token "<BUILD_ROOT>")
+        else()
+            set(_root "${DEAC_BUILD_RECEIPT_CMAKE_SOURCE_ROOT}")
+            set(_token "<SOURCE_ROOT>")
         endif()
         cmake_path(NORMAL_PATH _root OUTPUT_VARIABLE _root)
         file(RELATIVE_PATH _relative "${_root}" "${_path}")
-        if(_relative STREQUAL "")
-            set(${output} "${_token}" PARENT_SCOPE)
-            return()
-        endif()
-        if(NOT IS_ABSOLUTE "${_relative}" AND
-                NOT _relative MATCHES "^\.\.(/|$)")
-            set(${output} "${_token}/${_relative}" PARENT_SCOPE)
-            return()
+        if((_relative STREQUAL "" OR
+                (NOT IS_ABSOLUTE "${_relative}" AND
+                 NOT _relative MATCHES "^\.\.(/|$)")))
+            string(LENGTH "${_root}" _root_length)
+            if(_root_length GREATER _best_root_length)
+                set(_best_root_length ${_root_length})
+                set(_best_relative "${_relative}")
+                set(_best_token "${_token}")
+            endif()
         endif()
     endforeach()
+    if(NOT _best_root_length EQUAL -1)
+        if(_best_relative STREQUAL "")
+            set(${output} "${_best_token}" PARENT_SCOPE)
+        else()
+            set(${output}
+                "${_best_token}/${_best_relative}" PARENT_SCOPE)
+        endif()
+        return()
+    endif()
     set(${output} "${_path}" PARENT_SCOPE)
 endfunction()
 
@@ -335,7 +411,15 @@ function(_deac_receipt_path_array output label document)
     set(${output} "${_json}" PARENT_SCOPE)
 endfunction()
 
-function(_deac_receipt_fragment_array output label document)
+function(_deac_receipt_fragment_array
+        output label fingerprint_policy document)
+    if(NOT fingerprint_policy MATCHES
+            "^(ALLOW_FINGERPRINT|REJECT_FINGERPRINT)$")
+        message(FATAL_ERROR
+            "build-receipt fragment validation has an invalid policy")
+    endif()
+    set(_fingerprint_identifier_pattern
+        "(^|[^A-Za-z0-9_]|[-/][DU])DEAC_BUILD_TOOLCHAIN_FINGERPRINT_SHA256([^A-Za-z0-9_]|$)")
     _deac_receipt_json_type(
         _type _exists "${label}" "${document}" ${ARGN})
     if(NOT _exists)
@@ -351,9 +435,40 @@ function(_deac_receipt_fragment_array output label document)
     if(_length GREATER 0)
         math(EXPR _last "${_length} - 1")
         foreach(_index RANGE 0 ${_last})
+            _deac_receipt_json_type(
+                _fragment_type _fragment_exists
+                "${label}[${_index}].fragment"
+                "${document}" ${ARGN} ${_index} fragment)
+            if(NOT _fragment_exists OR NOT _fragment_type STREQUAL "STRING")
+                message(FATAL_ERROR
+                    "build-receipt ${label}[${_index}].fragment must be a string")
+            endif()
             _deac_receipt_json_get(
                 _fragment "${label}[${_index}].fragment"
                 "${document}" ${ARGN} ${_index} fragment)
+            _deac_build_receipt_require_posix_shell_literal(
+                "${_fragment}" "${label}[${_index}] fragment")
+            if(fingerprint_policy STREQUAL "REJECT_FINGERPRINT")
+                # The structured File API defines array is the only accepted
+                # source of the reserved fingerprint macro.  Decode first so
+                # attached or separate -D or /D operands, quoting, escaping, and
+                # compiler-driver forwarding spellings cannot hide another
+                # effective definition (or undefinition) in a flags fragment.
+                separate_arguments(
+                    _fragment_arguments UNIX_COMMAND "${_fragment}")
+                foreach(_fragment_argument IN LISTS _fragment_arguments)
+                    if("${_fragment_argument}" MATCHES
+                            "${_fingerprint_identifier_pattern}")
+                        message(FATAL_ERROR
+                            "build-receipt reserved fingerprint fragment "
+                            "conflict: ${label}[${_index}] does not contain "
+                            "exactly one configured toolchain fingerprint "
+                            "without a duplicate or conflicting macro "
+                            "definition; the reserved identifier appears "
+                            "outside the structured definitions array")
+                    endif()
+                endforeach()
+            endif()
             _deac_receipt_json_quote(_fragment_json "${_fragment}")
             _deac_receipt_optional_string(
                 _role_json "${label}[${_index}].role"
@@ -489,6 +604,10 @@ function(_deac_receipt_compile_groups
         _type _exists "${label} compile groups"
         "${target_document}" compileGroups)
     if(NOT _exists)
+        if(require_fingerprint)
+            message(FATAL_ERROR
+                "build-receipt ${label} has no compile groups")
+        endif()
         set(${output} "[]" PARENT_SCOPE)
         set(${languages_output} "" PARENT_SCOPE)
         return()
@@ -519,6 +638,7 @@ function(_deac_receipt_compile_groups
                 _sources_json ${_group} "${target_document}")
             _deac_receipt_fragment_array(
                 _fragments_json "${label} compile group fragments"
+                REJECT_FINGERPRINT
                 "${target_document}"
                 compileGroups ${_group} compileCommandFragments)
             _deac_receipt_named_array(
@@ -550,6 +670,7 @@ function(_deac_receipt_compile_groups
                     "${label} compile group definitions"
                     "${target_document}" compileGroups ${_group} defines)
                 set(_fingerprint_matches 0)
+                set(_fingerprint_definition_count 0)
                 if(_definitions_exist)
                     _deac_receipt_json_length(
                         _definition_count "${label} compile group definitions"
@@ -561,17 +682,24 @@ function(_deac_receipt_compile_groups
                                 _definition "${label} compile definition"
                                 "${target_document}" compileGroups ${_group}
                                 defines ${_definition_index} define)
-                            if(_definition STREQUAL _expected_definition)
+                            if(_definition MATCHES
+                                    "^DEAC_BUILD_TOOLCHAIN_FINGERPRINT_SHA256([^A-Za-z0-9_]|$)")
+                                math(EXPR _fingerprint_definition_count
+                                    "${_fingerprint_definition_count} + 1")
+                            endif()
+                            if(_definition STREQUAL "${_expected_definition}")
                                 math(EXPR _fingerprint_matches
                                     "${_fingerprint_matches} + 1")
                             endif()
                         endforeach()
                     endif()
                 endif()
-                if(NOT _fingerprint_matches EQUAL 1)
+                if(NOT _fingerprint_matches EQUAL 1 OR
+                        NOT _fingerprint_definition_count EQUAL 1)
                     message(FATAL_ERROR
                         "build-receipt ${label} compile group does not contain "
-                        "exactly one configured toolchain fingerprint")
+                        "exactly one configured toolchain fingerprint without "
+                        "a duplicate or conflicting macro definition")
                 endif()
             endif()
 
@@ -614,6 +742,7 @@ function(_deac_receipt_link output language_output label target_document require
     _deac_receipt_json_quote(_language_json "${_language}")
     _deac_receipt_fragment_array(
         _fragments_json "${label} link fragments"
+        ALLOW_FINGERPRINT
         "${target_document}" link commandFragments)
     _deac_receipt_optional_boolean(
         _lto_json "${label} link LTO" "${target_document}" link lto)
@@ -641,6 +770,7 @@ function(_deac_receipt_archive output label target_document)
     endif()
     _deac_receipt_fragment_array(
         _fragments_json "${label} archive fragments"
+        ALLOW_FINGERPRINT
         "${target_document}" archive commandFragments)
     _deac_receipt_optional_boolean(
         _lto_json "${label} archive LTO" "${target_document}" archive lto)
@@ -832,6 +962,104 @@ _deac_receipt_link(
     _link_json _link_language "target ${_target_name}" "${_target}" true)
 set(_used_languages ${_target_compile_languages} "${_link_language}")
 
+if(NOT DEAC_BUILD_RECEIPT_REQUIRED_LINK_LIBRARY_COUNT
+        MATCHES "^[0-9]+$")
+    message(FATAL_ERROR
+        "DEAC_BUILD_RECEIPT_REQUIRED_LINK_LIBRARY_COUNT must be nonnegative")
+endif()
+_deac_receipt_json_length(
+    _target_link_fragment_count "target ${_target_name} link fragments"
+    "${_target}" link commandFragments)
+if(DEAC_BUILD_RECEIPT_REQUIRED_LINK_LIBRARY_COUNT GREATER 0)
+    math(EXPR _required_link_library_last
+        "${DEAC_BUILD_RECEIPT_REQUIRED_LINK_LIBRARY_COUNT} - 1")
+    set(_required_link_library_artifacts)
+    # Resolve and de-duplicate every selected-configuration artifact before
+    # checking any link occurrence.  Otherwise two logical providers can both
+    # claim the same one link argument independently.
+    foreach(_required_link_library_index
+            RANGE 0 ${_required_link_library_last})
+        set(_required_name_variable
+            "DEAC_BUILD_RECEIPT_REQUIRED_LINK_LIBRARY_NAME_${_required_link_library_index}")
+        set(_required_artifact_variable
+            "DEAC_BUILD_RECEIPT_REQUIRED_LINK_LIBRARY_ARTIFACT_${_required_link_library_index}")
+        foreach(_required_variable
+                "${_required_name_variable}" "${_required_artifact_variable}")
+            if(NOT DEFINED ${_required_variable} OR
+                    "${${_required_variable}}" STREQUAL "")
+                message(FATAL_ERROR "${_required_variable} is required")
+            endif()
+        endforeach()
+        set(_required_artifact "${${_required_artifact_variable}}")
+        if(NOT IS_ABSOLUTE "${_required_artifact}" OR
+                NOT EXISTS "${_required_artifact}" OR
+                IS_DIRECTORY "${_required_artifact}")
+            message(FATAL_ERROR
+                "required link-library artifact is not an absolute regular "
+                "file for ${${_required_name_variable}}: ${_required_artifact}")
+        endif()
+        cmake_path(NORMAL_PATH _required_artifact)
+        if(_required_artifact IN_LIST _required_link_library_artifacts)
+            message(FATAL_ERROR
+                "build-receipt selected configuration contains duplicate "
+                "required link-library artifact: ${_required_artifact}")
+        endif()
+        list(APPEND _required_link_library_artifacts "${_required_artifact}")
+    endforeach()
+
+    foreach(_required_link_library_index
+            RANGE 0 ${_required_link_library_last})
+        set(_required_name_variable
+            "DEAC_BUILD_RECEIPT_REQUIRED_LINK_LIBRARY_NAME_${_required_link_library_index}")
+        list(GET _required_link_library_artifacts
+            ${_required_link_library_index} _required_artifact)
+        set(_required_artifact_matches 0)
+        if(_target_link_fragment_count GREATER 0)
+            math(EXPR _target_link_fragment_last
+                "${_target_link_fragment_count} - 1")
+            foreach(_fragment_index RANGE 0 ${_target_link_fragment_last})
+                _deac_receipt_json_get(
+                    _fragment "target link fragment"
+                    "${_target}" link commandFragments
+                    ${_fragment_index} fragment)
+                _deac_receipt_optional_string(
+                    _fragment_role_json "target link fragment role"
+                    "${_target}" link commandFragments
+                    ${_fragment_index} role)
+                if(_fragment_role_json STREQUAL "\"libraries\"")
+                    # The supported generators use POSIX shell encoding in
+                    # File API command fragments.  Decode without executing it
+                    # so a quoted/escaped artifact path is compared as its
+                    # actual filesystem argument.  Count every exact argument,
+                    # including duplicates grouped into one fragment.
+                    separate_arguments(
+                        _fragment_arguments UNIX_COMMAND "${_fragment}")
+                    foreach(_fragment_argument IN LISTS _fragment_arguments)
+                        set(_normalized_fragment_argument
+                            "${_fragment_argument}")
+                        if(IS_ABSOLUTE "${_normalized_fragment_argument}")
+                            cmake_path(
+                                NORMAL_PATH _normalized_fragment_argument)
+                        endif()
+                        if(_normalized_fragment_argument STREQUAL
+                                _required_artifact)
+                            math(EXPR _required_artifact_matches
+                                "${_required_artifact_matches} + 1")
+                        endif()
+                    endforeach()
+                endif()
+            endforeach()
+        endif()
+        if(NOT _required_artifact_matches EQUAL 1)
+            message(FATAL_ERROR
+                "build-receipt target ${_target_name} must contain exactly "
+                "one resolved libraries-role link fragment for "
+                "${${_required_name_variable}} (${_required_artifact}); got "
+                "${_required_artifact_matches}")
+        endif()
+    endforeach()
+endif()
+
 _deac_receipt_json_type(
     _dependencies_type _dependencies_exist
     "target ${_target_name} dependencies" "${_target}" dependencies)
@@ -880,19 +1108,45 @@ foreach(_dependency_id IN LISTS _dependency_ids)
     endif()
 endforeach()
 list(SORT _actual_dependency_names)
-string(REPLACE "," ";" _expected_dependency_names
-    "${DEAC_BUILD_RECEIPT_DEPENDENCY_TARGETS}")
-list(SORT _expected_dependency_names)
+string(REPLACE "," ";" _expected_codemodel_dependency_names
+    "${DEAC_BUILD_RECEIPT_CODEMODEL_DEPENDENCY_TARGETS}")
+list(SORT _expected_codemodel_dependency_names)
 if(NOT "${_actual_dependency_names}" STREQUAL
-        "${_expected_dependency_names}")
+        "${_expected_codemodel_dependency_names}")
     message(FATAL_ERROR
-        "build-receipt target dependencies changed: expected "
-        "[${_expected_dependency_names}], got [${_actual_dependency_names}]")
+        "build-receipt codemodel dependencies changed: expected "
+        "[${_expected_codemodel_dependency_names}], got "
+        "[${_actual_dependency_names}]")
 endif()
+
+string(REPLACE "," ";" _expected_interface_dependency_names
+    "${DEAC_BUILD_RECEIPT_INTERFACE_DEPENDENCY_TARGETS}")
+list(SORT _expected_interface_dependency_names)
+set(_expected_dependency_names
+    ${_expected_codemodel_dependency_names}
+    ${_expected_interface_dependency_names})
+list(LENGTH _expected_dependency_names _expected_dependency_count)
+list(REMOVE_DUPLICATES _expected_dependency_names)
+list(LENGTH _expected_dependency_names _unique_dependency_count)
+if(NOT _expected_dependency_count EQUAL _unique_dependency_count)
+    message(FATAL_ERROR
+        "build-receipt dependency appears in both codemodel and interface lists")
+endif()
+list(SORT _expected_dependency_names)
 
 set(_dependencies_json "[")
 set(_dependency_separator "")
 foreach(_expected_name IN LISTS _expected_dependency_names)
+    if(_expected_name IN_LIST _expected_interface_dependency_names)
+        _deac_receipt_json_quote(_dependency_name_json "${_expected_name}")
+        string(APPEND _dependencies_json
+            "${_dependency_separator}{\"archive\":null,"
+            "\"compile_groups\":[],\"link\":null,"
+            "\"name\":${_dependency_name_json},"
+            "\"type\":\"INTERFACE_LIBRARY\"}")
+        set(_dependency_separator ",")
+        continue()
+    endif()
     set(_dependency_json_file "")
     set(_dependency_matches 0)
     if(_target_count GREATER 0)
@@ -930,9 +1184,20 @@ foreach(_expected_name IN LISTS _expected_dependency_names)
     if(NOT _dependency_name STREQUAL "${_expected_name}")
         message(FATAL_ERROR "build-receipt dependency target name changed")
     endif()
+    set(_buildable_dependency_types
+        EXECUTABLE
+        MODULE_LIBRARY
+        OBJECT_LIBRARY
+        SHARED_LIBRARY
+        STATIC_LIBRARY)
+    set(_dependency_requires_fingerprint false)
+    if(_dependency_type IN_LIST _buildable_dependency_types)
+        set(_dependency_requires_fingerprint true)
+    endif()
     _deac_receipt_compile_groups(
         _dependency_compile_groups _dependency_languages
-        "dependency ${_dependency_name}" "${_dependency}" false)
+        "dependency ${_dependency_name}" "${_dependency}"
+        ${_dependency_requires_fingerprint})
     _deac_receipt_link(
         _dependency_link _dependency_link_language
         "dependency ${_dependency_name}" "${_dependency}" false)
@@ -1006,6 +1271,8 @@ foreach(_language IN LISTS _used_languages)
         "DEAC_BUILD_RECEIPT_CONFIGURED_${_language}_ID")
     set(_configured_version_variable
         "DEAC_BUILD_RECEIPT_CONFIGURED_${_language}_VERSION")
+    set(_configured_target_variable
+        "DEAC_BUILD_RECEIPT_CONFIGURED_${_language}_TARGET")
     foreach(_variable
             ${_configured_path_variable}
             ${_configured_real_variable}
@@ -1021,6 +1288,20 @@ foreach(_language IN LISTS _used_languages)
             NOT _compiler_version STREQUAL "${${_configured_version_variable}}")
         message(FATAL_ERROR
             "build-receipt ${_language} toolchain disagrees with configure-time identity")
+    endif()
+    _deac_receipt_optional_string(
+        _target_json "${_language} compiler target" "${_toolchains}"
+        toolchains ${_toolchain_index} compiler target)
+    if(DEFINED ${_configured_target_variable})
+        _deac_receipt_json_quote(
+            _configured_target_json "${${_configured_target_variable}}")
+    else()
+        set(_configured_target_json "null")
+    endif()
+    if(NOT _target_json STREQUAL _configured_target_json)
+        message(FATAL_ERROR
+            "build-receipt ${_language} compiler target disagrees with "
+            "configure-time identity")
     endif()
     get_filename_component(_compiler_real "${_compiler_path}" REALPATH)
     if(NOT EXISTS "${_compiler_real}" OR IS_DIRECTORY "${_compiler_real}")
@@ -1042,9 +1323,6 @@ foreach(_language IN LISTS _used_languages)
     _deac_receipt_json_quote(_sha_json "${_compiler_sha256}")
     _deac_receipt_json_quote(_id_json "${_compiler_id}")
     _deac_receipt_json_quote(_version_json "${_compiler_version}")
-    _deac_receipt_optional_string(
-        _target_json "${_language} compiler target" "${_toolchains}"
-        toolchains ${_toolchain_index} compiler target)
     _deac_receipt_path_array(
         _implicit_includes "${_language} implicit include directories"
         "${_toolchains}"
