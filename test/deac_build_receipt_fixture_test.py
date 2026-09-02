@@ -2875,6 +2875,395 @@ def test_json_control_encoding(cmake, source, workdir, real_compiler):
         assert_embedded_matches(build_directory / "receipt_probe", receipt_path)
 
 
+def test_unbound_compile_input_rejections(
+    cmake, source, workdir, real_compiler
+):
+    build_directory = workdir / "rejected-unbound-compile-inputs"
+    configure(cmake, source, build_directory, real_compiler)
+    target_reply = file_api_target_reply(build_directory, "receipt_probe")
+    original = json.loads(target_reply.read_text(encoding="utf-8"))
+    compile_groups = original.get("compileGroups")
+    if not isinstance(compile_groups, list) or not compile_groups:
+        raise TypeError("fixture target compile groups are malformed")
+    original_fragments = compile_groups[0].get("compileCommandFragments")
+    if not isinstance(original_fragments, list):
+        raise TypeError("fixture target compile fragments are malformed")
+
+    route_mutations = (
+        ("response-file", "@/tmp/deac-flags.rsp"),
+        ("wa-response-file", "-Wa,@/tmp/deac-assembler.rsp"),
+        (
+            "wa-list-response-file",
+            "-Wa,-compress-debug-sections,@/tmp/deac-assembler.rsp",
+        ),
+        ("include-separate", "-include /tmp/deac-force.hpp"),
+        ("include-equals", "-include=/tmp/deac-force.hpp"),
+        ("include-joined", "-include/tmp/deac-force.hpp"),
+        ("long-include-separate", "--include /tmp/deac-force.hpp"),
+        ("long-include-attached", "--include=/tmp/deac-force.hpp"),
+        ("long-include-joined", "--include/tmp/deac-force.hpp"),
+        ("imacros-separate", "-imacros /tmp/deac-macros.hpp"),
+        ("imacros-equals", "-imacros=/tmp/deac-macros.hpp"),
+        ("imacros-joined", "-imacros/tmp/deac-macros.hpp"),
+        ("long-imacros-separate", "--imacros /tmp/deac-macros.hpp"),
+        ("long-imacros-attached", "--imacros=/tmp/deac-macros.hpp"),
+        ("long-imacros-joined", "--imacros/tmp/deac-macros.hpp"),
+        ("include-pch-separate", "-include-pch /tmp/deac.pch"),
+        ("include-pch-equals", "-include-pch=/tmp/deac.pch"),
+        ("include-pch-joined", "-include-pch/tmp/deac.pch"),
+        ("include-pth-separate", "-include-pth /tmp/deac.pth"),
+        ("include-pth-equals", "-include-pth=/tmp/deac.pth"),
+        ("include-pth-joined", "-include-pth/tmp/deac.pth"),
+        ("slash-fi-separate", "/FI /tmp/deac-force.hpp"),
+        ("slash-fi-equals", "/FI=/tmp/deac-force.hpp"),
+        ("slash-fi-joined", "/FI/tmp/deac-force.hpp"),
+        ("dash-fi-separate", "-FI /tmp/deac-force.hpp"),
+        ("dash-fi-attached", "-FI/tmp/deac-force.hpp"),
+        (
+            "define-macro-separate",
+            "--define-macro USE_STANDARD_MODEL=0",
+        ),
+        ("define-macro-attached", "--define-macro=USE_STANDARD_MODEL=0"),
+        ("undefine-macro-separate", "--undefine-macro USE_STANDARD_MODEL"),
+        ("undefine-macro-attached", "--undefine-macro=USE_STANDARD_MODEL"),
+        ("wp-separate", "-Wp -include,/tmp/deac-force.hpp"),
+        ("wp-attached", "-Wp,-include,/tmp/deac-force.hpp"),
+        (
+            "qoption-preprocessor-separate",
+            "-Qoption,preprocessor -include,/tmp/deac-force.hpp",
+        ),
+        (
+            "qoption-preprocessor-attached",
+            "-Qoption,preprocessor,-include,/tmp/deac-force.hpp",
+        ),
+        ("qoption-component", "-Qoption,c,-include,/tmp/deac-force.hpp"),
+        ("xpreprocessor-separate", "-Xpreprocessor -include"),
+        ("xpreprocessor-attached", "-Xpreprocessor=-include"),
+        ("xclang-separate", "-Xclang -include"),
+        ("xclang-attached", "-Xclang=-include"),
+        ("xarch-host-separate", "-Xarch_host -include"),
+        ("xarch-host-attached", "-Xarch_host=-include"),
+        ("xarch-device-separate", "-Xarch_device -include"),
+        ("xoffload-compiler-separate", "-Xoffload-compiler -include"),
+        ("xoffload-compiler-attached", "-Xoffload-compiler=-include"),
+        ("xopenmp-target-separate", "-Xopenmp-target -include"),
+        ("xopenmp-target-attached", "-Xopenmp-target=-include"),
+        (
+            "xsycl-frontend-separate",
+            "-Xsycl-target-frontend -include",
+        ),
+        (
+            "xsycl-frontend-attached",
+            "-Xsycl-target-frontend=-include",
+        ),
+        (
+            "xsycl-frontend-qualified",
+            "-Xsycl-target-frontend=spir64 -include",
+        ),
+        ("xsycl-backend-separate", "-Xsycl-target-backend @deac.rsp"),
+        ("xsycl-backend-attached", "-Xsycl-target-backend=@deac.rsp"),
+        (
+            "sycl-host-options-separate",
+            "-fsycl-host-compiler-options -include",
+        ),
+        (
+            "sycl-host-options-attached",
+            "-fsycl-host-compiler-options=-include",
+        ),
+        (
+            "sycl-host-compiler-separate",
+            "-fsycl-host-compiler /tmp/deac-host-cxx",
+        ),
+        (
+            "sycl-host-compiler-attached",
+            "-fsycl-host-compiler=/tmp/deac-host-cxx",
+        ),
+        ("slash-clang", "/clang:-include"),
+        ("dash-clang", "-clang:-include"),
+        ("slash-yu-separate", "/Yu /tmp/deac.pch"),
+        ("slash-yu-attached", "/Yu/tmp/deac.pch"),
+        ("dash-yu-separate", "-Yu /tmp/deac.pch"),
+        ("dash-yu-attached", "-Yu/tmp/deac.pch"),
+        ("slash-yc-separate", "/Yc /tmp/deac.hpp"),
+        ("slash-yc-attached", "/Yc/tmp/deac.hpp"),
+        ("dash-yc-separate", "-Yc /tmp/deac.hpp"),
+        ("dash-yc-attached", "-Yc/tmp/deac.hpp"),
+        ("slash-fp-separate", "/Fp /tmp/deac.pch"),
+        ("slash-fp-attached", "/Fp/tmp/deac.pch"),
+        ("dash-fp-separate", "-Fp /tmp/deac.pch"),
+        ("dash-fp-attached", "-Fp/tmp/deac.pch"),
+        ("slash-fu-separate", "/FU /tmp/deac.ifc"),
+        ("slash-fu-attached", "/FU/tmp/deac.ifc"),
+        ("dash-fu-separate", "-FU /tmp/deac.ifc"),
+        ("dash-fu-attached", "-FU/tmp/deac.ifc"),
+        (
+            "header-unit-separate",
+            "/headerUnit:angle vector=/tmp/deac-vector.ifc",
+        ),
+        (
+            "header-unit-attached",
+            "/headerUnit:quote=deac.hpp=/tmp/deac.ifc",
+        ),
+        (
+            "dash-header-unit-separate",
+            "-headerUnit:angle vector=/tmp/deac-vector.ifc",
+        ),
+        (
+            "dash-header-unit-attached",
+            "-headerUnit:quote=deac.hpp=/tmp/deac.ifc",
+        ),
+        ("ifc-search-separate", "/ifcSearchDir /tmp/deac-ifc"),
+        ("ifc-search-attached", "/ifcSearchDir=/tmp/deac-ifc"),
+        ("dash-ifc-search-separate", "-ifcSearchDir /tmp/deac-ifc"),
+        ("dash-ifc-search-attached", "-ifcSearchDir=/tmp/deac-ifc"),
+        ("reference-separate", "/reference deac=/tmp/deac.ifc"),
+        ("reference-attached", "/reference=deac=/tmp/deac.ifc"),
+        ("dash-reference-separate", "-reference deac=/tmp/deac.ifc"),
+        ("dash-reference-attached", "-reference=deac=/tmp/deac.ifc"),
+        ("config-separate", "--config /tmp/deac.cfg"),
+        ("config-attached", "--config=/tmp/deac.cfg"),
+        ("config-dir-separate", "--config-dir /tmp"),
+        ("config-dir-attached", "--config-dir=/tmp"),
+        ("config-system-dir-separate", "--config-system-dir /tmp"),
+        ("config-system-dir-attached", "--config-system-dir=/tmp"),
+        ("config-user-dir-separate", "--config-user-dir /tmp"),
+        ("config-user-dir-attached", "--config-user-dir=/tmp"),
+        ("multi-lib-config-separate", "-multi-lib-config /tmp/deac.cfg"),
+        ("multi-lib-config-attached", "-multi-lib-config=/tmp/deac.cfg"),
+        ("ivfsoverlay-separate", "-ivfsoverlay /tmp/deac-vfs.yaml"),
+        ("ivfsoverlay-attached", "-ivfsoverlay=/tmp/deac-vfs.yaml"),
+        ("ivfsoverlay-joined", "-ivfsoverlay/tmp/deac-vfs.yaml"),
+        ("vfsoverlay-separate", "-vfsoverlay /tmp/deac-vfs.yaml"),
+        ("vfsoverlay-attached", "-vfsoverlay=/tmp/deac-vfs.yaml"),
+        ("vfsoverlay-joined", "-vfsoverlay/tmp/deac-vfs.yaml"),
+        (
+            "ivfsoverlay-lib-separate",
+            "-ivfsoverlay-lib /tmp/deac-vfs.so",
+        ),
+        ("ivfsoverlay-lib-attached", "-ivfsoverlay-lib=/tmp/deac-vfs.so"),
+        ("ivfsoverlay-lib-joined", "-ivfsoverlay-lib/tmp/deac-vfs.so"),
+        ("fplugin-separate", "-fplugin /tmp/deac-plugin.so"),
+        ("fplugin-attached", "-fplugin=/tmp/deac-plugin.so"),
+        ("fplugin-joined", "-fplugin/tmp/deac-plugin.so"),
+        ("pass-plugin-separate", "-fpass-plugin /tmp/deac-pass.so"),
+        ("pass-plugin-attached", "-fpass-plugin=/tmp/deac-pass.so"),
+        ("pch-use-separate", "-pch-use /tmp/deac.pch"),
+        ("pch-use-attached", "-pch-use=/tmp/deac.pch"),
+        ("fpch-preprocess", "-fpch-preprocess"),
+        ("fpch-preprocess-attached", "-fpch-preprocess=/tmp/deac.pch"),
+        ("module-file-separate", "-fmodule-file /tmp/deac.pcm"),
+        ("module-file-attached", "-fmodule-file=/tmp/deac.pcm"),
+        ("module-mapper-separate", "-fmodule-mapper /tmp/deac.mapper"),
+        ("module-mapper-attached", "-fmodule-mapper=/tmp/deac.mapper"),
+        (
+            "module-map-separate",
+            "-fmodule-map-file /tmp/deac.modulemap",
+        ),
+        (
+            "module-map-attached",
+            "-fmodule-map-file=/tmp/deac.modulemap",
+        ),
+        (
+            "prebuilt-module-path-separate",
+            "-fprebuilt-module-path /tmp/deac-modules",
+        ),
+        (
+            "prebuilt-module-path-attached",
+            "-fprebuilt-module-path=/tmp/deac-modules",
+        ),
+        (
+            "modules-cache-path-separate",
+            "-fmodules-cache-path /tmp/deac-module-cache",
+        ),
+        (
+            "modules-cache-path-attached",
+            "-fmodules-cache-path=/tmp/deac-module-cache",
+        ),
+        ("tool-prefix-separate", "-B /tmp/deac-tools"),
+        ("tool-prefix-attached", "-B/tmp/deac-tools"),
+        ("intel-icx", "--icx"),
+        ("wrapper-separate", "-wrapper /tmp/deac-wrapper"),
+        ("wrapper-attached", "-wrapper=/tmp/deac-wrapper"),
+        ("gcc-toolchain-separate", "-gcc-toolchain /tmp/deac-gcc"),
+        ("gcc-toolchain-attached", "-gcc-toolchain=/tmp/deac-gcc"),
+        ("long-gcc-toolchain-separate", "--gcc-toolchain /tmp/deac-gcc"),
+        ("long-gcc-toolchain-attached", "--gcc-toolchain=/tmp/deac-gcc"),
+        ("specs-separate", "-specs /tmp/deac.specs"),
+        ("specs-attached", "-specs=/tmp/deac.specs"),
+        ("specs-joined", "-specs/tmp/deac.specs"),
+        ("long-specs-separate", "--specs /tmp/deac.specs"),
+        ("long-specs-attached", "--specs=/tmp/deac.specs"),
+        ("long-specs-joined", "--specs/tmp/deac.specs"),
+    )
+    receipt_path = (
+        build_directory / "receipt" / "Release" / "build-receipt.json"
+    )
+    for name, extra_fragment in route_mutations:
+        document = json.loads(json.dumps(original))
+        document["compileGroups"][0]["compileCommandFragments"].append(
+            {"fragment": extra_fragment}
+        )
+        write(
+            target_reply,
+            json.dumps(document, ensure_ascii=False, separators=(",", ":"))
+            + "\n",
+        )
+        result = build(
+            cmake,
+            build_directory,
+            target="deac_fixture_generate_receipt",
+            check=False,
+        )
+        assert_rejected(
+            result,
+            context=name,
+            expected=(
+                "unsupported unbound build input route"
+                if "response-file" in name
+                else "unsupported unbound compile input route"
+            ),
+        )
+        if receipt_path.exists():
+            raise AssertionError(f"{name} produced a build receipt")
+
+    link_response_fragments = (
+        ("link-response-file", "@/tmp/deac-link.rsp"),
+        ("link-wl-response-file", "-Wl,@/tmp/deac-link.rsp"),
+        (
+            "link-wl-list-response-file",
+            "-Wl,-z,defs,@/tmp/deac-link.rsp",
+        ),
+        ("link-xlinker-response-file", "-Xlinker=@/tmp/deac-link.rsp"),
+        ("link-xlinker-split-response-file", "-Xlinker @/tmp/deac-link.rsp"),
+    )
+    for name, extra_fragment in link_response_fragments:
+        document = json.loads(json.dumps(original))
+        link = document.get("link")
+        if not isinstance(link, dict) or not isinstance(
+            link.get("commandFragments"), list
+        ):
+            raise TypeError("fixture target link fragments are malformed")
+        link["commandFragments"].append({"fragment": extra_fragment})
+        write(
+            target_reply,
+            json.dumps(document, ensure_ascii=False, separators=(",", ":"))
+            + "\n",
+        )
+        result = build(
+            cmake,
+            build_directory,
+            target="deac_fixture_generate_receipt",
+            check=False,
+        )
+        assert_rejected(
+            result,
+            context=name,
+            expected="unsupported unbound build input route",
+        )
+        if receipt_path.exists():
+            raise AssertionError(f"{name} produced a build receipt")
+
+    write(
+        target_reply,
+        json.dumps(original, ensure_ascii=False, separators=(",", ":")) + "\n",
+    )
+    dependency_reply = file_api_target_reply(
+        build_directory, "receipt_dependency"
+    )
+    dependency_original = json.loads(
+        dependency_reply.read_text(encoding="utf-8")
+    )
+    archive_document = json.loads(json.dumps(dependency_original))
+    archive = archive_document.get("archive")
+    if not isinstance(archive, dict):
+        raise TypeError("fixture dependency archive fragments are malformed")
+    archive_fragments = archive.setdefault("commandFragments", [])
+    if not isinstance(archive_fragments, list):
+        raise TypeError("fixture dependency archive fragments are malformed")
+    archive_fragments.append(
+        {"fragment": "@/tmp/deac-archive.rsp"}
+    )
+    write(
+        dependency_reply,
+        json.dumps(
+            archive_document, ensure_ascii=False, separators=(",", ":")
+        )
+        + "\n",
+    )
+    archive_result = build(
+        cmake,
+        build_directory,
+        target="deac_fixture_generate_receipt",
+        check=False,
+    )
+    assert_rejected(
+        archive_result,
+        context="archive response file",
+        expected="unsupported unbound build input route",
+    )
+    if receipt_path.exists():
+        raise AssertionError("archive response file produced a build receipt")
+    write(
+        dependency_reply,
+        json.dumps(
+            dependency_original, ensure_ascii=False, separators=(",", ":")
+        )
+        + "\n",
+    )
+
+    pch_document = json.loads(json.dumps(original))
+    pch_document["compileGroups"][0]["precompileHeaders"] = [
+        {"header": "/tmp/deac.pch"}
+    ]
+    write(
+        target_reply,
+        json.dumps(pch_document, ensure_ascii=False, separators=(",", ":"))
+        + "\n",
+    )
+    pch_result = build(
+        cmake,
+        build_directory,
+        target="deac_fixture_generate_receipt",
+        check=False,
+    )
+    assert_rejected(
+        pch_result,
+        context="structured precompiled header",
+        expected="unsupported nonempty structured precompiled headers",
+    )
+    if receipt_path.exists():
+        raise AssertionError("structured precompiled header produced a receipt")
+
+    accepted_warning_document = json.loads(json.dumps(original))
+    accepted_warning_document["compileGroups"][0][
+        "compileCommandFragments"
+    ].append({"fragment": "-fsycl -Wpedantic -finline-functions"})
+    write(
+        target_reply,
+        json.dumps(
+            accepted_warning_document,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        + "\n",
+    )
+    build(
+        cmake,
+        build_directory,
+        target="deac_fixture_generate_receipt",
+    )
+    accepted_receipt = parse_receipt(receipt_path)
+    accepted_fragments = [
+        fragment["fragment"]
+        for group in accepted_receipt["receipt"]["compile_groups"]
+        for fragment in group["command_fragments"]
+    ]
+    if "-fsycl -Wpedantic -finline-functions" not in accepted_fragments:
+        raise AssertionError(
+            "current -fsycl and safe lowercase optimization flags were lost"
+        )
+
+
 def file_api_target_reply(build_directory, target_name):
     reply_directory = build_directory / ".cmake" / "api" / "v1" / "reply"
     indices = sorted(reply_directory.glob("index-*.json"))
@@ -3415,6 +3804,9 @@ def main():
         args.cmake, source, workdir, real_compiler
     )
     test_json_control_encoding(
+        args.cmake, source, workdir, real_compiler
+    )
+    test_unbound_compile_input_rejections(
         args.cmake, source, workdir, real_compiler
     )
     test_file_api_shape_rejections(

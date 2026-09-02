@@ -448,15 +448,151 @@ function(_deac_receipt_fragment_array
                 "${document}" ${ARGN} ${_index} fragment)
             _deac_build_receipt_require_posix_shell_literal(
                 "${_fragment}" "${label}[${_index}] fragment")
-            if(fingerprint_policy STREQUAL "REJECT_FINGERPRINT")
-                # The structured File API defines array is the only accepted
-                # source of the reserved fingerprint macro.  Decode first so
-                # attached or separate -D or /D operands, quoting, escaping, and
-                # compiler-driver forwarding spellings cannot hide another
-                # effective definition (or undefinition) in a flags fragment.
-                separate_arguments(
-                    _fragment_arguments UNIX_COMMAND "${_fragment}")
-                foreach(_fragment_argument IN LISTS _fragment_arguments)
+            separate_arguments(
+                _fragment_arguments UNIX_COMMAND "${_fragment}")
+            foreach(_fragment_argument IN LISTS _fragment_arguments)
+                if("${_fragment_argument}" MATCHES "^@" OR
+                        "${_fragment_argument}" MATCHES "^-Wa,.*@" OR
+                        "${_fragment_argument}" MATCHES "^-Wl,.*@" OR
+                        "${_fragment_argument}" MATCHES
+                        "^-Xlinker=?@")
+                    message(FATAL_ERROR
+                        "build-receipt ${label}[${_index}] uses an "
+                        "unsupported unbound build input route "
+                        "(response file)")
+                endif()
+                if(fingerprint_policy STREQUAL "REJECT_FINGERPRINT")
+                    # The structured File API defines array is the only
+                    # accepted source of the reserved fingerprint macro.
+                    # Decode first so attached or separate -D or /D operands,
+                    # quoting, escaping, and compiler-driver forwarding
+                    # spellings cannot hide another effective definition (or
+                    # undefinition) in a flags fragment.
+                    string(TOLOWER
+                        "${_fragment_argument}" _fragment_argument_lower)
+                    set(_unbound_compile_input_route "")
+                    if("${_fragment_argument_lower}" MATCHES "^-include" OR
+                            "${_fragment_argument_lower}" MATCHES
+                            "^--include")
+                        set(_unbound_compile_input_route
+                            "forced include or precompiled header")
+                    elseif("${_fragment_argument_lower}" MATCHES "^-imacros" OR
+                            "${_fragment_argument_lower}" MATCHES
+                            "^--imacros")
+                        set(_unbound_compile_input_route "macro include")
+                    elseif("${_fragment_argument}" MATCHES "^[-/]FI")
+                        set(_unbound_compile_input_route "forced include")
+                    elseif("${_fragment_argument}" MATCHES
+                            "^[-/](Yu|Yc|Fp|FU)")
+                        set(_unbound_compile_input_route
+                            "clang-cl precompiled header or module")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^[-/](headerunit:|ifcsearchdir|reference)")
+                        set(_unbound_compile_input_route
+                            "MSVC module input or search path")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^--(define|undefine)-macro")
+                        set(_unbound_compile_input_route
+                            "compiler macro definition forwarding")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^-wp($|,|=)")
+                        set(_unbound_compile_input_route
+                            "preprocessor option forwarding")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^-qoption,")
+                        set(_unbound_compile_input_route
+                            "Intel component option forwarding")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^-xpreprocessor")
+                        set(_unbound_compile_input_route
+                            "preprocessor option forwarding")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^-xclang")
+                        set(_unbound_compile_input_route
+                            "Clang option forwarding")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^-xarch_")
+                        set(_unbound_compile_input_route
+                            "accelerator option forwarding")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^-xoffload-compiler" OR
+                            "${_fragment_argument_lower}" MATCHES
+                            "^-xopenmp-target" OR
+                            "${_fragment_argument_lower}" MATCHES
+                            "^-xsycl-target-")
+                        set(_unbound_compile_input_route
+                            "accelerator toolchain option forwarding")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^-fsycl-host-compiler")
+                        set(_unbound_compile_input_route
+                            "SYCL host compiler or option forwarding")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^[-/]clang:")
+                        set(_unbound_compile_input_route
+                            "Clang option forwarding")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^--config")
+                        set(_unbound_compile_input_route
+                            "Clang configuration file or directory")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^-multi-lib-config")
+                        set(_unbound_compile_input_route
+                            "compiler multilib configuration")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^-ivfsoverlay" OR
+                            "${_fragment_argument_lower}" MATCHES
+                            "^-vfsoverlay")
+                        set(_unbound_compile_input_route
+                            "virtual filesystem overlay")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^-fplugin")
+                        set(_unbound_compile_input_route "compiler plugin")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^-fpass-plugin")
+                        set(_unbound_compile_input_route
+                            "compiler pass plugin")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^-pch-use")
+                        set(_unbound_compile_input_route
+                            "Intel precompiled header")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^-fpch-preprocess")
+                        set(_unbound_compile_input_route
+                            "GCC precompiled header")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^-fmodule-file" OR
+                            "${_fragment_argument_lower}" MATCHES
+                            "^-fmodule-map-file" OR
+                            "${_fragment_argument_lower}" MATCHES
+                            "^-fmodule-mapper" OR
+                            "${_fragment_argument_lower}" MATCHES
+                            "^-fprebuilt-module-path" OR
+                            "${_fragment_argument_lower}" MATCHES
+                            "^-fmodules-cache-path")
+                        set(_unbound_compile_input_route
+                            "Clang module input or cache")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^--icx" OR
+                            "${_fragment_argument}" MATCHES "^-B" OR
+                            "${_fragment_argument_lower}" MATCHES
+                            "^-wrapper" OR
+                            "${_fragment_argument_lower}" MATCHES
+                            "^--?gcc-toolchain")
+                        set(_unbound_compile_input_route
+                            "compiler tool redirect")
+                    elseif("${_fragment_argument_lower}" MATCHES
+                            "^-specs" OR
+                            "${_fragment_argument_lower}" MATCHES
+                            "^--specs")
+                        set(_unbound_compile_input_route
+                            "GCC specs file")
+                    endif()
+                    if(NOT _unbound_compile_input_route STREQUAL "")
+                        message(FATAL_ERROR
+                            "build-receipt ${label}[${_index}] uses an "
+                            "unsupported unbound compile input route "
+                            "(${_unbound_compile_input_route})")
+                    endif()
                     if("${_fragment_argument}" MATCHES
                             "${_fingerprint_identifier_pattern}")
                         message(FATAL_ERROR
@@ -467,8 +603,8 @@ function(_deac_receipt_fragment_array
                             "definition; the reserved identifier appears "
                             "outside the structured definitions array")
                     endif()
-                endforeach()
-            endif()
+                endif()
+            endforeach()
             _deac_receipt_json_quote(_fragment_json "${_fragment}")
             _deac_receipt_optional_string(
                 _role_json "${label}[${_index}].role"
@@ -636,6 +772,22 @@ function(_deac_receipt_compile_groups
             _deac_receipt_json_quote(_language_json "${_language}")
             _deac_receipt_source_array(
                 _sources_json ${_group} "${target_document}")
+            _deac_receipt_json_type(
+                _pch_type _pch_exists
+                "${label} compile group precompiled headers"
+                "${target_document}"
+                compileGroups ${_group} precompileHeaders)
+            if(_pch_exists AND _pch_type STREQUAL "ARRAY")
+                _deac_receipt_json_length(
+                    _pch_count "${label} compile group precompiled headers"
+                    "${target_document}"
+                    compileGroups ${_group} precompileHeaders)
+                if(_pch_count GREATER 0)
+                    message(FATAL_ERROR
+                        "build-receipt ${label} compile group uses "
+                        "unsupported nonempty structured precompiled headers")
+                endif()
+            endif()
             _deac_receipt_fragment_array(
                 _fragments_json "${label} compile group fragments"
                 REJECT_FINGERPRINT
