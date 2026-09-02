@@ -59,6 +59,10 @@ void print_build_identity(std::ostream& output) {
     output << deac_build_identity::canonical_json() << std::endl;
 }
 
+void print_build_receipt(std::ostream& output) {
+    output << deac_build_identity::build_receipt_json() << std::endl;
+}
+
 template<typename ... Args>
 std::string string_format( const std::string& format, Args ... args ) {
     //See https://stackoverflow.com/questions/2342162/stdstring-formatting-like-sprintf
@@ -2042,6 +2046,15 @@ int deac_main (int argc, char *argv[]) {
         })
         .default_value(false)
         .help("prints canonical JSON build identity and exits")
+        .implicit_value(true)
+        .nargs(0);
+    program.add_argument("--build-receipt")
+        .action([](const auto&) {
+            print_build_receipt(std::cout);
+            std::exit(0);
+        })
+        .default_value(false)
+        .help("prints canonical JSON effective build receipt and exits")
         .implicit_value(true)
         .nargs(0);
     program.add_argument("-T", "--temperature")

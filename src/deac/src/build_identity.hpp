@@ -6,5 +6,6 @@ namespace deac_build_identity {
 
 std::string_view semantic_version() noexcept;
 std::string_view canonical_json() noexcept;
+std::string_view build_receipt_json() noexcept;
 
 }  // namespace deac_build_identity
