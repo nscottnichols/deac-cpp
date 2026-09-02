@@ -529,6 +529,32 @@ add_test(
     NAME deac_unit_population_projection
     COMMAND deac_population_projection_test)
 
+if("${GPU_BACKEND}" STREQUAL "none")
+    add_executable(deac_cpu_mutation_row_test
+        ${CMAKE_SOURCE_DIR}/../test/cpu_mutation_row_test.cpp)
+    target_include_directories(deac_cpu_mutation_row_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(
+        NAME deac_unit_cpu_mutation_row
+        COMMAND deac_cpu_mutation_row_test)
+
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|IntelLLVM")
+        add_executable(deac_cpu_mutation_row_no_contract_test
+            ${CMAKE_SOURCE_DIR}/../test/cpu_mutation_row_test.cpp)
+        target_include_directories(
+            deac_cpu_mutation_row_no_contract_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        target_compile_options(
+            deac_cpu_mutation_row_no_contract_test PRIVATE
+            -ffp-contract=off)
+        add_test(
+            NAME deac_unit_cpu_mutation_row_no_contract
+            COMMAND deac_cpu_mutation_row_no_contract_test)
+    endif()
+endif()
+
 add_executable(deac_trial_population_test
     ${CMAKE_SOURCE_DIR}/../test/trial_population_test.cpp)
 target_include_directories(deac_trial_population_test PRIVATE

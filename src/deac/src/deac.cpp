@@ -18,6 +18,9 @@
 #include "evolution_controls.hpp"
 #include "moment_fitness.hpp"
 #include "normalization.hpp"
+#ifndef USE_GPU
+    #include "cpu_mutation_row.hpp"
+#endif
 #include "population_scoring.hpp"
 #include "result_io.hpp"
 #include "trial_population.hpp"
@@ -113,40 +116,6 @@ double squared_mean(double * A, size_t length) {
     }
     return _squared_mean/length;
 }
-
-void set_mutant_indices(struct xoshiro256p_state* rng, size_t* mutant_indices, size_t mutant_index0, size_t length) {
-    mutant_indices[0] = mutant_index0;
-    mutant_indices[1] = mutant_index0;
-    mutant_indices[2] = mutant_index0;
-    while (mutant_indices[0] == mutant_index0) {
-        mutant_indices[0] = xoshiro256p(rng) % length;
-    }
-
-    while ((mutant_indices[1] == mutant_index0) || (mutant_indices[1] == mutant_indices[0])) {
-        mutant_indices[1] = xoshiro256p(rng) % length;
-    }
-
-    while ((mutant_indices[2] == mutant_index0) || (mutant_indices[2] == mutant_indices[0])
-            || (mutant_indices[2] == mutant_indices[1])) {
-        mutant_indices[2] = xoshiro256p(rng) % length;
-    }
-}
-
-#ifndef USE_GPU
-static uint64_t probability_threshold(double probability) {
-    // The RNG produces q * 2^-53 for an integer q in [0, 2^53).
-    // Comparing q against ceil(probability * 2^53) is therefore exact and
-    // avoids converting every generated value to double.
-    constexpr uint64_t random_range = UINT64_C(1) << 53;
-    if (!(probability > 0.0)) {
-        return 0;
-    }
-    if (probability >= 1.0) {
-        return random_range;
-    }
-    return static_cast<uint64_t>(std::ceil(std::ldexp(probability, 53)));
-}
-#endif
 
 void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         double * const isf, double * const isf_error, double * frequency,
@@ -1422,7 +1391,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         #endif
     }
     
-    size_t bytes_mutate_indices = sizeof(bool)*genome_size*population_size;
+    #ifdef USE_GPU
+        size_t bytes_mutate_indices = sizeof(bool)*genome_size*population_size;
+    #else
+        size_t bytes_mutate_indices = sizeof(bool)*genome_size;
+    #endif
     bool* mutate_indices_positive_frequency;
     mutate_indices_positive_frequency = (bool*) malloc(bytes_mutate_indices);
     #ifdef DEAC_TWO_SIDED_POPULATION
@@ -1568,24 +1541,70 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 GPU_ASSERT(deac_wait(s));
             }
         #else
-            //Set mutant population and indices 
+            #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
+                constexpr bool allow_negative_spectral_weight = true;
+            #else
+                constexpr bool allow_negative_spectral_weight = false;
+            #endif
+            // Generate and immediately consume one row of mutation masks.
             for (size_t i=0; i<population_size; i++) {
-                set_mutant_indices(rng, mutant_indices + 3*i, i, population_size);
-                double crossover_rate_positive_frequency = crossover_probabilities_new_positive_frequency[i];
-                const uint64_t crossover_threshold_positive_frequency =
-                        probability_threshold(crossover_rate_positive_frequency);
-                for (size_t j=0; j<genome_size; j++) {
-                    mutate_indices_positive_frequency[i*genome_size + j] =
-                            (xoshiro256p(rng) >> 11) < crossover_threshold_positive_frequency;
-                }
+                const std::span<size_t, 3> row_mutant_indices(
+                        mutant_indices + 3*i, 3);
+                const std::span<bool> positive_mutation_mask(
+                        mutate_indices_positive_frequency, genome_size);
                 #ifdef DEAC_TWO_SIDED_POPULATION
-                    double crossover_rate_negative_frequency = crossover_probabilities_new_negative_frequency[i];
-                    const uint64_t crossover_threshold_negative_frequency =
-                            probability_threshold(crossover_rate_negative_frequency);
-                    for (size_t j=0; j<genome_size; j++) {
-                        mutate_indices_negative_frequency[i*genome_size + j] =
-                                (xoshiro256p(rng) >> 11) < crossover_threshold_negative_frequency;
-                    }
+                    const std::span<bool> negative_mutation_mask(
+                            mutate_indices_negative_frequency, genome_size);
+                    deac_numerics::generate_cpu_mutation_row_inputs(
+                            rng,
+                            i,
+                            population_size,
+                            row_mutant_indices,
+                            positive_mutation_mask,
+                            crossover_probabilities_new_positive_frequency[i],
+                            negative_mutation_mask,
+                            crossover_probabilities_new_negative_frequency[i]);
+                #else
+                    deac_numerics::generate_cpu_mutation_row_inputs(
+                            rng,
+                            i,
+                            population_size,
+                            row_mutant_indices,
+                            positive_mutation_mask,
+                            crossover_probabilities_new_positive_frequency[i]);
+                #endif
+
+                double F_positive_frequency = differential_weights_new_positive_frequency[i];
+                #ifdef DEAC_TWO_SIDED_POPULATION
+                    double F_negative_frequency = differential_weights_new_negative_frequency[i];
+                #endif
+                size_t mutant_index1 = row_mutant_indices[0];
+                size_t mutant_index2 = row_mutant_indices[1];
+                size_t mutant_index3 = row_mutant_indices[2];
+                deac_numerics::form_trial_population_row<
+                        allow_negative_spectral_weight>(
+                        population_new_positive_frequency + i*genome_size,
+                        population_old_positive_frequency + i*genome_size,
+                        population_old_positive_frequency + mutant_index1*genome_size,
+                        population_old_positive_frequency + mutant_index2*genome_size,
+                        population_old_positive_frequency + mutant_index3*genome_size,
+                        positive_mutation_mask.data(),
+                        F_positive_frequency,
+                        genome_size);
+                #ifdef DEAC_TWO_SIDED_POPULATION
+                    deac_numerics::form_trial_population_row<
+                            allow_negative_spectral_weight>(
+                            population_new_negative_frequency + i*genome_size,
+                            population_old_negative_frequency + i*genome_size,
+                            population_old_negative_frequency + mutant_index1*genome_size,
+                            population_old_negative_frequency + mutant_index2*genome_size,
+                            population_old_negative_frequency + mutant_index3*genome_size,
+                            negative_mutation_mask.data(),
+                            F_negative_frequency,
+                            genome_size);
+                    deac_numerics::couple_trial_population_zero(
+                            population_new_negative_frequency + i*genome_size,
+                            population_new_positive_frequency + i*genome_size);
                 #endif
             }
         #endif
@@ -1606,46 +1625,6 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                 gpu_match_population_zero(default_stream, grid_size_match_population_zero, d_population_new_negative_frequency, d_population_new_positive_frequency, population_size, genome_size);
                 GPU_ASSERT(deac_wait(default_stream));
             #endif
-        #else
-            #ifdef ALLOW_NEGATIVE_SPECTRAL_WEIGHT
-                constexpr bool allow_negative_spectral_weight = true;
-            #else
-                constexpr bool allow_negative_spectral_weight = false;
-            #endif
-            for (size_t i=0; i<population_size; i++) {
-                double F_positive_frequency = differential_weights_new_positive_frequency[i];
-                #ifdef DEAC_TWO_SIDED_POPULATION
-                    double F_negative_frequency = differential_weights_new_negative_frequency[i];
-                #endif
-                size_t mutant_index1 = mutant_indices[3*i];
-                size_t mutant_index2 = mutant_indices[3*i + 1];
-                size_t mutant_index3 = mutant_indices[3*i + 2];
-                deac_numerics::form_trial_population_row<
-                        allow_negative_spectral_weight>(
-                        population_new_positive_frequency + i*genome_size,
-                        population_old_positive_frequency + i*genome_size,
-                        population_old_positive_frequency + mutant_index1*genome_size,
-                        population_old_positive_frequency + mutant_index2*genome_size,
-                        population_old_positive_frequency + mutant_index3*genome_size,
-                        mutate_indices_positive_frequency + i*genome_size,
-                        F_positive_frequency,
-                        genome_size);
-                #ifdef DEAC_TWO_SIDED_POPULATION
-                    deac_numerics::form_trial_population_row<
-                            allow_negative_spectral_weight>(
-                            population_new_negative_frequency + i*genome_size,
-                            population_old_negative_frequency + i*genome_size,
-                            population_old_negative_frequency + mutant_index1*genome_size,
-                            population_old_negative_frequency + mutant_index2*genome_size,
-                            population_old_negative_frequency + mutant_index3*genome_size,
-                            mutate_indices_negative_frequency + i*genome_size,
-                            F_negative_frequency,
-                            genome_size);
-                    deac_numerics::couple_trial_population_zero(
-                            population_new_negative_frequency + i*genome_size,
-                            population_new_positive_frequency + i*genome_size);
-                #endif
-            }
         #endif
 
         // Normalization
