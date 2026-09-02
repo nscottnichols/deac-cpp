@@ -82,14 +82,6 @@ void matrix_multiply_MxN_by_Nx1(double * C, double * A, double * B, size_t M, si
     }
 }
 
-double reduced_chi_square_statistic(double * observed, double * calculated, double * error, size_t length) {
-    double chi_squared = 0.0;
-    for (size_t i=0; i<length; i++) {
-        chi_squared += pow((observed[i] - calculated[i])/error[i],2);
-    }
-    return chi_squared;
-}
-
 double minimum(double * A, size_t length) {
     double _minimum = A[0];
     for (size_t i=0; i<length; i++) {
@@ -813,11 +805,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
     #endif
 
     #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-        double * negative_first_moments_term;
-        double * negative_first_moments;
+        double * negative_first_moments_term = nullptr;
+        double * negative_first_moments = nullptr;
         #ifdef USE_GPU
-            double* d_negative_first_moments_term;
-            double* d_negative_first_moments;
+            double* d_negative_first_moments_term = nullptr;
+            double* d_negative_first_moments = nullptr;
         #endif
         size_t bytes_negative_first_moments_term = sizeof(double)*number_of_timeslices;
         size_t bytes_negative_first_moments = sizeof(double)*population_size;
@@ -930,48 +922,77 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             };
         #endif
 
-        gpu_deac_reduced_chi_squared(default_stream, d_isf_model, d_isf, d_isf_error, d_fitness_old, population_size, number_of_timeslices, 0, 0.0);
-        GPU_ASSERT(deac_wait(default_stream));
+        const auto score_device_population_objective = [&](double* device_fitness) {
+            gpu_deac_reduced_chi_squared(
+                    default_stream, d_isf_model, d_isf, d_isf_error,
+                    device_fitness, population_size, number_of_timeslices,
+                    0, 0.0);
+            GPU_ASSERT(deac_wait(default_stream));
 
-        #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-            if (use_negative_first_moment) {
-                gpu_deac_add_scalar_reduced_chi_squared(default_stream, d_negative_first_moments, negative_first_moment, negative_first_moment_error, d_fitness_old, population_size);
-                GPU_ASSERT(deac_wait(default_stream));
-            }
-        #else
-            //FIXME inverse first moment not implemented
-        #endif
-        if (use_first_moment) {
-            gpu_deac_add_scalar_reduced_chi_squared(default_stream, d_first_moments, first_moment, first_moment_error, d_fitness_old, population_size);
-            GPU_ASSERT(deac_wait(default_stream));
-        }
-        if (use_third_moment) {
-            gpu_deac_add_scalar_reduced_chi_squared(default_stream, d_third_moments, third_moment, third_moment_error, d_fitness_old, population_size);
-            GPU_ASSERT(deac_wait(default_stream));
-        }
-        #ifdef DEAC_TEST_POISON_GPU_FITNESS
-            test_require_finite_gpu_fitness(d_fitness_old, "initial");
-        #endif
-    #else
-        for (size_t i=0; i<population_size; i++) {
-            double _fitness = reduced_chi_square_statistic(isf,
-                    isf_model + i*number_of_timeslices, isf_error,
-                    number_of_timeslices)/number_of_timeslices;
             #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
                 if (use_negative_first_moment) {
-                    _fitness += pow((negative_first_moment - negative_first_moments[i])/negative_first_moment_error,2);
+                    gpu_deac_add_scalar_reduced_chi_squared(
+                            default_stream, d_negative_first_moments,
+                            negative_first_moment,
+                            negative_first_moment_error,
+                            device_fitness, population_size);
+                    GPU_ASSERT(deac_wait(default_stream));
                 }
             #else
                 //FIXME inverse first moment not implemented
             #endif
             if (use_first_moment) {
-                _fitness += deac_numerics::scalar_chi_square_penalty(
-                        first_moments[i], first_moment, first_moment_error);
+                gpu_deac_add_scalar_reduced_chi_squared(
+                        default_stream, d_first_moments,
+                        first_moment, first_moment_error,
+                        device_fitness, population_size);
+                GPU_ASSERT(deac_wait(default_stream));
             }
             if (use_third_moment) {
-                _fitness += pow((third_moment - third_moments[i])/third_moment_error,2);
+                gpu_deac_add_scalar_reduced_chi_squared(
+                        default_stream, d_third_moments,
+                        third_moment, third_moment_error,
+                        device_fitness, population_size);
+                GPU_ASSERT(deac_wait(default_stream));
             }
-            fitness_old[i] = _fitness;
+        };
+
+        score_device_population_objective(d_fitness_old);
+        #ifdef DEAC_TEST_POISON_GPU_FITNESS
+            test_require_finite_gpu_fitness(d_fitness_old, "initial");
+        #endif
+    #else
+        #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            const deac_numerics::ObjectiveMomentView negative_first_objective{
+                    use_negative_first_moment,
+                    use_negative_first_moment ? negative_first_moments : nullptr,
+                    negative_first_moment,
+                    negative_first_moment_error};
+        #else
+            const deac_numerics::ObjectiveMomentView negative_first_objective{};
+        #endif
+        const deac_numerics::ObjectiveMomentView first_objective{
+                use_first_moment, first_moments,
+                first_moment, first_moment_error};
+        const deac_numerics::ObjectiveMomentView third_objective{
+                use_third_moment, third_moments,
+                third_moment, third_moment_error};
+        const auto score_host_population_objective = [&](size_t population_index) {
+            return deac_numerics::score_population_objective_row(
+                    std::span<const double>(isf, number_of_timeslices),
+                    std::span<const double>(
+                            isf_model
+                                + population_index*number_of_timeslices,
+                            number_of_timeslices),
+                    std::span<const double>(
+                            isf_error, number_of_timeslices),
+                    population_index,
+                    negative_first_objective,
+                    first_objective,
+                    third_objective);
+        };
+        for (size_t i=0; i<population_size; i++) {
+            fitness_old[i] = score_host_population_objective(i);
         }
     #endif
 
@@ -1519,25 +1540,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
         //Set fitness for new population
         #ifdef USE_GPU
-            gpu_deac_reduced_chi_squared(default_stream, d_isf_model, d_isf, d_isf_error, d_fitness_new, population_size, number_of_timeslices, 0, 0.0);
-            GPU_ASSERT(deac_wait(default_stream));
-
-            #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                if (use_negative_first_moment) {
-                    gpu_deac_add_scalar_reduced_chi_squared(default_stream, d_negative_first_moments, negative_first_moment, negative_first_moment_error, d_fitness_new, population_size);
-                    GPU_ASSERT(deac_wait(default_stream));
-                }
-            #else
-                //FIXME inverse first moment not implemented
-            #endif
-            if (use_first_moment) {
-                gpu_deac_add_scalar_reduced_chi_squared(default_stream, d_first_moments, first_moment, first_moment_error, d_fitness_new, population_size);
-                GPU_ASSERT(deac_wait(default_stream));
-            }
-            if (use_third_moment) {
-                gpu_deac_add_scalar_reduced_chi_squared(default_stream, d_third_moments, third_moment, third_moment_error, d_fitness_new, population_size);
-                GPU_ASSERT(deac_wait(default_stream));
-            }
+            score_device_population_objective(d_fitness_new);
             #ifdef DEAC_TEST_POISON_GPU_FITNESS
                 test_require_finite_gpu_fitness(d_fitness_new, "evolved");
             #endif
@@ -1599,23 +1602,7 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             GPU_ASSERT(deac_wait(stream_array[0]));
         #else
             for (size_t i=0; i<population_size; i++) {
-                double _fitness = reduced_chi_square_statistic(isf,
-                        isf_model + i*number_of_timeslices, isf_error,
-                        number_of_timeslices)/number_of_timeslices;
-                #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                    if (use_negative_first_moment) {
-                        _fitness += pow((negative_first_moment - negative_first_moments[i])/negative_first_moment_error,2);
-                    }
-                #else
-                    //FIXME inverse first moment not implemented
-                #endif
-                if (use_first_moment) {
-                    _fitness += deac_numerics::scalar_chi_square_penalty(
-                            first_moments[i], first_moment, first_moment_error);
-                }
-                if (use_third_moment) {
-                    _fitness += pow((third_moment - third_moments[i])/third_moment_error,2);
-                }
+                double _fitness = score_host_population_objective(i);
                 // Rejection step
                 if (normalize && !normalization_valid[i]) {
                     _fitness = std::numeric_limits<double>::max();
