@@ -75,14 +75,6 @@ std::string string_format( const std::string& format, Args ... args ) {
     return std::string( buf.get(), buf.get() + size - 1 ); // We don't want the '\0' inside
 }
 
-void matrix_multiply_MxN_by_Nx1(double * C, double * A, double * B, size_t M, size_t N) {
-    for (size_t i=0; i<M; i++) {
-        for (size_t j=0; j<N; j++) {
-            C[i] += A[i*N + j]*B[j];
-        }
-    }
-}
-
 double minimum(double * A, size_t length) {
     double _minimum = A[0];
     for (size_t i=0; i<length; i++) {
@@ -588,26 +580,63 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
             GPU_ASSERT(deac_wait(default_stream));
         #endif
+    }
 
-        //Set normalization
-        #ifdef USE_GPU
-            GPU_ASSERT(deac_memset(d_normalization, 0, bytes_normalization, default_stream));
-            GPU_ASSERT(deac_wait(default_stream));
-
+    enum class NormalizationPhase {
+        initial_fatal,
+        evolved_noncompetitive,
+    };
+    #ifdef USE_GPU
+        const auto apply_population_normalization = [&] (
+                const deac_numerics::PopulationView& population,
+                NormalizationPhase phase) {
+            if (phase == NormalizationPhase::initial_fatal) {
+                GPU_ASSERT(deac_memset(
+                        d_normalization, 0,
+                        bytes_normalization, default_stream));
+                GPU_ASSERT(deac_wait(default_stream));
+            }
             #ifdef USE_BLAS
-                gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0/zeroth_moment, d_population_old_positive_frequency, d_normalization_term_positive_frequency, 0.0, d_normalization);
+                gpu_blas_gemv(
+                        default_blas_handle, population_size, genome_size,
+                        1.0/zeroth_moment, population.positive_frequency,
+                        d_normalization_term_positive_frequency,
+                        0.0, d_normalization);
                 GPU_ASSERT(deac_wait(default_stream));
                 #ifdef DEAC_TWO_SIDED_POPULATION
-                    gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0/zeroth_moment, d_population_old_negative_frequency, d_normalization_term_negative_frequency, 1.0, d_normalization);
+                    gpu_blas_gemv(
+                            default_blas_handle, population_size, genome_size,
+                            1.0/zeroth_moment, population.negative_frequency,
+                            d_normalization_term_negative_frequency,
+                            1.0, d_normalization);
                     GPU_ASSERT(deac_wait(default_stream));
                 #endif
             #else
-                gpu_deac_gemv(default_stream, population_size, genome_size, 1.0/zeroth_moment, d_population_old_positive_frequency, d_normalization_term_positive_frequency, 0.0, d_normalization);
+                gpu_deac_gemv(
+                        default_stream, population_size, genome_size,
+                        1.0/zeroth_moment, population.positive_frequency,
+                        d_normalization_term_positive_frequency,
+                        0.0, d_normalization);
                 GPU_ASSERT(deac_wait(default_stream));
                 #ifdef DEAC_TWO_SIDED_POPULATION
-                    gpu_deac_gemv(default_stream, population_size, genome_size, 1.0/zeroth_moment, d_population_old_negative_frequency, d_normalization_term_negative_frequency, 1.0, d_normalization);
+                    gpu_deac_gemv(
+                            default_stream, population_size, genome_size,
+                            1.0/zeroth_moment, population.negative_frequency,
+                            d_normalization_term_negative_frequency,
+                            1.0, d_normalization);
                     GPU_ASSERT(deac_wait(default_stream));
                 #endif
+            #endif
+
+            #ifdef DEAC_TEST_FORCE_INVALID_NORMALIZATION_TRIALS
+                if (phase == NormalizationPhase::evolved_noncompetitive) {
+                    // Test-only executable: deterministically exercise the
+                    // complete rejection path for degenerate evolved rows.
+                    GPU_ASSERT(deac_memset(
+                            d_normalization, 0,
+                            bytes_normalization, default_stream));
+                    GPU_ASSERT(deac_wait(default_stream));
+                }
             #endif
 
             GPU_ASSERT(deac_memset(
@@ -615,11 +644,11 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
                     bytes_normalization_valid, default_stream));
             GPU_ASSERT(deac_wait(default_stream));
             gpu_deac_dgmmDiv1D(stream_array[0],
-                    d_population_old_positive_frequency,
+                    population.positive_frequency,
                     d_normalization, population_size, genome_size);
             #ifdef DEAC_TWO_SIDED_POPULATION
                 gpu_deac_dgmmDiv1D(stream_array[1 % MAX_GPU_STREAMS],
-                        d_population_old_negative_frequency,
+                        population.negative_frequency,
                         d_normalization, population_size, genome_size);
                 #if MAX_GPU_STREAMS > 1
                     GPU_ASSERT(deac_wait(stream_array[1]));
@@ -627,12 +656,12 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
             GPU_ASSERT(deac_wait(stream_array[0]));
             gpu_validate_normalization_rows(stream_array[0],
-                    d_population_old_positive_frequency,
+                    population.positive_frequency,
                     d_normalization, d_normalization_valid, zeroth_moment,
                     population_size, genome_size);
             #ifdef DEAC_TWO_SIDED_POPULATION
                 gpu_validate_normalization_rows(stream_array[1 % MAX_GPU_STREAMS],
-                        d_population_old_negative_frequency,
+                        population.negative_frequency,
                         d_normalization, d_normalization_valid, zeroth_moment,
                         population_size, genome_size);
                 #if MAX_GPU_STREAMS > 1
@@ -641,53 +670,82 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             #endif
             GPU_ASSERT(deac_wait(stream_array[0]));
             gpu_cleanup_invalid_normalization_rows(stream_array[0],
-                    d_population_old_positive_frequency,
+                    population.positive_frequency,
                     d_normalization_valid, population_size, genome_size);
             #ifdef DEAC_TWO_SIDED_POPULATION
                 gpu_cleanup_invalid_normalization_rows(stream_array[0],
-                        d_population_old_negative_frequency,
+                        population.negative_frequency,
                         d_normalization_valid, population_size, genome_size);
             #endif
             GPU_ASSERT(deac_wait(stream_array[0]));
-            GPU_ASSERT(deac_memcpy_device_to_host(
-                    normalization_valid, d_normalization_valid,
-                    bytes_normalization_valid, default_stream));
-            GPU_ASSERT(deac_wait(default_stream));
-            if (!std::all_of(
-                    normalization_valid, normalization_valid + population_size,
-                    [](int valid) { return valid != 0; })) {
-                fail_with_error(
-                        "initial population contains an unrepresentable "
-                        "normalization row");
-            }
-        #else
-            for (size_t i=0; i<population_size; i++) {
-                normalization[i] = 0.0;
-            }
-            matrix_multiply_MxN_by_Nx1(normalization, population_old_positive_frequency,
-                    normalization_term_positive_frequency, population_size, genome_size);
-            #ifdef DEAC_TWO_SIDED_POPULATION
-                matrix_multiply_MxN_by_Nx1(normalization, population_old_negative_frequency,
-                        normalization_term_negative_frequency, population_size, genome_size);
-            #endif
-            for (size_t i=0; i<population_size; i++) {
-                const bool valid = deac_numerics::try_apply_normalization(
-                        zeroth_moment, normalization[i],
-                        std::span<double>(
-                                population_old_positive_frequency + i*genome_size,
-                                genome_size)
-                        #ifdef DEAC_TWO_SIDED_POPULATION
-                            , std::span<double>(
-                                    population_old_negative_frequency + i*genome_size,
-                                    genome_size)
-                        #endif
-                        );
-                if (!valid) {
+
+            if (phase == NormalizationPhase::initial_fatal) {
+                GPU_ASSERT(deac_memcpy_device_to_host(
+                        normalization_valid, d_normalization_valid,
+                        bytes_normalization_valid, default_stream));
+                GPU_ASSERT(deac_wait(default_stream));
+                if (!std::all_of(
+                        normalization_valid,
+                        normalization_valid + population_size,
+                        [](int valid) { return valid != 0; })) {
                     fail_with_error(
                             "initial population contains an unrepresentable "
                             "normalization row");
                 }
             }
+        };
+    #else
+        const auto apply_population_normalization = [&] (
+                const deac_numerics::PopulationView& population,
+                NormalizationPhase phase) {
+            deac_numerics::project_population_scalar_moment(
+                    normalization, population,
+                    normalization_term_positive_frequency,
+                    #ifdef DEAC_TWO_SIDED_POPULATION
+                        normalization_term_negative_frequency,
+                    #else
+                        nullptr,
+                    #endif
+                    genome_size, population_size);
+            #ifdef DEAC_TEST_FORCE_INVALID_NORMALIZATION_TRIALS
+                if (phase == NormalizationPhase::evolved_noncompetitive) {
+                    std::fill(
+                            normalization,
+                            normalization + population_size, 0.0);
+                }
+            #endif
+            for (size_t i=0; i<population_size; ++i) {
+                const bool valid = deac_numerics::try_apply_normalization(
+                        zeroth_moment, normalization[i],
+                        std::span<double>(
+                                population.positive_frequency + i*genome_size,
+                                genome_size)
+                        #ifdef DEAC_TWO_SIDED_POPULATION
+                            , std::span<double>(
+                                    population.negative_frequency + i*genome_size,
+                                    genome_size)
+                        #endif
+                        );
+                if (phase == NormalizationPhase::initial_fatal) {
+                    if (!valid) {
+                        fail_with_error(
+                                "initial population contains an unrepresentable "
+                                "normalization row");
+                    }
+                } else {
+                    normalization_valid[i] = valid;
+                }
+            }
+        };
+    #endif
+
+    if (normalize) {
+        #ifdef USE_GPU
+            apply_population_normalization(
+                    d_population_old, NormalizationPhase::initial_fatal);
+        #else
+            apply_population_normalization(
+                    population_old, NormalizationPhase::initial_fatal);
         #endif
     }
 
@@ -1593,98 +1651,13 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         // Normalization
         if (normalize) {
             #ifdef USE_GPU
-                #ifdef USE_BLAS
-                    gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0/zeroth_moment, d_population_new_positive_frequency, d_normalization_term_positive_frequency, 0.0, d_normalization);
-                    GPU_ASSERT(deac_wait(default_stream));
-                    #ifdef DEAC_TWO_SIDED_POPULATION
-                        gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0/zeroth_moment, d_population_new_negative_frequency, d_normalization_term_negative_frequency, 1.0, d_normalization);
-                        GPU_ASSERT(deac_wait(default_stream));
-                    #endif
-                #else
-                    gpu_deac_gemv(default_stream, population_size, genome_size, 1.0/zeroth_moment, d_population_new_positive_frequency, d_normalization_term_positive_frequency, 0.0, d_normalization);
-                    GPU_ASSERT(deac_wait(default_stream));
-                    #ifdef DEAC_TWO_SIDED_POPULATION
-                        gpu_deac_gemv(default_stream, population_size, genome_size, 1.0/zeroth_moment, d_population_new_negative_frequency, d_normalization_term_negative_frequency, 1.0, d_normalization);
-                        GPU_ASSERT(deac_wait(default_stream));
-                    #endif
-                #endif
-
-                #ifdef DEAC_TEST_FORCE_INVALID_NORMALIZATION_TRIALS
-                    // Test-only executable: deterministically exercise the
-                    // complete rejection path for degenerate evolved rows.
-                    GPU_ASSERT(deac_memset(
-                            d_normalization, 0,
-                            bytes_normalization, default_stream));
-                    GPU_ASSERT(deac_wait(default_stream));
-                #endif
-
-                GPU_ASSERT(deac_memset(
-                        d_normalization_valid, 1,
-                        bytes_normalization_valid, default_stream));
-                GPU_ASSERT(deac_wait(default_stream));
-                gpu_deac_dgmmDiv1D(stream_array[0],
-                        d_population_new_positive_frequency,
-                        d_normalization, population_size, genome_size);
-                #ifdef DEAC_TWO_SIDED_POPULATION
-                    gpu_deac_dgmmDiv1D(stream_array[1 % MAX_GPU_STREAMS],
-                            d_population_new_negative_frequency,
-                            d_normalization, population_size, genome_size);
-                    #if MAX_GPU_STREAMS > 1
-                        GPU_ASSERT(deac_wait(stream_array[1]));
-                    #endif
-                #endif
-                GPU_ASSERT(deac_wait(stream_array[0]));
-                gpu_validate_normalization_rows(stream_array[0],
-                        d_population_new_positive_frequency,
-                        d_normalization, d_normalization_valid, zeroth_moment,
-                        population_size, genome_size);
-                #ifdef DEAC_TWO_SIDED_POPULATION
-                    gpu_validate_normalization_rows(stream_array[1 % MAX_GPU_STREAMS],
-                            d_population_new_negative_frequency,
-                            d_normalization, d_normalization_valid, zeroth_moment,
-                            population_size, genome_size);
-                    #if MAX_GPU_STREAMS > 1
-                        GPU_ASSERT(deac_wait(stream_array[1]));
-                    #endif
-                #endif
-                GPU_ASSERT(deac_wait(stream_array[0]));
-                gpu_cleanup_invalid_normalization_rows(stream_array[0],
-                        d_population_new_positive_frequency,
-                        d_normalization_valid, population_size, genome_size);
-                #ifdef DEAC_TWO_SIDED_POPULATION
-                    gpu_cleanup_invalid_normalization_rows(stream_array[0],
-                            d_population_new_negative_frequency,
-                            d_normalization_valid, population_size, genome_size);
-                #endif
-                GPU_ASSERT(deac_wait(stream_array[0]));
+                apply_population_normalization(
+                        d_population_new,
+                        NormalizationPhase::evolved_noncompetitive);
             #else
-                for (size_t i=0; i<population_size; i++) {
-                    normalization[i] = 0.0;
-                }
-                matrix_multiply_MxN_by_Nx1(normalization, population_new_positive_frequency,
-                        normalization_term_positive_frequency, population_size, genome_size);
-                #ifdef DEAC_TWO_SIDED_POPULATION
-                    matrix_multiply_MxN_by_Nx1(normalization, population_new_negative_frequency,
-                            normalization_term_negative_frequency, population_size, genome_size);
-                #endif
-                #ifdef DEAC_TEST_FORCE_INVALID_NORMALIZATION_TRIALS
-                    std::fill(
-                            normalization,
-                            normalization + population_size, 0.0);
-                #endif
-                for (size_t i=0; i<population_size; i++) {
-                    normalization_valid[i] = deac_numerics::try_apply_normalization(
-                            zeroth_moment, normalization[i],
-                            std::span<double>(
-                                    population_new_positive_frequency + i*genome_size,
-                                    genome_size)
-                            #ifdef DEAC_TWO_SIDED_POPULATION
-                                , std::span<double>(
-                                        population_new_negative_frequency + i*genome_size,
-                                        genome_size)
-                            #endif
-                            );
-                }
+                apply_population_normalization(
+                        population_new,
+                        NormalizationPhase::evolved_noncompetitive);
             #endif
         }
 
