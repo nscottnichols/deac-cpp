@@ -513,6 +513,14 @@ add_test(
     NAME deac_unit_moment_fitness
     COMMAND deac_moment_fitness_test)
 
+add_executable(deac_population_scoring_test
+    ${CMAKE_SOURCE_DIR}/../test/population_scoring_test.cpp)
+target_include_directories(deac_population_scoring_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+add_test(
+    NAME deac_unit_population_scoring
+    COMMAND deac_population_scoring_test)
+
 add_executable(deac_population_projection_test
     ${CMAKE_SOURCE_DIR}/../test/population_projection_test.cpp)
 target_include_directories(deac_population_projection_test PRIVATE
@@ -581,7 +589,8 @@ if(NOT USE_ALLOW_NEGATIVE_SPECTRAL_WEIGHT)
         deac_invalid_normalization_evolution_test_exe)
     target_compile_definitions(
         deac_invalid_normalization_evolution_test_exe PRIVATE
-        DEAC_TEST_FORCE_INVALID_NORMALIZATION_TRIALS=1)
+        DEAC_TEST_FORCE_INVALID_NORMALIZATION_TRIALS=1
+        DEAC_TEST_SCORE_IDENTICAL_POPULATION=1)
     if(NOT "${GPU_BACKEND}" STREQUAL "none")
         target_compile_definitions(
             deac_invalid_normalization_evolution_test_exe PRIVATE
@@ -816,6 +825,16 @@ if(Python3_Interpreter_FOUND)
                 --workdir ${CMAKE_CURRENT_BINARY_DIR}/invalid-normalization-evolution
                 ${DEAC_SMOKE_VARIANT_ARGS}
                 ${DEAC_INVALID_NORMALIZATION_TEST_ARGS}
+        )
+        add_test(
+            NAME deac_identical_population_scoring
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/../test/deac_identical_population_scoring_test.py
+                --reference-exe $<TARGET_FILE:${exe}>
+                --seam-exe $<TARGET_FILE:deac_invalid_normalization_evolution_test_exe>
+                --workdir ${CMAKE_CURRENT_BINARY_DIR}/identical-population-scoring
+                ${DEAC_SMOKE_VARIANT_ARGS}
         )
     endif()
 

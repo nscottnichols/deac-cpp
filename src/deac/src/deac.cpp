@@ -9,6 +9,7 @@
 #include <algorithm> // std::none_of
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <limits>
 #include <span>
@@ -17,7 +18,7 @@
 #include "evolution_controls.hpp"
 #include "moment_fitness.hpp"
 #include "normalization.hpp"
-#include "population_projection.hpp"
+#include "population_scoring.hpp"
 #include "result_io.hpp"
 #include "trial_population.hpp"
 #include "zero_temperature_kernel.hpp"
@@ -356,6 +357,24 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         population_old_negative_frequency = (double*) malloc(bytes_population);
         population_new_negative_frequency = (double*) malloc(bytes_population);
     #endif
+    #ifndef USE_GPU
+        const deac_numerics::PopulationView population_old{
+                population_old_positive_frequency,
+                #ifdef DEAC_TWO_SIDED_POPULATION
+                    population_old_negative_frequency
+                #else
+                    nullptr
+                #endif
+                };
+        const deac_numerics::PopulationView population_new{
+                population_new_positive_frequency,
+                #ifdef DEAC_TWO_SIDED_POPULATION
+                    population_new_negative_frequency
+                #else
+                    nullptr
+                #endif
+                };
+    #endif
     for (size_t i=0; i<population_size; i++) {
         for (size_t j=0; j<genome_size; j++) {
             #ifdef USE_GPU
@@ -402,6 +421,117 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             GPU_ASSERT(deac_memcpy_host_to_device(d_population_old_negative_frequency, population_old_negative_frequency, bytes_population, default_stream));
         #endif
         GPU_ASSERT(deac_wait(default_stream));
+
+        const deac_numerics::PopulationView d_population_old{
+                d_population_old_positive_frequency,
+                #ifdef DEAC_TWO_SIDED_POPULATION
+                    d_population_old_negative_frequency
+                #else
+                    nullptr
+                #endif
+                };
+        const deac_numerics::PopulationView d_population_new{
+                d_population_new_positive_frequency,
+                #ifdef DEAC_TWO_SIDED_POPULATION
+                    d_population_new_negative_frequency
+                #else
+                    nullptr
+                #endif
+                };
+
+        const auto project_device_population_scalar_moment = [&] (
+                double* projected_moment,
+                const deac_numerics::PopulationView& population,
+                double* positive_frequency_terms,
+                double* negative_frequency_terms) {
+            #ifdef USE_BLAS
+                gpu_blas_gemv(
+                        default_blas_handle, population_size, genome_size,
+                        1.0, population.positive_frequency,
+                        positive_frequency_terms, 0.0, projected_moment);
+                GPU_ASSERT(deac_wait(default_stream));
+                if (population.negative_frequency != nullptr) {
+                    gpu_blas_gemv(
+                            default_blas_handle, population_size, genome_size,
+                            1.0, population.negative_frequency,
+                            negative_frequency_terms, 1.0, projected_moment);
+                    GPU_ASSERT(deac_wait(default_stream));
+                }
+            #else
+                gpu_deac_gemv(
+                        default_stream, population_size, genome_size,
+                        1.0, population.positive_frequency,
+                        positive_frequency_terms, 0.0, projected_moment);
+                GPU_ASSERT(deac_wait(default_stream));
+                if (population.negative_frequency != nullptr) {
+                    gpu_deac_gemv(
+                            default_stream, population_size, genome_size,
+                            1.0, population.negative_frequency,
+                            negative_frequency_terms, 1.0, projected_moment);
+                    GPU_ASSERT(deac_wait(default_stream));
+                }
+            #endif
+        };
+
+        const auto project_device_population_forward_model = [&] (
+                double* modeled_isf,
+                const deac_numerics::PopulationView& population) {
+            #ifdef USE_BLAS
+                gpu_blas_gemm(
+                        default_blas_handle, population_size,
+                        number_of_timeslices, genome_size,
+                        1.0, population.positive_frequency,
+                        d_isf_term_positive_frequency, 0.0, modeled_isf);
+                GPU_ASSERT(deac_wait(default_stream));
+                #ifdef DEAC_TWO_SIDED_POPULATION
+                    if (population.negative_frequency != nullptr) {
+                        gpu_blas_gemm(
+                                default_blas_handle, population_size,
+                                number_of_timeslices, genome_size,
+                                1.0, population.negative_frequency,
+                                d_isf_term_negative_frequency, 1.0, modeled_isf);
+                        GPU_ASSERT(deac_wait(default_stream));
+                    }
+                #endif
+            #else
+                gpu_matmul(
+                        default_stream, population_size,
+                        number_of_timeslices, genome_size,
+                        1.0, population.positive_frequency,
+                        d_isf_term_positive_frequency, 0.0, modeled_isf);
+                GPU_ASSERT(deac_wait(default_stream));
+                #ifdef DEAC_TWO_SIDED_POPULATION
+                    if (population.negative_frequency != nullptr) {
+                        gpu_matmul(
+                                default_stream, population_size,
+                                number_of_timeslices, genome_size,
+                                1.0, population.negative_frequency,
+                                d_isf_term_negative_frequency, 1.0, modeled_isf);
+                        GPU_ASSERT(deac_wait(default_stream));
+                    }
+                #endif
+            #endif
+        };
+
+        #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+            const auto project_device_modeled_isf_moment = [&] (
+                    double* projected_moment,
+                    double* modeled_isf,
+                    double* terms) {
+                #ifdef USE_BLAS
+                    gpu_blas_gemv(
+                            default_blas_handle, population_size,
+                            number_of_timeslices, 1.0, modeled_isf, terms,
+                            0.0, projected_moment);
+                #else
+                    gpu_deac_gemv(
+                            default_stream, population_size,
+                            number_of_timeslices, 1.0, modeled_isf, terms,
+                            0.0, projected_moment);
+                #endif
+                GPU_ASSERT(deac_wait(default_stream));
+            };
+        #endif
     #endif
 
     // Normalize population
@@ -635,31 +765,25 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
             GPU_ASSERT(deac_memset(d_first_moments, 0, bytes_first_moments, default_stream));
             GPU_ASSERT(deac_wait(default_stream));
-            #ifdef USE_BLAS
-                gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_old_positive_frequency, d_first_moments_term_positive_frequency, 0.0, d_first_moments);
-                GPU_ASSERT(deac_wait(default_stream));
-                #ifdef DEAC_TWO_SIDED_POPULATION
-                    gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_old_negative_frequency, d_first_moments_term_negative_frequency, 1.0, d_first_moments);
-                    GPU_ASSERT(deac_wait(default_stream));
-                #endif
-            #else
-                gpu_deac_gemv(default_stream, population_size, genome_size, 1.0, d_population_old_positive_frequency, d_first_moments_term_positive_frequency, 0.0, d_first_moments);
-                GPU_ASSERT(deac_wait(default_stream));
-                #ifdef DEAC_TWO_SIDED_POPULATION
-                    gpu_deac_gemv(default_stream, population_size, genome_size, 1.0, d_population_old_negative_frequency, d_first_moments_term_negative_frequency, 1.0, d_first_moments);
-                    GPU_ASSERT(deac_wait(default_stream));
-                #endif
-            #endif
+            project_device_population_scalar_moment(
+                    d_first_moments, d_population_old,
+                    d_first_moments_term_positive_frequency,
+                    #ifdef DEAC_TWO_SIDED_POPULATION
+                        d_first_moments_term_negative_frequency
+                    #else
+                        nullptr
+                    #endif
+                    );
         #else
-            for (size_t i=0; i<population_size; i++) {
-                first_moments[i] = 0.0;
-            }
-            matrix_multiply_MxN_by_Nx1(first_moments, population_old_positive_frequency,
-                    first_moments_term_positive_frequency, population_size, genome_size);
-            #ifdef DEAC_TWO_SIDED_POPULATION
-                matrix_multiply_MxN_by_Nx1(first_moments, population_old_negative_frequency,
-                        first_moments_term_negative_frequency, population_size, genome_size);
-            #endif
+            deac_numerics::project_population_scalar_moment(
+                    first_moments, population_old,
+                    first_moments_term_positive_frequency,
+                    #ifdef DEAC_TWO_SIDED_POPULATION
+                        first_moments_term_negative_frequency,
+                    #else
+                        nullptr,
+                    #endif
+                    genome_size, population_size);
         #endif
     }
 
@@ -735,31 +859,25 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
             GPU_ASSERT(deac_memset(d_third_moments, 0, bytes_third_moments, default_stream));
             GPU_ASSERT(deac_wait(default_stream));
-            #ifdef USE_BLAS
-                gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_old_positive_frequency, d_third_moments_term_positive_frequency, 0.0, d_third_moments);
-                GPU_ASSERT(deac_wait(default_stream));
-                #ifdef DEAC_TWO_SIDED_POPULATION
-                    gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_old_negative_frequency, d_third_moments_term_negative_frequency, 1.0, d_third_moments);
-                    GPU_ASSERT(deac_wait(default_stream));
-                #endif
-            #else
-                gpu_deac_gemv(default_stream, population_size, genome_size, 1.0, d_population_old_positive_frequency, d_third_moments_term_positive_frequency, 0.0, d_third_moments);
-                GPU_ASSERT(deac_wait(default_stream));
-                #ifdef DEAC_TWO_SIDED_POPULATION
-                    gpu_deac_gemv(default_stream, population_size, genome_size, 1.0, d_population_old_negative_frequency, d_third_moments_term_negative_frequency, 1.0, d_third_moments);
-                    GPU_ASSERT(deac_wait(default_stream));
-                #endif
-            #endif
+            project_device_population_scalar_moment(
+                    d_third_moments, d_population_old,
+                    d_third_moments_term_positive_frequency,
+                    #ifdef DEAC_TWO_SIDED_POPULATION
+                        d_third_moments_term_negative_frequency
+                    #else
+                        nullptr
+                    #endif
+                    );
         #else
-            for (size_t i=0; i<population_size; i++) {
-                third_moments[i] = 0.0;
-            }
-            matrix_multiply_MxN_by_Nx1(third_moments, population_old_positive_frequency,
-                    third_moments_term_positive_frequency, population_size, genome_size);
-            #ifdef DEAC_TWO_SIDED_POPULATION
-                matrix_multiply_MxN_by_Nx1(third_moments, population_old_negative_frequency,
-                        third_moments_term_negative_frequency, population_size, genome_size);
-            #endif
+            deac_numerics::project_population_scalar_moment(
+                    third_moments, population_old,
+                    third_moments_term_positive_frequency,
+                    #ifdef DEAC_TWO_SIDED_POPULATION
+                        third_moments_term_negative_frequency,
+                    #else
+                        nullptr,
+                    #endif
+                    genome_size, population_size);
         #endif
     }
 
@@ -775,33 +893,17 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         GPU_ASSERT(deac_wait(default_stream));
         GPU_ASSERT(deac_memset(d_isf_model, 0, bytes_isf_model, default_stream));
         GPU_ASSERT(deac_wait(default_stream));
-        #ifdef USE_BLAS
-            gpu_blas_gemm(default_blas_handle, population_size, number_of_timeslices, genome_size, 1.0, d_population_old_positive_frequency, d_isf_term_positive_frequency, 0.0, d_isf_model);
-            GPU_ASSERT(deac_wait(default_stream));
-            #ifdef DEAC_TWO_SIDED_POPULATION
-                gpu_blas_gemm(default_blas_handle, population_size, number_of_timeslices, genome_size, 1.0, d_population_old_negative_frequency, d_isf_term_negative_frequency, 1.0, d_isf_model);
-                GPU_ASSERT(deac_wait(default_stream));
-            #endif
-        #else
-            gpu_matmul(default_stream, population_size, number_of_timeslices, genome_size, 1.0, d_population_old_positive_frequency, d_isf_term_positive_frequency, 0.0, d_isf_model);
-            GPU_ASSERT(deac_wait(default_stream));
-            #ifdef DEAC_TWO_SIDED_POPULATION
-                gpu_matmul(default_stream, population_size, number_of_timeslices, genome_size, 1.0, d_population_old_negative_frequency, d_isf_term_negative_frequency, 1.0, d_isf_model);
-                GPU_ASSERT(deac_wait(default_stream));
-            #endif
-        #endif
+        project_device_population_forward_model(d_isf_model, d_population_old);
     #else
-        for (size_t i=0; i<population_size*number_of_timeslices; i++) {
-            isf_model[i] = 0.0;
-        }
-        deac_numerics::accumulate_population_projection(
-                isf_model, isf_term_positive_frequency, population_old_positive_frequency,
+        deac_numerics::project_population_forward_model(
+                isf_model, population_old,
+                isf_term_positive_frequency,
+                #ifdef DEAC_TWO_SIDED_POPULATION
+                    isf_term_negative_frequency,
+                #else
+                    nullptr,
+                #endif
                 number_of_timeslices, genome_size, population_size);
-        #ifdef DEAC_TWO_SIDED_POPULATION
-            deac_numerics::accumulate_population_projection(
-                    isf_model, isf_term_negative_frequency, population_old_negative_frequency,
-                    number_of_timeslices, genome_size, population_size);
-        #endif
     #endif
 
     #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
@@ -837,19 +939,14 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
 
                 GPU_ASSERT(deac_memset(d_negative_first_moments, 0, bytes_negative_first_moments, default_stream));
                 GPU_ASSERT(deac_wait(default_stream));
-                #ifdef USE_BLAS
-                    gpu_blas_gemv(default_blas_handle, population_size, number_of_timeslices, 1.0, d_isf_model, d_negative_first_moments_term, 0.0, d_negative_first_moments);
-                    GPU_ASSERT(deac_wait(default_stream));
-                #else
-                    gpu_deac_gemv(default_stream, population_size, number_of_timeslices, 1.0, d_isf_model, d_negative_first_moments_term, 0.0, d_negative_first_moments);
-                    GPU_ASSERT(deac_wait(default_stream));
-                #endif
+                project_device_modeled_isf_moment(
+                        d_negative_first_moments, d_isf_model,
+                        d_negative_first_moments_term);
             #else
-                for (size_t i=0; i<population_size; i++) {
-                    negative_first_moments[i] = 0.0;
-                }
-                matrix_multiply_MxN_by_Nx1(negative_first_moments, isf_model,
-                        negative_first_moments_term, population_size, number_of_timeslices);
+                deac_numerics::project_modeled_isf_moment(
+                        negative_first_moments, isf_model,
+                        negative_first_moments_term,
+                        number_of_timeslices, population_size);
             #endif
         }
     #else
@@ -994,6 +1091,179 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
         for (size_t i=0; i<population_size; i++) {
             fitness_old[i] = score_host_population_objective(i);
         }
+    #endif
+
+    #ifdef USE_GPU
+        const auto project_evolved_population_observables = [&] (
+                const deac_numerics::PopulationView& population) {
+            project_device_population_forward_model(d_isf_model, population);
+            #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                if (use_negative_first_moment) {
+                    project_device_modeled_isf_moment(
+                            d_negative_first_moments, d_isf_model,
+                            d_negative_first_moments_term);
+                }
+            #endif
+            if (use_first_moment) {
+                project_device_population_scalar_moment(
+                        d_first_moments, population,
+                        d_first_moments_term_positive_frequency,
+                        #ifdef DEAC_TWO_SIDED_POPULATION
+                            d_first_moments_term_negative_frequency
+                        #else
+                            nullptr
+                        #endif
+                        );
+            }
+            if (use_third_moment) {
+                project_device_population_scalar_moment(
+                        d_third_moments, population,
+                        d_third_moments_term_positive_frequency,
+                        #ifdef DEAC_TWO_SIDED_POPULATION
+                            d_third_moments_term_negative_frequency
+                        #else
+                            nullptr
+                        #endif
+                        );
+            }
+        };
+    #else
+        const auto project_evolved_population_observables = [&] (
+                const deac_numerics::PopulationView& population) {
+            deac_numerics::project_population_forward_model(
+                    isf_model, population,
+                    isf_term_positive_frequency,
+                    #ifdef DEAC_TWO_SIDED_POPULATION
+                        isf_term_negative_frequency,
+                    #else
+                        nullptr,
+                    #endif
+                    number_of_timeslices, genome_size, population_size);
+            #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
+                if (use_negative_first_moment) {
+                    deac_numerics::project_modeled_isf_moment(
+                            negative_first_moments, isf_model,
+                            negative_first_moments_term,
+                            number_of_timeslices, population_size);
+                }
+            #endif
+            if (use_first_moment) {
+                deac_numerics::project_population_scalar_moment(
+                        first_moments, population,
+                        first_moments_term_positive_frequency,
+                        #ifdef DEAC_TWO_SIDED_POPULATION
+                            first_moments_term_negative_frequency,
+                        #else
+                            nullptr,
+                        #endif
+                        genome_size, population_size);
+            }
+            if (use_third_moment) {
+                deac_numerics::project_population_scalar_moment(
+                        third_moments, population,
+                        third_moments_term_positive_frequency,
+                        #ifdef DEAC_TWO_SIDED_POPULATION
+                            third_moments_term_negative_frequency,
+                        #else
+                            nullptr,
+                        #endif
+                        genome_size, population_size);
+            }
+        };
+    #endif
+
+    #ifdef DEAC_TEST_SCORE_IDENTICAL_POPULATION
+        // Test-only solver seam: bypass mutation RNG by copying the already
+        // normalized incumbent into the candidate buffers, then evaluate it
+        // in the evolved-path observable order.  Production targets do not
+        // compile this block.
+        std::vector<double> initial_population_fitness(population_size);
+        std::vector<double> candidate_population_fitness(population_size);
+        #ifdef USE_GPU
+            GPU_ASSERT(deac_memcpy_device_to_host(
+                    initial_population_fitness.data(), d_fitness_old,
+                    bytes_fitness, default_stream));
+            GPU_ASSERT(deac_memcpy_device_to_host(
+                    population_new_positive_frequency,
+                    d_population_old.positive_frequency,
+                    bytes_population, default_stream));
+            #ifdef DEAC_TWO_SIDED_POPULATION
+                GPU_ASSERT(deac_memcpy_device_to_host(
+                        population_new_negative_frequency,
+                        d_population_old.negative_frequency,
+                        bytes_population, default_stream));
+            #endif
+            GPU_ASSERT(deac_wait(default_stream));
+
+            GPU_ASSERT(deac_memcpy_host_to_device(
+                    d_population_new.positive_frequency,
+                    population_new_positive_frequency,
+                    bytes_population, default_stream));
+            #ifdef DEAC_TWO_SIDED_POPULATION
+                GPU_ASSERT(deac_memcpy_host_to_device(
+                        d_population_new.negative_frequency,
+                        population_new_negative_frequency,
+                        bytes_population, default_stream));
+            #endif
+            GPU_ASSERT(deac_wait(default_stream));
+
+            project_evolved_population_observables(d_population_new);
+            score_device_population_objective(d_fitness_new);
+            GPU_ASSERT(deac_memcpy_device_to_host(
+                    candidate_population_fitness.data(), d_fitness_new,
+                    bytes_fitness, default_stream));
+            GPU_ASSERT(deac_wait(default_stream));
+        #else
+            std::copy(
+                    population_old.positive_frequency,
+                    population_old.positive_frequency
+                        + population_size*genome_size,
+                    population_new.positive_frequency);
+            #ifdef DEAC_TWO_SIDED_POPULATION
+                std::copy(
+                        population_old.negative_frequency,
+                        population_old.negative_frequency
+                            + population_size*genome_size,
+                        population_new.negative_frequency);
+            #endif
+            std::copy(
+                    fitness_old, fitness_old + population_size,
+                    initial_population_fitness.begin());
+
+            project_evolved_population_observables(population_new);
+            for (size_t i=0; i<population_size; ++i) {
+                candidate_population_fitness[i] =
+                        score_host_population_objective(i);
+            }
+        #endif
+
+        if (!std::all_of(
+                    initial_population_fitness.begin(),
+                    initial_population_fitness.end(),
+                    [](double value) { return std::isfinite(value); })
+                || std::memcmp(
+                    initial_population_fitness.data(),
+                    candidate_population_fitness.data(),
+                    bytes_fitness) != 0) {
+            fail_with_error(
+                    "identical incumbent and candidate scoring diverged");
+        }
+
+        #if defined(USE_GPU) && defined(DEAC_TEST_POISON_GPU_FITNESS)
+            // Keep the existing evolved-pass poison regression independent:
+            // the actual generation must still overwrite this destination.
+            std::fill(
+                    fitness_old, fitness_old + population_size,
+                    std::numeric_limits<double>::quiet_NaN());
+            DEAC_TEST_GPU_CALL(deac_memcpy_host_to_device(
+                    d_fitness_new, fitness_old,
+                    bytes_fitness, default_stream));
+            DEAC_TEST_GPU_CALL(deac_wait(default_stream));
+            test_require_poisoned_gpu_fitness(
+                    d_fitness_new, "new after identical scoring seam");
+        #endif
+        std::cout << "test_identical_population_scoring: exact "
+                  << population_size << '\n';
     #endif
 
     size_t bytes_crossover_probabilities = sizeof(double)*population_size;
@@ -1425,118 +1695,12 @@ void deac(struct xoshiro256p_state * rng, double * const imaginary_time,
             }
         #endif
 
-        //Rejection
-        //Set model isf for new population
+        // Project the evolved population before scoring and rejection.
         #ifdef USE_GPU
-            #ifdef USE_BLAS
-                gpu_blas_gemm(default_blas_handle, population_size, number_of_timeslices, genome_size, 1.0, d_population_new_positive_frequency, d_isf_term_positive_frequency, 0.0, d_isf_model);
-                GPU_ASSERT(deac_wait(default_stream));
-                #ifdef DEAC_TWO_SIDED_POPULATION
-                    gpu_blas_gemm(default_blas_handle, population_size, number_of_timeslices, genome_size, 1.0, d_population_new_negative_frequency, d_isf_term_negative_frequency, 1.0, d_isf_model);
-                    GPU_ASSERT(deac_wait(default_stream));
-                #endif
-            #else
-                gpu_matmul(default_stream, population_size, number_of_timeslices, genome_size, 1.0, d_population_new_positive_frequency, d_isf_term_positive_frequency, 0.0, d_isf_model);
-                GPU_ASSERT(deac_wait(default_stream));
-                #ifdef DEAC_TWO_SIDED_POPULATION
-                    gpu_matmul(default_stream, population_size, number_of_timeslices, genome_size, 1.0, d_population_new_negative_frequency, d_isf_term_negative_frequency, 1.0, d_isf_model);
-                    GPU_ASSERT(deac_wait(default_stream));
-                #endif
-            #endif
+            project_evolved_population_observables(d_population_new);
         #else
-            for (size_t i=0; i<population_size*number_of_timeslices; i++) {
-                isf_model[i] = 0.0;
-            }
-            deac_numerics::accumulate_population_projection(
-                    isf_model, isf_term_positive_frequency, population_new_positive_frequency,
-                    number_of_timeslices, genome_size, population_size);
-            #ifdef DEAC_TWO_SIDED_POPULATION
-                deac_numerics::accumulate_population_projection(
-                        isf_model, isf_term_negative_frequency, population_new_negative_frequency,
-                        number_of_timeslices, genome_size, population_size);
-            #endif
+            project_evolved_population_observables(population_new);
         #endif
-
-        //Set moments
-        if (use_negative_first_moment) {
-            #ifdef USE_BOSONIC_DETAILED_BALANCE_CONDITION_DSF
-                #ifdef USE_GPU
-                    #ifdef USE_BLAS
-                        gpu_blas_gemv(default_blas_handle, population_size, number_of_timeslices, 1.0, d_isf_model, d_negative_first_moments_term, 0.0, d_negative_first_moments);
-                        GPU_ASSERT(deac_wait(default_stream));
-                    #else
-                        gpu_deac_gemv(default_stream, population_size, number_of_timeslices, 1.0, d_isf_model, d_negative_first_moments_term, 0.0, d_negative_first_moments);
-                        GPU_ASSERT(deac_wait(default_stream));
-                    #endif
-                #else
-                    for (size_t i=0; i<population_size; i++) {
-                        negative_first_moments[i] = 0.0;
-                    }
-                    matrix_multiply_MxN_by_Nx1(negative_first_moments, isf_model,
-                            negative_first_moments_term, population_size, number_of_timeslices);
-                #endif
-            #else
-                //FIXME inverse first moment not implemented
-            #endif
-        }
-        if (use_first_moment) {
-            #ifdef USE_GPU
-                #ifdef USE_BLAS
-                    gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_new_positive_frequency, d_first_moments_term_positive_frequency, 0.0, d_first_moments);
-                    GPU_ASSERT(deac_wait(default_stream));
-                    #ifdef DEAC_TWO_SIDED_POPULATION
-                        gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_new_negative_frequency, d_first_moments_term_negative_frequency, 1.0, d_first_moments);
-                        GPU_ASSERT(deac_wait(default_stream));
-                    #endif
-                #else
-                    gpu_deac_gemv(default_stream, population_size, genome_size, 1.0, d_population_new_positive_frequency, d_first_moments_term_positive_frequency, 0.0, d_first_moments);
-                    GPU_ASSERT(deac_wait(default_stream));
-                    #ifdef DEAC_TWO_SIDED_POPULATION
-                        gpu_deac_gemv(default_stream, population_size, genome_size, 1.0, d_population_new_negative_frequency, d_first_moments_term_negative_frequency, 1.0, d_first_moments);
-                        GPU_ASSERT(deac_wait(default_stream));
-                    #endif
-                #endif
-            #else
-                for (size_t i=0; i<population_size; i++) {
-                    first_moments[i] = 0.0;
-                }
-                matrix_multiply_MxN_by_Nx1(first_moments, population_new_positive_frequency,
-                        first_moments_term_positive_frequency, population_size, genome_size);
-                #ifdef DEAC_TWO_SIDED_POPULATION
-                    matrix_multiply_MxN_by_Nx1(first_moments, population_new_negative_frequency,
-                            first_moments_term_negative_frequency, population_size, genome_size);
-                #endif
-            #endif
-        }
-        if (use_third_moment) {
-            #ifdef USE_GPU
-                #ifdef USE_BLAS
-                    gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_new_positive_frequency, d_third_moments_term_positive_frequency, 0.0, d_third_moments);
-                    GPU_ASSERT(deac_wait(default_stream));
-                    #ifdef DEAC_TWO_SIDED_POPULATION
-                        gpu_blas_gemv(default_blas_handle, population_size, genome_size, 1.0, d_population_new_negative_frequency, d_third_moments_term_negative_frequency, 1.0, d_third_moments);
-                        GPU_ASSERT(deac_wait(default_stream));
-                    #endif
-                #else
-                    gpu_deac_gemv(default_stream, population_size, genome_size, 1.0, d_population_new_positive_frequency, d_third_moments_term_positive_frequency, 0.0, d_third_moments);
-                    GPU_ASSERT(deac_wait(default_stream));
-                    #ifdef DEAC_TWO_SIDED_POPULATION
-                        gpu_deac_gemv(default_stream, population_size, genome_size, 1.0, d_population_new_negative_frequency, d_third_moments_term_negative_frequency, 1.0, d_third_moments);
-                        GPU_ASSERT(deac_wait(default_stream));
-                    #endif
-                #endif
-            #else
-                for (size_t i=0; i<population_size; i++) {
-                    third_moments[i] = 0.0;
-                }
-                matrix_multiply_MxN_by_Nx1(third_moments, population_new_positive_frequency,
-                        third_moments_term_positive_frequency, population_size, genome_size);
-                #ifdef DEAC_TWO_SIDED_POPULATION
-                    matrix_multiply_MxN_by_Nx1(third_moments, population_new_negative_frequency,
-                            third_moments_term_negative_frequency, population_size, genome_size);
-                #endif
-            #endif
-        }
 
         //Set fitness for new population
         #ifdef USE_GPU
